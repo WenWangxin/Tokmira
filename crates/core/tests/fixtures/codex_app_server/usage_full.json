@@ -1,0 +1,9 @@
+{
+  "summary": {"lifetimeTokens": 1000, "peakDailyTokens": 80, "longestRunningTurnSec": 120},
+  "dailyUsageBuckets": [
+    {"startDate": "2026-10-20", "tokens": 80},
+    {"startDate": "2026-10-21", "tokens": 40},
+    {"startDate": "not-a-date", "tokens": 999}
+  ],
+  "threadUsage": null
+}

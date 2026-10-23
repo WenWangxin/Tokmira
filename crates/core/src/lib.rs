@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod codex;
+pub mod codex_app_server;
 pub mod model;
 pub mod pricing;
 pub mod report;

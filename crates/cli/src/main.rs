@@ -3,17 +3,21 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
-use chrono::{Local, NaiveDate};
+use chrono::{Days, Local, NaiveDate};
 use token_audit_core::claude::{scan_claude, ClaudeDebugSummary};
 use token_audit_core::codex::{scan_codex, CodexDebugSummary, RateLimitWindow};
+use token_audit_core::codex_app_server::{
+    codex_candidates, read_codex_quota, resolve_launch, AppServerOptions, CodexQuota,
+};
 use token_audit_core::model::{Source, Tool};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::report::{build_report, Metrics, Report, ReportOptions};
 
 fn usage() {
     println!(
-        "用法：token-audit debug <claude|codex> [--home <目录>] [--json]\n       token-audit scan [--home <目录>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--tool claude|codex] [--pricing <覆盖文件>] [--json]\n       token-audit --version"
+        "用法：token-audit debug <claude|codex> [--home <目录>] [--json]\n       token-audit scan [--home <目录>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--tool claude|codex] [--pricing <覆盖文件>] [--json]\n       token-audit quota codex [--codex <路径>] [--timeout <秒>] [--json]\n       token-audit --version"
     );
 }
 
@@ -409,6 +413,162 @@ fn run_scan(args: impl Iterator<Item = OsString>) -> Result<(), String> {
     Ok(())
 }
 
+struct QuotaArgs {
+    codex: Option<PathBuf>,
+    timeout: Duration,
+    json: bool,
+}
+
+fn parse_quota_args(args: impl Iterator<Item = OsString>) -> Result<QuotaArgs, String> {
+    let mut codex = None;
+    let mut timeout = None;
+    let mut json = false;
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
+        let flag = arg.to_str().ok_or("参数名不是有效文本")?;
+        match flag {
+            "--json" if !json => json = true,
+            "--codex" | "--timeout" => {
+                let value = args.next().ok_or_else(|| format!("{flag} 缺少参数"))?;
+                if value.to_str().is_some_and(|text| text.starts_with("--")) {
+                    return Err(format!("{flag} 缺少参数"));
+                }
+                match flag {
+                    "--codex" if codex.is_none() => codex = Some(PathBuf::from(value)),
+                    "--timeout" if timeout.is_none() => {
+                        let seconds = value
+                            .to_str()
+                            .and_then(|text| text.parse::<u64>().ok())
+                            .filter(|seconds| *seconds > 0)
+                            .ok_or("--timeout 应为大于 0 的整数秒")?;
+                        timeout = Some(Duration::from_secs(seconds));
+                    }
+                    _ => return Err(format!("{flag} 只能指定一次")),
+                }
+            }
+            _ => return Err(format!("未知参数：{flag}")),
+        }
+    }
+    Ok(QuotaArgs {
+        codex,
+        timeout: timeout.unwrap_or(Duration::from_secs(15)),
+        json,
+    })
+}
+
+fn local_time(time: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    time.map(|time| {
+        time.with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
+    })
+    .unwrap_or_else(|| "未知".to_owned())
+}
+
+fn print_quota_window(label: &str, window: Option<&RateLimitWindow>) {
+    if let Some(window) = window {
+        println!(
+            "{label:<12} {:>6.1}%    重置：{}",
+            window.used_percent,
+            local_time(window.resets_at)
+        );
+    } else {
+        println!("{label:<12} 未提供");
+    }
+}
+
+fn print_codex_quota(quota: &CodexQuota) {
+    println!("Codex 官方额度");
+    println!(
+        "套餐          {}",
+        quota.plan_type.as_deref().unwrap_or("未知")
+    );
+    print_quota_window("5 小时已用", quota.primary.as_ref());
+    print_quota_window("每周已用", quota.secondary.as_ref());
+    let reached = quota.ordinary_usage_allowed == Some(false)
+        || quota.rate_limit_reached_type.is_some()
+        || quota
+            .primary
+            .as_ref()
+            .is_some_and(|window| window.used_percent >= 100.0)
+        || quota
+            .secondary
+            .as_ref()
+            .is_some_and(|window| window.used_percent >= 100.0);
+    let reached_text = if reached {
+        "是"
+    } else if quota.ordinary_usage_allowed == Some(true) {
+        "否"
+    } else {
+        "未知"
+    };
+    println!("是否触顶      {reached_text}");
+    if let Some(cards) = &quota.reset_credits {
+        println!(
+            "可用重置卡    {}",
+            cards
+                .available_count
+                .map_or_else(|| "未知".to_owned(), |count| count.to_string())
+        );
+        for card in &cards.credits {
+            if card.status.as_deref() == Some("available") {
+                println!(
+                    "  {}：到期 {}",
+                    card.title.as_deref().unwrap_or("重置卡"),
+                    local_time(card.expires_at)
+                );
+            }
+        }
+    } else {
+        println!("可用重置卡    未提供");
+    }
+    if let Some(usage) = &quota.usage {
+        let today = quota.fetched_at.with_timezone(&Local).date_naive();
+        let start = today.checked_sub_days(Days::new(6));
+        let tokens: u64 = usage
+            .daily
+            .iter()
+            .filter(|day| start.is_some_and(|start| day.date >= start && day.date <= today))
+            .fold(0_u64, |total, day| total.saturating_add(day.tokens));
+        println!("最近 7 天官方 token 数    {tokens}");
+    } else {
+        println!("最近 7 天官方 token 数    未提供");
+    }
+    println!("\n数据来自 Codex 官方本地接口（codex app-server），由 Codex 用你已登录的账号向 OpenAI 查询；token-audit 不读取你的令牌");
+}
+
+fn run_quota(args: impl Iterator<Item = OsString>) -> Result<(), String> {
+    let args = parse_quota_args(args)?;
+    let candidate = match args.codex {
+        Some(candidate) if candidate.is_file() => candidate,
+        Some(_) => return Err("指定的 Codex 可执行文件不存在".to_owned()),
+        None => {
+            let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+            codex_candidates(&home, std::env::var_os("PATH").as_deref())
+                .into_iter()
+                .next()
+                .ok_or("未找到 Codex；请先安装 Codex CLI，或用 --codex 指定可执行文件")?
+        }
+    };
+    let launch = resolve_launch(&candidate);
+    let quota = read_codex_quota(
+        &launch,
+        &AppServerOptions {
+            timeout: args.timeout,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&quota).map_err(|_| "生成 JSON 失败")?
+        );
+    } else {
+        print_codex_quota(&quota);
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
     match args.next().as_deref().and_then(|arg| arg.to_str()) {
@@ -445,6 +605,15 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("quota") if args.next().as_deref() == Some(std::ffi::OsStr::new("codex")) => {
+            match run_quota(args) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(message) => {
+                    eprintln!("{message}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         _ => {
             eprintln!("未知参数。");
             usage();

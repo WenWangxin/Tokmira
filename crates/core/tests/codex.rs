@@ -253,3 +253,35 @@ fn null_info_does_not_reset_old_format_total_deduplication() {
     assert_eq!(scan.stats.token_count_usage_lines, 2);
     assert_eq!(scan.stats.deduplicated_lines, 1);
 }
+
+#[test]
+fn scans_archived_sessions_and_deduplicates_against_live_sessions() {
+    let home = TempHome::new();
+    home.copy_fixture("new.jsonl", "14", "rollout-live.jsonl");
+    let archived = home.path().join(".codex/archived_sessions/2026/10/14");
+    fs::create_dir_all(&archived).expect("archived directory");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex/new.jsonl"),
+        archived.join("rollout-archived.jsonl"),
+    )
+    .expect("copy handwritten fixture");
+    let scan = scan_codex(home.path()).expect("scan live and archived");
+    assert_eq!(scan.stats.files, 2);
+    assert_eq!(scan.events.len(), 2);
+    assert_eq!(scan.stats.deduplicated_lines, 2);
+}
+
+#[test]
+fn scans_archived_sessions_without_live_directory() {
+    let home = TempHome::new();
+    let archived = home.path().join(".codex/archived_sessions/deep");
+    fs::create_dir_all(&archived).expect("archived directory");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex/old.jsonl"),
+        archived.join("rollout-archived.jsonl"),
+    )
+    .expect("copy handwritten fixture");
+    let scan = scan_codex(home.path()).expect("scan archived only");
+    assert_eq!(scan.stats.files, 1);
+    assert_eq!(scan.events.len(), 2);
+}

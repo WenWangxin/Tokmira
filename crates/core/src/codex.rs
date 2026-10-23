@@ -545,16 +545,15 @@ fn collect_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> io::Result<()> {
 /// Scans Codex rollouts recursively, using sorted paths and stable timestamp order.
 /// A missing sessions directory is empty; individual file failures are counted.
 pub fn scan_codex(home: &Path) -> Result<CodexScan, io::Error> {
-    let sessions = home.join(".codex").join("sessions");
-    match fs::metadata(&sessions) {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(CodexScan::default());
-        }
-        Err(error) => return Err(error),
-    }
     let mut paths = Vec::new();
-    collect_paths(&sessions, &mut paths)?;
+    for directory in ["sessions", "archived_sessions"] {
+        let path = home.join(".codex").join(directory);
+        match fs::metadata(&path) {
+            Ok(_) => collect_paths(&path, &mut paths)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
     paths.sort();
     let mut scan = CodexScan::default();
     let mut seen_responses = HashSet::new();
