@@ -12,3 +12,19 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 toml = "1.1.8"
+zeroize = "1.9.1"
+base64 = "0.22.1"
+aes = "0.8.4"
+cbc = { version = "0.1.2", features = ["block-padding"] }
+pbkdf2 = "0.12.2"
+sha1 = "0.10.6"
+
+[target.'cfg(not(windows))'.dependencies]
+ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7.0"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55.0"
+ureq = { version = "2.12.1", default-features = false, features = ["native-tls"] }

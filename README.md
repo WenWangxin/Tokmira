@@ -20,6 +20,12 @@
 
 运行 `cargo run -p token-audit-cli -- quota codex`，通过已安装的 Codex 本地 `app-server` 读取当前账号的官方额度和按日 token 用量。可用 `--codex <路径>` 指定 Codex 可执行文件、`--timeout <秒>` 调整整体超时（默认 15 秒）、`--json` 输出结构化结果。此命令会启动 Codex，由 Codex 使用已登录账号查询 OpenAI；token-audit 不读取令牌。
 
+## Claude 官方额度
+
+手动运行 `cargo run -p token-audit-cli -- quota claude` 才会查询。可加 `--source auto|desktop|code` 选择凭据（默认先桌面版再 Claude Code）、`--proxy http://host:port`、`--no-proxy`、`--timeout <秒>`（默认 15 秒）、`--keychain-timeout <秒>`（桌面版钥匙串授权默认等待 60 秒）、`--json`。macOS 上读取 Claude Code 凭据使用系统 `security` 命令，最多等待 10 秒。代理优先级为命令行参数、`HTTPS_PROXY` / `https_proxy` / `ALL_PROXY` 环境变量、系统静态代理；`--no-proxy` 禁用代理。macOS 的 PAC 自动配置代理暂不支持。
+
+此命令会短暂读取本机 Claude 登录令牌，只向 `https://api.anthropic.com/api/oauth/usage` 发送查询；不会保存、打印或刷新令牌，也不会跟随重定向。令牌过期时请先打开对应 Claude 应用，由它自行刷新。Windows 当前只支持 Claude Code 凭据，Claude 桌面版的 DPAPI 格式尚未验证。接口未公开，成功响应结构尚未实测，后续可能变化。普通日志扫描和记录器不会执行此查询。
+
 ## Claude Code 记录器
 
 默认不安装。先用 `token-audit recorder install --dry-run` 查看计划，再用 `token-audit recorder install` 安装状态栏记录器；加 `--hooks` 可单独安装 hooks，加 `--statusline --hooks` 可同时安装。`token-audit recorder status` 查看安装状态，`token-audit recorder records` 查看最近的额度记录。管理命令支持 `--home <目录>` 和 `--data-dir <目录>`，`status` 和 `records` 支持 `--json`。

@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod claude_quota;
 pub mod codex;
 pub mod codex_app_server;
 pub mod model;
