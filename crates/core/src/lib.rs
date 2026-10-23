@@ -1,3 +1,6 @@
+pub mod claude;
+pub mod model;
+
 /// Returns the version of the shared core library.
 #[must_use]
 pub const fn version() -> &'static str {

@@ -1,0 +1,2 @@
+{"type":"assistant","requestId":"req-tie","sessionId":"session-first","timestamp":"2026-10-01T10:00:00Z","entrypoint":"cli","message":{"id":"msg-tie","model":"claude-test-a","usage":{"output_tokens":7}}}
+{"type":"assistant","requestId":"req-tie","sessionId":"session-same-file-later","timestamp":"2026-10-01T10:00:00Z","entrypoint":"cli","message":{"id":"msg-tie","model":"claude-test-a","usage":{"output_tokens":7}}}

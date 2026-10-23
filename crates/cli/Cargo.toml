@@ -10,3 +10,5 @@ path = "src/main.rs"
 
 [dependencies]
 token_audit_core = { path = "../core" }
+dirs = "7.0.0"
+serde_json = "1.0.149"
