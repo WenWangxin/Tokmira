@@ -1,0 +1,1 @@
+{"session_id":42,"version":false,"model":"claude-opus","rate_limits":{"five_hour":{"used_percentage":28,"resets_at":"invalid"},"seven_day":{"used_percentage":"invalid","resets_at":1793382100}},"prompt_cache":{"warm":"yes","ttl":60,"expires_at":"later","hit_ratio":"0.97","misses":{"count":1},"last_miss_cause":12,"recache_tokens_if_cold":45315},"prompt":"PRIVATE_PROMPT"}

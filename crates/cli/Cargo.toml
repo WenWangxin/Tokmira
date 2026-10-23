@@ -13,3 +13,6 @@ token_audit_core = { path = "../core" }
 dirs = "7.0.0"
 serde_json = "1.0.149"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.191"

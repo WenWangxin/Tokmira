@@ -1,3 +1,4 @@
+mod recorder;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -17,7 +18,7 @@ use token_audit_core::report::{build_report, Metrics, Report, ReportOptions};
 
 fn usage() {
     println!(
-        "用法：token-audit debug <claude|codex> [--home <目录>] [--json]\n       token-audit scan [--home <目录>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--tool claude|codex] [--pricing <覆盖文件>] [--json]\n       token-audit quota codex [--codex <路径>] [--timeout <秒>] [--json]\n       token-audit --version"
+        "用法：token-audit debug <claude|codex> [--home <目录>] [--json]\n       token-audit scan [--home <目录>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--tool claude|codex] [--pricing <覆盖文件>] [--json]\n       token-audit quota codex [--codex <路径>] [--timeout <秒>] [--json]\n       token-audit recorder <status|install|uninstall|records> [选项]\n       token-audit hook <statusline|event --tool claude>\n       token-audit --version"
     );
 }
 
@@ -580,6 +581,8 @@ fn main() -> ExitCode {
             usage();
             ExitCode::SUCCESS
         }
+        Some("hook") => recorder::run("hook", args),
+        Some("recorder") => recorder::run("recorder", args),
         Some("debug") => {
             let tool = args.next();
             let tool = tool.as_deref().and_then(|arg| arg.to_str());

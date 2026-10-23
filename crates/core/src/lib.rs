@@ -3,6 +3,7 @@ pub mod codex;
 pub mod codex_app_server;
 pub mod model;
 pub mod pricing;
+pub mod recorder;
 pub mod report;
 
 /// Returns the version of the shared core library.
