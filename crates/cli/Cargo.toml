@@ -12,3 +12,4 @@ path = "src/main.rs"
 token_audit_core = { path = "../core" }
 dirs = "7.0.0"
 serde_json = "1.0.149"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }

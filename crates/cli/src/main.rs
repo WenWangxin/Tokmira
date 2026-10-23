@@ -1,13 +1,19 @@
 use std::ffi::OsString;
+use std::fs;
+use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use chrono::{Local, NaiveDate};
 use token_audit_core::claude::{scan_claude, ClaudeDebugSummary};
 use token_audit_core::codex::{scan_codex, CodexDebugSummary, RateLimitWindow};
+use token_audit_core::model::{Source, Tool};
+use token_audit_core::pricing::Pricing;
+use token_audit_core::report::{build_report, Metrics, Report, ReportOptions};
 
 fn usage() {
     println!(
-        "用法：token-audit debug <claude|codex> [--home <目录>] [--json]\n       token-audit --version"
+        "用法：token-audit debug <claude|codex> [--home <目录>] [--json]\n       token-audit scan [--home <目录>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--tool claude|codex] [--pricing <覆盖文件>] [--json]\n       token-audit --version"
     );
 }
 
@@ -156,6 +162,253 @@ fn run_debug(tool: &str, args: impl Iterator<Item = OsString>) -> Result<(), &'s
     Ok(())
 }
 
+struct ScanArgs {
+    home: PathBuf,
+    since: Option<NaiveDate>,
+    until: Option<NaiveDate>,
+    tool: Option<Tool>,
+    pricing: Option<PathBuf>,
+    json: bool,
+}
+
+fn parse_scan_args(args: impl Iterator<Item = OsString>) -> Result<ScanArgs, String> {
+    let mut home = None;
+    let mut since = None;
+    let mut until = None;
+    let mut tool = None;
+    let mut pricing = None;
+    let mut json = false;
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
+        let flag = arg.to_str().ok_or("参数名不是有效文本")?;
+        match flag {
+            "--json" if !json => json = true,
+            "--home" | "--since" | "--until" | "--tool" | "--pricing" => {
+                let value = args.next().ok_or_else(|| format!("{flag} 缺少参数"))?;
+                if value.to_str().is_some_and(|text| text.starts_with("--")) {
+                    return Err(format!("{flag} 缺少参数"));
+                }
+                match flag {
+                    "--home" if home.is_none() => home = Some(PathBuf::from(value)),
+                    "--pricing" if pricing.is_none() => pricing = Some(PathBuf::from(value)),
+                    "--since" if since.is_none() => {
+                        since = Some(parse_date(&value, flag)?);
+                    }
+                    "--until" if until.is_none() => {
+                        until = Some(parse_date(&value, flag)?);
+                    }
+                    "--tool" if tool.is_none() => {
+                        tool = Some(match value.to_str() {
+                            Some("claude") => Tool::Claude,
+                            Some("codex") => Tool::Codex,
+                            _ => return Err("--tool 只能是 claude 或 codex".into()),
+                        });
+                    }
+                    _ => return Err(format!("{flag} 只能指定一次")),
+                }
+            }
+            _ => return Err(format!("未知参数：{flag}")),
+        }
+    }
+    if since.zip(until).is_some_and(|(start, end)| start > end) {
+        return Err("--since 不能晚于 --until".into());
+    }
+    Ok(ScanArgs {
+        home: home
+            .or_else(dirs::home_dir)
+            .ok_or("无法确定用户主目录，请指定 --home")?,
+        since,
+        until,
+        tool,
+        pricing,
+        json,
+    })
+}
+
+fn parse_date(value: &OsString, flag: &str) -> Result<NaiveDate, String> {
+    let value = value
+        .to_str()
+        .ok_or_else(|| format!("{flag} 日期不是有效文本"))?;
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| format!("{flag} 日期格式应为 YYYY-MM-DD"))
+}
+
+fn load_pricing(explicit: Option<PathBuf>) -> Result<Pricing, String> {
+    let mut pricing = Pricing::bundled().map_err(str::to_owned)?;
+    let is_explicit = explicit.is_some();
+    let path = explicit
+        .or_else(|| dirs::config_dir().map(|directory| directory.join("token-audit/pricing.toml")));
+    if let Some(path) = path {
+        match fs::read_to_string(&path) {
+            Ok(content) => pricing = pricing.with_override(&content).map_err(str::to_owned)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound && !is_explicit => {}
+            Err(error) => return Err(format!("无法读取价格覆盖文件 {}：{error}", path.display())),
+        }
+    }
+    Ok(pricing)
+}
+
+const NAME_WIDTH: usize = 28;
+
+fn char_display_width(ch: char) -> usize {
+    match ch as u32 {
+        0x1100..=0x115f
+        | 0x2329..=0x232a
+        | 0x2e80..=0xa4cf
+        | 0xac00..=0xd7a3
+        | 0xf900..=0xfaff
+        | 0xfe10..=0xfe19
+        | 0xfe30..=0xfe6f
+        | 0xff01..=0xff60
+        | 0xffe0..=0xffe6
+        | 0x20000..=0x3fffd => 2,
+        _ => 1,
+    }
+}
+
+fn format_name(label: &str) -> String {
+    let full_width: usize = label.chars().map(char_display_width).sum();
+    if full_width <= NAME_WIDTH {
+        return format!("{label}{}", " ".repeat(NAME_WIDTH - full_width));
+    }
+
+    let mut result = String::new();
+    let mut width = 0;
+    for ch in label.chars() {
+        let char_width = char_display_width(ch);
+        if width + char_width > NAME_WIDTH - 1 {
+            break;
+        }
+        result.push(ch);
+        width += char_width;
+    }
+    result.push('…');
+    result.push_str(&" ".repeat(NAME_WIDTH - width - 1));
+    result
+}
+
+fn print_row(label: &str, metrics: &Metrics) {
+    let writes = metrics.tokens.cache_write_5m as u128
+        + metrics.tokens.cache_write_1h as u128
+        + metrics.tokens.cache_write_unspecified as u128;
+    let hit = metrics
+        .cache_hit_rate
+        .map_or_else(|| "—".to_owned(), |rate| format!("{:.1}%", rate * 100.0));
+    let cost = if metrics.unpriced_events > 0 && metrics.unpriced_events == metrics.events {
+        format!("—（未定价 {}）", metrics.unpriced_events)
+    } else if metrics.unpriced_events > 0 {
+        format!(
+            "${:.4}（部分，未定价 {}）",
+            metrics.estimated_cost_usd, metrics.unpriced_events
+        )
+    } else {
+        format!("${:.4}", metrics.estimated_cost_usd)
+    };
+    println!(
+        "{} {:>8} {:>10} {:>10} {:>10} {:>10} {:>8} {:>16}",
+        format_name(label),
+        metrics.events,
+        metrics.tokens.input,
+        metrics.tokens.output,
+        metrics.tokens.cache_read,
+        writes,
+        hit,
+        cost
+    );
+}
+
+fn print_header(title: &str) {
+    println!("\n{title}");
+    println!(
+        "{} {:>8} {:>10} {:>10} {:>10} {:>10} {:>8} {:>16}",
+        format_name("名称"),
+        "事件数",
+        "输入",
+        "输出",
+        "缓存读",
+        "缓存写",
+        "命中率",
+        "估算费用"
+    );
+}
+
+fn source_label(source: Source) -> &'static str {
+    match source {
+        Source::ClaudeCli => "Claude 命令行",
+        Source::ClaudeDesktop => "Claude 桌面版",
+        Source::CodexCli => "Codex 命令行",
+        Source::CodexDesktop => "Codex 桌面版",
+        Source::Unknown => "未知来源",
+    }
+}
+
+fn print_report(report: &Report, malformed: u64, unreadable: u64) {
+    print_header("总计");
+    print_row("总计", &report.total);
+    print_header("按天");
+    for group in &report.by_day {
+        print_row(&group.key.to_string(), &group.metrics);
+    }
+    print_header("按来源");
+    for group in &report.by_source {
+        print_row(source_label(group.key), &group.metrics);
+    }
+    print_header("按模型");
+    for group in &report.by_model {
+        print_row(&group.key, &group.metrics);
+    }
+    print_header("按项目（前 10）");
+    for group in report.by_project.iter().take(10) {
+        let label = group
+            .key
+            .as_deref()
+            .and_then(|path| {
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+            })
+            .unwrap_or("未知项目");
+        print_row(label, &group.metrics);
+    }
+    print_header("按会话（前 10）");
+    for group in report.by_session.iter().take(10) {
+        let label: String = group.key.chars().take(8).collect();
+        print_row(&label, &group.metrics);
+    }
+    println!("\n费用为按 API 价格的估算（价格表版本 {}），不是实际账单；不含 ChatGPT / Claude 桌面端聊天", report.pricing_version);
+    if malformed > 0 || unreadable > 0 {
+        println!("解析提示：格式错误 {malformed} 行，读取失败 {unreadable} 个文件");
+    }
+}
+
+fn run_scan(args: impl Iterator<Item = OsString>) -> Result<(), String> {
+    let args = parse_scan_args(args)?;
+    let pricing = load_pricing(args.pricing.clone())?;
+    let claude = scan_claude(&args.home).map_err(|_| "扫描 Claude 日志失败".to_owned())?;
+    let codex = scan_codex(&args.home).map_err(|_| "扫描 Codex 日志失败".to_owned())?;
+    let malformed = claude.stats.malformed_lines + codex.stats.malformed_lines;
+    let unreadable = claude.stats.unreadable_files + codex.stats.unreadable_files;
+    let mut events = claude.events;
+    events.extend(codex.events);
+    let report = build_report(
+        &events,
+        &pricing,
+        &ReportOptions {
+            since: args.since,
+            until: args.until,
+            tool: args.tool,
+            tz: Local,
+        },
+    );
+    if args.json {
+        let output = serde_json::to_string_pretty(&report).map_err(|_| "生成 JSON 失败")?;
+        println!("{output}");
+    } else {
+        print_report(&report, malformed, unreadable);
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
     match args.next().as_deref().and_then(|arg| arg.to_str()) {
@@ -184,10 +437,48 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("scan") => match run_scan(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("{message}");
+                usage();
+                ExitCode::FAILURE
+            }
+        },
         _ => {
             eprintln!("未知参数。");
             usage();
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{char_display_width, format_name, NAME_WIDTH};
+
+    #[test]
+    fn name_column_truncates_and_pads_by_display_width() {
+        let long = format_name("这是一个很长的中文项目名称用于测试截断效果");
+        assert!(long.contains('…'));
+        assert_eq!(
+            long.chars().map(char_display_width).sum::<usize>(),
+            NAME_WIDTH
+        );
+        assert_eq!(
+            format_name("Claude 桌面版")
+                .chars()
+                .map(char_display_width)
+                .sum::<usize>(),
+            NAME_WIDTH
+        );
+        assert_eq!(
+            format_name("abc"),
+            format!("abc{}", " ".repeat(NAME_WIDTH - 3))
+        );
+        assert_eq!(
+            format_name("x".repeat(NAME_WIDTH + 1).as_str()),
+            format!("{}…", "x".repeat(NAME_WIDTH - 1))
+        );
     }
 }

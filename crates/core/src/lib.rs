@@ -1,6 +1,8 @@
 pub mod claude;
 pub mod codex;
 pub mod model;
+pub mod pricing;
+pub mod report;
 
 /// Returns the version of the shared core library.
 #[must_use]

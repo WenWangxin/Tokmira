@@ -1,13 +1,13 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Tool {
     Claude,
     Codex,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Source {
     ClaudeCli,
     ClaudeDesktop,

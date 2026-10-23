@@ -1,0 +1,108 @@
+version = "2026-10-24"
+currency = "USD"
+unit = "per_million_tokens"
+note = "API 等价价格，仅用于估算订阅用量价值，不是实际账单；claude-haiku-5-5 仅采用 10 万 token 以内档，本版不计算长上下文分档"
+
+[[sources]]
+name = "Anthropic"
+url = "https://platform.claude.com/docs/en/about-claude/pricing"
+
+[[sources]]
+name = "OpenAI"
+url = "https://developers.openai.com/api/docs/pricing"
+
+[models."claude-fable-5-1"]
+input = 10
+output = 50
+cache_read = 0.25
+cache_write_5m = 12.5
+cache_write_1h = 20
+cache_write_unspecified = 12.5
+
+[models."claude-opus-5-5"]
+input = 4
+output = 20
+cache_read = 0.20
+cache_write_5m = 5
+cache_write_1h = 8
+cache_write_unspecified = 5
+
+[models."claude-opus-5"]
+input = 5
+output = 25
+cache_read = 0.50
+cache_write_5m = 6.25
+cache_write_1h = 10
+cache_write_unspecified = 6.25
+
+[models."claude-opus-4-8"]
+input = 5
+output = 25
+cache_read = 0.50
+cache_write_5m = 6.25
+cache_write_1h = 10
+cache_write_unspecified = 6.25
+
+[models."claude-sonnet-5-5"]
+input = 2
+output = 10
+cache_read = 0.20
+cache_write_5m = 2.5
+cache_write_1h = 4
+cache_write_unspecified = 2.5
+
+[models."claude-sonnet-5"]
+input = 2
+output = 10
+cache_read = 0.20
+cache_write_5m = 2.5
+cache_write_1h = 4
+cache_write_unspecified = 2.5
+
+[models."claude-haiku-5-5"]
+input = 0.10
+output = 0.50
+cache_read = 0.01
+cache_write_5m = 0.125
+cache_write_1h = 0.20
+cache_write_unspecified = 0.125
+
+[models."gpt-6.1-sol"]
+input = 2
+output = 10
+cache_read = 0.10
+cache_write_5m = 0
+cache_write_1h = 0
+cache_write_unspecified = 2.5
+
+[models."gpt-6-sol"]
+input = 2
+output = 10
+cache_read = 0.20
+cache_write_5m = 0
+cache_write_1h = 0
+cache_write_unspecified = 2.5
+
+[models."gpt-6-astra"]
+input = 10
+output = 50
+cache_read = 1.00
+cache_write_5m = 0
+cache_write_1h = 0
+cache_write_unspecified = 12.5
+
+[models."gpt-6-luna"]
+input = 0.10
+output = 0.50
+cache_read = 0.01
+cache_write_5m = 0
+cache_write_1h = 0
+cache_write_unspecified = 0.125
+
+[models."gpt-5.5"]
+input = 5
+output = 30
+cache_read = 0.50
+cache_write_5m = 0
+cache_write_1h = 0
+cache_write_unspecified = 5
