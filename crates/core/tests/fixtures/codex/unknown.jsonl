@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-14T10:04:00Z","type":"session_meta","payload":{"id":"fake-unknown","originator":"other"}}
+{"timestamp":"2026-10-14T10:04:01Z","type":"token_usage_record","payload":{"usage":{"output_tokens":1}}}

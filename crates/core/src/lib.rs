@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod codex;
 pub mod model;
 
 /// Returns the version of the shared core library.

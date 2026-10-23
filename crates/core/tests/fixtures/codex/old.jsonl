@@ -1,0 +1,9 @@
+{"timestamp":"2026-10-14T10:01:00Z","type":"session_meta","payload":{"id":"fake-old","cwd":"/fake/old","originator":"codex-tui","thread_source":"subagent"}}
+{"timestamp":"2026-10-14T10:01:01Z","type":"turn_context","payload":{"model":"gpt-old"}}
+{"timestamp":"2026-10-14T10:01:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12},"last_token_usage":{"input_tokens":10,"output_tokens":2}},"rate_limits":null}}
+{"timestamp":"2026-10-14T10:01:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12},"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}
+{"timestamp":"2026-10-14T10:01:04Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":null,"secondary":null}}}
+{"timestamp":"2026-10-14T10:01:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":11,"output_tokens":3,"total_tokens":14},"last_token_usage":{"input_tokens":1,"output_tokens":1}},"rate_limits":{"secondary":{"used_percent":4.0,"window_minutes":10080,"resets_at":1792495163}}}}
+{"timestamp":"2026-10-14T10:01:06Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":0,"output_tokens":0}}}}
+{"timestamp":"invalid-time","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1}}}}
+not-json
