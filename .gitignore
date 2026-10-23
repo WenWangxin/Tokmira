@@ -1,0 +1,8 @@
+/target/
+/node_modules/
+/ui/node_modules/
+/ui/dist/
+/src-tauri/gen/schemas/
+/.claude/launch.json
+.DS_Store
+*.log
