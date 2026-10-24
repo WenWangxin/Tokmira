@@ -7,10 +7,44 @@
 需要 Rust stable、Node 22 和 pnpm。先在仓库根目录运行 `pnpm install`，再运行：
 
 - 浏览器预览：`pnpm -C ui dev`
-- 桌面应用：`pnpm tauri dev`
+- 桌面应用：`pnpm tauri dev`。使用记录器前先 `cargo build -p token-audit-cli`，说明见「打包」
 - 命令行版本：`cargo run -p token-audit-cli -- --version`
 
 仪表盘刻度与提示标签的纯函数测试：`pnpm test`（需要 Node 22）。
+
+## 打包
+
+产物未签名，也未做公证。
+
+macOS 通用包（Apple 芯片和 Intel）在仓库根目录执行：
+
+```bash
+pnpm bundle:mac
+```
+
+脚本里的 `CI=true` 让 Tauri 跳过用 AppleScript 排列 DMG 窗口这一步（没有 Finder 自动化授权时会超时失败）。
+
+它会先运行 `sh scripts/build-sidecar.sh universal-apple-darwin`：分别构建 `aarch64-apple-darwin` 和 `x86_64-apple-darwin`，再用 `lipo` 合并为 `src-tauri/binaries/token-audit-universal-apple-darwin`。两个单架构文件会留下来，因为通用包会按架构各编译一次。然后执行 `pnpm tauri build --target universal-apple-darwin --bundles dmg`。安装包在 `target/universal-apple-darwin/release/bundle/dmg/`。
+
+Windows x64 和 ARM64 的 NSIS 安装包由 GitHub Actions 构建，workflow 是 `.github/workflows/release.yml`。在 Actions 页面手动运行，或推送 `v*` 标签。本机若要打其中一个目标，在 PowerShell 里先运行 `.\scripts\build-sidecar.ps1 -Target x86_64-pc-windows-msvc`（ARM64 换成 `aarch64-pc-windows-msvc`），再运行 `pnpm tauri build --target <目标> --bundles nsis`。安装包在 `target/<目标>/release/bundle/nsis/`。
+
+sidecar 源文件在 `src-tauri/binaries/`，是构建产物，不提交。打包后命令行程序与桌面主程序在同一目录：macOS 为 `Contents/MacOS/token-audit`，Windows 为安装目录下的 `token-audit.exe`。主程序文件名是 `token-audit-desktop`，避免和命令行程序重名。
+
+因为没有签名：
+
+- macOS 首次打开时，在 Finder 里对应用右键，选择「打开」。若被拦截，到「系统设置 → 隐私与安全性」里允许。
+- Windows 若出现 SmartScreen，选择「仍要运行」。
+
+### 开发模式
+
+`cargo build`、`cargo clippy`、`cargo test` 和 `pnpm tauri dev` 不要求 sidecar 已经存在。记录器查找桌面程序同一目录下的 `token-audit`（Windows 为 `token-audit.exe`）。开发构建的这个目录是 `target/debug/`：
+
+```bash
+cargo build -p token-audit-cli
+pnpm tauri dev
+```
+
+`pnpm tauri build` 是 release 构建，必须先有对应目标的 sidecar，否则会失败。
 
 ## scan 用法
 

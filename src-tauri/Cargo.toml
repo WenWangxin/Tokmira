@@ -17,4 +17,5 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 serde = { version = "1.0.228", features = ["derive"] }
 
 [build-dependencies]
+serde_json = "1.0.149"
 tauri-build = { version = "2", features = [] }

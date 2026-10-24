@@ -1,0 +1,78 @@
+# 发布桌面安装包。产物未签名、未公证：
+# macOS 首次打开需在 Finder 中右键应用并选择「打开」，或在「系统设置 → 隐私与安全性」里允许；
+# Windows SmartScreen 需选择「仍要运行」。
+# 这里不配置代码签名或公证。
+
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: universal-apple-darwin
+            bundles: dmg
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            rust_targets: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            bundles: nsis
+            rust_targets: aarch64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4.1.0
+        with:
+          version: 12.15.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4.2.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # dtolnay/rust-toolchain 用工具链通道作版本号，没有独立的 semver 标签。
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build sidecar (macOS)
+        if: runner.os == 'macOS'
+        run: sh scripts/build-sidecar.sh ${{ matrix.target }}
+
+      - name: Build sidecar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\build-sidecar.ps1 -Target ${{ matrix.target }}
+
+      - name: Bundle
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-audit-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/bundle/
+          if-no-files-found: error

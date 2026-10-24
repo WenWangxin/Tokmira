@@ -4,6 +4,8 @@
 /ui/dist/
 /ui/.local/
 /src-tauri/gen/schemas/
+/src-tauri/binaries/*
+!/src-tauri/binaries/.gitkeep
 /.claude/launch.json
 .DS_Store
 *.log

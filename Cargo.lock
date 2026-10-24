@@ -3644,6 +3644,7 @@ dependencies = [
  "chrono",
  "dirs",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "token_audit_core",
