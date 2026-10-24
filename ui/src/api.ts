@@ -1,4 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
+import { mockEnvironment, mockRecorderStatus, mockSettings, previewRecorderPlan } from './mocks/settings'
+import { clonePreview } from './settingsLogic'
+
+const isPreview = () => import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
+let previewSettings: AppSettings = clonePreview(mockSettings)
+let previewRecorder: RecorderStatus = clonePreview(mockRecorderStatus)
 
 export type Tool = 'Claude' | 'Codex'
 export type Source = 'ClaudeCli' | 'ClaudeDesktop' | 'CodexCli' | 'CodexDesktop' | 'Unknown'
@@ -225,16 +231,42 @@ export interface RecorderPlan {
 }
 export interface ScanSummary { events: number; prompts: number; malformed_lines: number }
 export interface RefreshResult { claude: string; codex: string }
+export interface DirectoryStatus { path: string; exists: boolean }
+export interface EnvironmentInfo {
+  claude_logs: DirectoryStatus
+  codex_logs: DirectoryStatus
+  data_dir: string
+  pricing_version: string
+  pricing_note: string
+  advice_version: string
+  backup_dir: string
+}
 
-export const getSettings = () => invoke<AppSettings>('get_settings')
-export const updateSettings = (settings: AppSettings) => invoke<AppSettings>('update_settings', { settings })
+export const getSettings = () =>
+  isPreview() ? Promise.resolve(clonePreview(previewSettings)) : invoke<AppSettings>('get_settings')
+export const updateSettings = (settings: AppSettings) => {
+  if (isPreview()) {
+    const percent = settings.calibration?.five_hour_percent
+    if (percent !== undefined && (!Number.isFinite(percent) || percent < 0 || percent > 100)) {
+      return Promise.reject(new Error('校准百分比应在 0 到 100 之间'))
+    }
+    previewSettings = clonePreview(settings)
+    return Promise.resolve(clonePreview(previewSettings))
+  }
+  return invoke<AppSettings>('update_settings', { settings })
+}
+export const getEnvironment = () =>
+  isPreview() ? Promise.resolve(clonePreview(mockEnvironment)) : invoke<EnvironmentInfo>('get_environment')
 export const rescan = () =>
   import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
     ? Promise.resolve({ events: 0, prompts: 0, malformed_lines: 0 })
     : invoke<ScanSummary>('rescan')
 export const refreshQuotas = () =>
-  import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
-    ? Promise.resolve({ claude: '开发预览', codex: '开发预览' })
+  isPreview()
+    ? Promise.resolve({
+        claude: previewSettings.claude_official_query ? '已更新' : '未开启',
+        codex: previewSettings.codex_app_server ? '已更新' : '未开启',
+      })
     : invoke<RefreshResult>('refresh_quotas')
 async function developmentOverview(): Promise<Overview> {
   const { mockOverview } = await import('./mocks/overview')
@@ -274,10 +306,37 @@ export const getUsageDetail = async (tool: Tool, kind: WindowKind, windowId: str
   }
   return invoke<UsageDetail>('get_usage_detail', { tool, kind, windowId })
 }
-export const recorderStatus = () => invoke<RecorderStatus>('recorder_status')
-export const recorderPlan = (parts: RecorderParts) => invoke<RecorderPlan>('recorder_plan', { parts })
-export const recorderInstall = (parts: RecorderParts) => invoke<RecorderPlan>('recorder_install', { parts })
-export const recorderUninstall = () => invoke<RecorderPlan>('recorder_uninstall')
+function applyPreviewRecorder(parts: RecorderParts, action: 'install' | 'uninstall') {
+  if (parts.statusline) {
+    previewRecorder.statusline_installed = action === 'install'
+    previewRecorder.statusline_modified = false
+  }
+  if (parts.hooks) {
+    previewRecorder.hooks_installed = action === 'install'
+    previewRecorder.hooks_modified = false
+  }
+  return previewRecorderPlan(parts, action)
+}
+export const recorderStatus = () =>
+  isPreview() ? Promise.resolve(clonePreview(previewRecorder)) : invoke<RecorderStatus>('recorder_status')
+export const recorderPlan = (parts: RecorderParts) =>
+  isPreview() ? Promise.resolve(previewRecorderPlan(parts, 'install')) : invoke<RecorderPlan>('recorder_plan', { parts })
+export const recorderPlanUninstall = (parts: RecorderParts) =>
+  isPreview() ? Promise.resolve(previewRecorderPlan(parts, 'uninstall')) : invoke<RecorderPlan>('recorder_plan_uninstall', { parts })
+export const recorderInstall = (parts: RecorderParts) =>
+  isPreview() ? Promise.resolve(applyPreviewRecorder(parts, 'install')) : invoke<RecorderPlan>('recorder_install', { parts })
+export const recorderUninstall = (parts: RecorderParts) =>
+  isPreview() ? Promise.resolve(applyPreviewRecorder(parts, 'uninstall')) : invoke<RecorderPlan>('recorder_uninstall', { parts })
+export const clearRecorderRecords = () => {
+  if (isPreview()) {
+    previewRecorder.statusline_records = 0
+    previewRecorder.hook_events = 0
+    previewRecorder.last_statusline_record = null
+    previewRecorder.last_hook_event = null
+    return Promise.resolve()
+  }
+  return invoke<void>('clear_recorder_records')
+}
 
 export type AdviceSeverity = 'Error' | 'Warning'
 export interface AdviceLink { label: string; url: string }
@@ -324,33 +383,38 @@ export interface EventTag {
   severity: AdviceSeverity
 }
 
-const isPreview = () => import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
 const adviceFiles = import.meta.glob<{ default: AdviceReport }>('../.local/advice-*.json')
-const previewDismissed = new Set<string>()
 async function developmentAdvice(periodDays: number): Promise<AdviceReport> {
   const { mockAdvice } = await import('./mocks/advice')
   const variant = new URLSearchParams(window.location.search).get('mock')
   const local = adviceFiles[`../.local/advice-${periodDays}.json`]
   const report = variant === 'empty' || variant === 'nodata' || !local ? mockAdvice(periodDays, variant) : (await local()).default
+  const dismissed = new Set(previewSettings.dismissed_advice)
   // Mirror the backend: dismissed items are hidden and counted.
   return {
     ...report,
     event_tags: report.event_tags ?? [],
     tools: report.tools.map(tool => ({
       ...tool,
-      items: tool.items.filter(item => !previewDismissed.has(item.key)),
-      hidden: tool.hidden + tool.items.filter(item => previewDismissed.has(item.key)).length,
+      items: tool.items.filter(item => !dismissed.has(item.key)),
+      hidden: tool.hidden + tool.items.filter(item => dismissed.has(item.key)).length,
     })),
   }
 }
 export const getAdvice = (periodDays: 7 | 30) =>
   isPreview() ? developmentAdvice(periodDays) : invoke<AdviceReport>('get_advice', { periodDays })
 export const dismissAdvice = async (key: string) => {
-  if (isPreview()) { previewDismissed.add(key); return }
+  if (isPreview()) {
+    if (!previewSettings.dismissed_advice.includes(key)) previewSettings.dismissed_advice.push(key)
+    return
+  }
   await invoke<AppSettings>('dismiss_advice', { key })
 }
 export const restoreAdvice = async (key: string) => {
-  if (isPreview()) { previewDismissed.delete(key); return }
+  if (isPreview()) {
+    previewSettings.dismissed_advice = previewSettings.dismissed_advice.filter(item => item !== key)
+    return
+  }
   await invoke<AppSettings>('restore_advice', { key })
 }
 /** First diagnosis tag for a prompt, matched by tool, session and prompt time. */

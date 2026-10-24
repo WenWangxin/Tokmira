@@ -450,7 +450,11 @@ fn prepare_install(
     })
 }
 
-fn prepare_uninstall(home: &Path, data_dir: &Path) -> Result<Prepared, RecorderError> {
+fn prepare_uninstall(
+    home: &Path,
+    data_dir: &Path,
+    parts: RecorderParts,
+) -> Result<Prepared, RecorderError> {
     let (mut settings, existed) = read_settings(home)?;
     let mut state = read_state(data_dir)?;
     let old_state = state.clone();
@@ -459,94 +463,102 @@ fn prepare_uninstall(home: &Path, data_dir: &Path) -> Result<Prepared, RecorderE
     let root = settings
         .as_object_mut()
         .ok_or(RecorderError::InvalidSettings)?;
-    if let Some(current) = root.get("statusLine").cloned() {
-        if command(&current)
-            .is_some_and(|cmd| ours(cmd, state.statusline_command.as_deref(), "statusline"))
-        {
-            let before = command(&current).map(str::to_owned);
-            if state.original_statusline_present && state.original_statusline.is_none() {
-                plan.notes
-                    .push("原 statusLine 备份缺失，保留当前配置".to_owned());
-            } else if state.original_statusline_present
-                && !state
-                    .original_statusline
-                    .as_ref()
-                    .and_then(command)
-                    .is_some_and(|cmd| fallback_ours(cmd, "statusline"))
+    if parts.statusline {
+        if let Some(current) = root.get("statusLine").cloned() {
+            if command(&current)
+                .is_some_and(|cmd| ours(cmd, state.statusline_command.as_deref(), "statusline"))
             {
-                if let Some(original) = state.original_statusline.take() {
-                    let after = command(&original).map(str::to_owned);
-                    root.insert("statusLine".to_owned(), original);
+                let before = command(&current).map(str::to_owned);
+                if state.original_statusline_present && state.original_statusline.is_none() {
+                    plan.notes
+                        .push("原 statusLine 备份缺失，保留当前配置".to_owned());
+                } else if state.original_statusline_present
+                    && !state
+                        .original_statusline
+                        .as_ref()
+                        .and_then(command)
+                        .is_some_and(|cmd| fallback_ours(cmd, "statusline"))
+                {
+                    if let Some(original) = state.original_statusline.take() {
+                        let after = command(&original).map(str::to_owned);
+                        root.insert("statusLine".to_owned(), original);
+                        change(
+                            &mut plan,
+                            &file,
+                            "statusLine".to_owned(),
+                            "恢复",
+                            before,
+                            after,
+                        );
+                    }
+                } else {
+                    root.shift_remove("statusLine");
                     change(
                         &mut plan,
                         &file,
                         "statusLine".to_owned(),
-                        "恢复",
+                        "删除",
                         before,
-                        after,
+                        None,
                     );
                 }
-            } else {
-                root.shift_remove("statusLine");
-                change(
-                    &mut plan,
-                    &file,
-                    "statusLine".to_owned(),
-                    "删除",
-                    before,
-                    None,
-                );
+            } else if state.statusline_command.is_some() {
+                plan.notes
+                    .push("statusLine 已被用户修改，保留当前配置".to_owned());
             }
-        } else if state.statusline_command.is_some() {
-            plan.notes
-                .push("statusLine 已被用户修改，保留当前配置".to_owned());
         }
+        state.statusline_command = None;
+        state.original_statusline = None;
+        state.original_statusline_present = false;
     }
-    state.statusline_command = None;
-    state.original_statusline = None;
-    state.original_statusline_present = false;
-    if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
-        for event in EVENTS {
-            if let Some(entries) = hooks.get_mut(event).and_then(Value::as_array_mut) {
-                for index in (0..entries.len()).rev() {
-                    if hook_entry_ours(&entries[index], state.hooks_command.as_deref()) {
-                        let before = entries[index]
-                            .get("hooks")
-                            .and_then(Value::as_array)
-                            .and_then(|list| list.first())
-                            .and_then(command)
-                            .map(str::to_owned);
-                        entries.remove(index);
-                        change(
-                            &mut plan,
-                            &file,
-                            format!("hooks.{event}[{index}]"),
-                            "删除",
-                            before,
-                            None,
-                        );
+    if parts.hooks {
+        if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
+            for event in EVENTS {
+                if let Some(entries) = hooks.get_mut(event).and_then(Value::as_array_mut) {
+                    for index in (0..entries.len()).rev() {
+                        if hook_entry_ours(&entries[index], state.hooks_command.as_deref()) {
+                            let before = entries[index]
+                                .get("hooks")
+                                .and_then(Value::as_array)
+                                .and_then(|list| list.first())
+                                .and_then(command)
+                                .map(str::to_owned);
+                            entries.remove(index);
+                            change(
+                                &mut plan,
+                                &file,
+                                format!("hooks.{event}[{index}]"),
+                                "删除",
+                                before,
+                                None,
+                            );
+                        }
+                    }
+                    if entries.is_empty()
+                        && !state
+                            .original_empty_hook_events
+                            .iter()
+                            .any(|name| name == event)
+                    {
+                        hooks.shift_remove(event);
                     }
                 }
-                if entries.is_empty()
-                    && !state
-                        .original_empty_hook_events
-                        .iter()
-                        .any(|name| name == event)
-                {
-                    hooks.shift_remove(event);
-                }
+            }
+            if hooks.is_empty() && !state.original_hooks_empty {
+                root.shift_remove("hooks");
             }
         }
-        if hooks.is_empty() && !state.original_hooks_empty {
-            root.shift_remove("hooks");
-        }
+        state.hooks_command = None;
+        state.original_hooks_empty = false;
+        state.original_empty_hook_events.clear();
     }
-    state.hooks_command = None;
-    state.original_hooks_empty = false;
-    state.original_empty_hook_events.clear();
-    let remove_settings = old_state.settings_originally_existed == Some(false)
+    let fully_removed = state.statusline_command.is_none() && state.hooks_command.is_none();
+    let remove_settings = fully_removed
+        && old_state.settings_originally_existed == Some(false)
         && settings.as_object().is_some_and(Map::is_empty);
-    state.settings_originally_existed = None;
+    if fully_removed {
+        state.settings_originally_existed = None;
+    }
     if !plan.changes.is_empty() {
         plan.backup_path = Some(backup_name(data_dir));
     }
@@ -568,8 +580,12 @@ pub fn plan_install(
 ) -> Result<RecorderPlan, RecorderError> {
     Ok(prepare_install(home, data_dir, exe, parts)?.plan)
 }
-pub fn plan_uninstall(home: &Path, data_dir: &Path) -> Result<RecorderPlan, RecorderError> {
-    Ok(prepare_uninstall(home, data_dir)?.plan)
+pub fn plan_uninstall(
+    home: &Path,
+    data_dir: &Path,
+    parts: RecorderParts,
+) -> Result<RecorderPlan, RecorderError> {
+    Ok(prepare_uninstall(home, data_dir, parts)?.plan)
 }
 fn pretty(value: &impl Serialize) -> Result<Vec<u8>, RecorderError> {
     let mut out = Vec::new();
@@ -679,8 +695,12 @@ pub fn install(
 ) -> Result<RecorderPlan, RecorderError> {
     apply(home, data_dir, prepare_install(home, data_dir, exe, parts)?)
 }
-pub fn uninstall(home: &Path, data_dir: &Path) -> Result<RecorderPlan, RecorderError> {
-    apply(home, data_dir, prepare_uninstall(home, data_dir)?)
+pub fn uninstall(
+    home: &Path,
+    data_dir: &Path,
+    parts: RecorderParts,
+) -> Result<RecorderPlan, RecorderError> {
+    apply(home, data_dir, prepare_uninstall(home, data_dir, parts)?)
 }
 
 fn append_record<T: Serialize>(path: &Path, record: &T) -> io::Result<()> {

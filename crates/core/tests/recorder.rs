@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde::Serialize;
 use serde_json::Value;
 use token_audit_core::recorder::{
     clear_records, executable_command, install, normalize_executable_path, plan_install,
@@ -103,9 +104,9 @@ fn installs_and_restores_existing_configuration_with_order_and_backups() {
     let second = install(&temp.home(), &temp.data(), &temp.exe(), both()).expect("repeat install");
     assert!(second.changes.is_empty());
     assert_eq!(temp.backups(), 1);
-    let unplan = plan_uninstall(&temp.home(), &temp.data()).expect("uninstall plan");
+    let unplan = plan_uninstall(&temp.home(), &temp.data(), both()).expect("uninstall plan");
     assert_eq!(unplan.changes.len(), 5);
-    uninstall(&temp.home(), &temp.data()).expect("uninstall");
+    uninstall(&temp.home(), &temp.data(), both()).expect("uninstall");
     assert_eq!(temp.backups(), 2);
     assert_eq!(temp.read_settings().to_string(), original_value.to_string());
 }
@@ -130,7 +131,7 @@ fn new_settings_and_empty_hooks_restore_cleanly() {
             temp.put_settings(original);
         }
         install(&temp.home(), &temp.data(), &temp.exe(), both()).expect("install");
-        uninstall(&temp.home(), &temp.data()).expect("uninstall");
+        uninstall(&temp.home(), &temp.data(), both()).expect("uninstall");
         if let Some(original) = original {
             let expected: Value = serde_json::from_str(original).expect("expected");
             assert_eq!(temp.read_settings().to_string(), expected.to_string());
@@ -155,7 +156,7 @@ fn modified_statusline_is_left_alone_and_state_is_cleared() {
     )
     .expect("install");
     temp.put_settings(r#"{"statusLine":{"type":"command","command":"printf user"}}"#);
-    let result = uninstall(&temp.home(), &temp.data()).expect("uninstall");
+    let result = uninstall(&temp.home(), &temp.data(), both()).expect("uninstall");
     assert!(result.changes.is_empty());
     assert!(result.notes.iter().any(|note| note.contains("用户修改")));
     assert_eq!(temp.read_settings()["statusLine"]["command"], "printf user");
@@ -300,7 +301,7 @@ fn changed_executable_path_updates_commands_and_preserves_original_statusline() 
             .expect("command")
             .contains("/B/token-audit"));
     }
-    uninstall(&temp.home(), &temp.data()).expect("uninstall");
+    uninstall(&temp.home(), &temp.data(), both()).expect("uninstall");
     assert_eq!(
         temp.read_settings()["statusLine"]["command"],
         "printf original"
@@ -323,7 +324,7 @@ fn stale_state_command_still_removes_old_executable_entries() {
     state["hooks_command"] =
         Value::String(executable_command(&b, "event --tool claude").expect("B command"));
     fs::write(&state_path, serde_json::to_vec(&state).expect("serialize")).expect("write state");
-    let plan = uninstall(&temp.home(), &temp.data()).expect("uninstall B");
+    let plan = uninstall(&temp.home(), &temp.data(), both()).expect("uninstall B");
     assert_eq!(plan.changes.len(), 5);
     assert_eq!(
         temp.read_settings()["statusLine"]["command"],
@@ -356,7 +357,7 @@ fn install_does_not_save_our_existing_command_as_original() {
             .expect("json");
     assert_eq!(state["original_statusline_present"], false);
     assert!(state["original_statusline"].is_null());
-    uninstall(&temp.home(), &temp.data()).expect("uninstall");
+    uninstall(&temp.home(), &temp.data(), both()).expect("uninstall");
     assert!(temp.read_settings().get("statusLine").is_none());
 }
 
@@ -433,7 +434,7 @@ fn statusline_and_hooks_can_be_installed_independently() {
     .expect("statusline install");
     let state = status(&temp.home(), &temp.data());
     assert!(state.hooks_installed && state.statusline_installed);
-    uninstall(&temp.home(), &temp.data()).expect("uninstall");
+    uninstall(&temp.home(), &temp.data(), both()).expect("uninstall");
     assert_eq!(temp.read_settings().to_string(), r#"{"alpha":1}"#);
 }
 
@@ -443,9 +444,9 @@ fn missing_state_uses_recorder_command_fallback() {
     temp.put_settings("{}");
     install(&temp.home(), &temp.data(), &temp.exe(), both()).expect("install");
     fs::remove_file(temp.data().join("recorder/state.json")).expect("remove state");
-    let plan = plan_uninstall(&temp.home(), &temp.data()).expect("fallback plan");
+    let plan = plan_uninstall(&temp.home(), &temp.data(), both()).expect("fallback plan");
     assert_eq!(plan.changes.len(), 5);
-    uninstall(&temp.home(), &temp.data()).expect("fallback uninstall");
+    uninstall(&temp.home(), &temp.data(), both()).expect("fallback uninstall");
     assert_eq!(temp.read_settings().to_string(), "{}");
 }
 
@@ -499,4 +500,111 @@ fn same_quota_in_new_session_is_recorded() {
     record_statusline(&temp.data(), first);
     record_statusline(&temp.data(), second);
     assert_eq!(read_statusline_records(&temp.data()).0.len(), 2);
+}
+
+fn canonical(value: &impl Serialize) -> Vec<u8> {
+    let mut out = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"  ");
+    let mut serializer = serde_json::Serializer::with_formatter(&mut out, formatter);
+    value.serialize(&mut serializer).expect("serialize");
+    out.push(b'\n');
+    out
+}
+fn sample_settings() -> Value {
+    serde_json::json!({
+        "alpha": 1,
+        "statusLine": {"type": "command", "command": "printf old", "padding": 0},
+        "hooks": {
+            "Stop": [{"matcher": "x", "hooks": [{"type": "command", "command": "printf stop"}]}],
+            "SessionStart": []
+        },
+        "omega": 2
+    })
+}
+fn state_json(temp: &TempDir) -> Value {
+    serde_json::from_slice(&fs::read(temp.data().join("recorder/state.json")).expect("state"))
+        .expect("state json")
+}
+fn hooks_only() -> RecorderParts {
+    RecorderParts {
+        statusline: false,
+        hooks: true,
+    }
+}
+fn statusline_only() -> RecorderParts {
+    RecorderParts {
+        statusline: true,
+        hooks: false,
+    }
+}
+
+#[test]
+fn partial_uninstall_keeps_the_other_part_and_restores_original_bytes() {
+    let original = canonical(&sample_settings());
+    let temp = TempDir::new();
+    temp.put_settings(std::str::from_utf8(&original).expect("utf8"));
+    install(&temp.home(), &temp.data(), &temp.exe(), both()).expect("install");
+    uninstall(&temp.home(), &temp.data(), hooks_only()).expect("uninstall hooks");
+    let kept = status(&temp.home(), &temp.data());
+    assert!(kept.statusline_installed && !kept.hooks_installed);
+    let settings = temp.read_settings();
+    assert!(settings["statusLine"]["command"]
+        .as_str()
+        .expect("command")
+        .contains("statusline"));
+    assert_eq!(settings["hooks"]["Stop"].as_array().expect("stop").len(), 1);
+    assert_eq!(
+        settings["hooks"]["Stop"][0]["hooks"][0]["command"],
+        "printf stop"
+    );
+    assert!(settings["hooks"].get("UserPromptSubmit").is_none());
+    assert_eq!(
+        settings["hooks"]["SessionStart"]
+            .as_array()
+            .expect("empty")
+            .len(),
+        0
+    );
+    let state = state_json(&temp);
+    assert!(state["statusline_command"].is_string());
+    assert!(state["hooks_command"].is_null());
+    assert_eq!(state["settings_originally_existed"], true);
+
+    let temp = TempDir::new();
+    temp.put_settings(std::str::from_utf8(&original).expect("utf8"));
+    install(&temp.home(), &temp.data(), &temp.exe(), both()).expect("install");
+    uninstall(&temp.home(), &temp.data(), statusline_only()).expect("uninstall statusline");
+    let kept = status(&temp.home(), &temp.data());
+    assert!(!kept.statusline_installed && kept.hooks_installed);
+    let settings = temp.read_settings();
+    assert_eq!(settings["statusLine"]["command"], "printf old");
+    assert_eq!(settings["statusLine"]["padding"], 0);
+    assert!(settings["hooks"]["UserPromptSubmit"].is_array());
+    let state = state_json(&temp);
+    assert!(state["statusline_command"].is_null());
+    assert!(state["original_statusline"].is_null());
+    assert!(state["hooks_command"].is_string());
+    assert_eq!(state["settings_originally_existed"], true);
+
+    for order in [
+        [hooks_only(), statusline_only()],
+        [statusline_only(), hooks_only()],
+    ] {
+        let temp = TempDir::new();
+        temp.put_settings(std::str::from_utf8(&original).expect("utf8"));
+        install(&temp.home(), &temp.data(), &temp.exe(), both()).expect("install");
+        for parts in order {
+            uninstall(&temp.home(), &temp.data(), parts).expect("partial uninstall");
+        }
+        assert_eq!(fs::read(temp.settings()).expect("restored"), original);
+        assert!(state_json(&temp)["settings_originally_existed"].is_null());
+    }
+
+    let temp = TempDir::new();
+    install(&temp.home(), &temp.data(), &temp.exe(), both()).expect("install new");
+    uninstall(&temp.home(), &temp.data(), hooks_only()).expect("uninstall hooks");
+    assert!(temp.settings().exists());
+    assert!(status(&temp.home(), &temp.data()).statusline_installed);
+    uninstall(&temp.home(), &temp.data(), statusline_only()).expect("uninstall statusline");
+    assert!(!temp.settings().exists());
 }

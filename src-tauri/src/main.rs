@@ -448,9 +448,60 @@ fn recorder_install(
     let exe = cli_executable()?;
     recorder::install(&state.home, &state.data_dir, &exe, parts).map_err(|error| error.to_string())
 }
+#[derive(Serialize)]
+struct DirectoryStatus {
+    path: PathBuf,
+    exists: bool,
+}
+#[derive(Serialize)]
+struct AppEnvironment {
+    claude_logs: DirectoryStatus,
+    codex_logs: DirectoryStatus,
+    data_dir: PathBuf,
+    pricing_version: String,
+    pricing_note: String,
+    advice_version: String,
+    backup_dir: PathBuf,
+}
 #[tauri::command]
-fn recorder_uninstall(state: State<'_, AppState>) -> Result<RecorderPlan, String> {
-    recorder::uninstall(&state.home, &state.data_dir).map_err(|error| error.to_string())
+fn get_environment(state: State<'_, AppState>) -> Result<AppEnvironment, String> {
+    let pricing = Pricing::bundled().map_err(str::to_owned)?;
+    let advice = AdviceConfig::bundled().map_err(str::to_owned)?;
+    let claude_logs = state.home.join(".claude").join("projects");
+    let codex_logs = state.home.join(".codex").join("sessions");
+    Ok(AppEnvironment {
+        claude_logs: DirectoryStatus {
+            exists: claude_logs.exists(),
+            path: claude_logs,
+        },
+        codex_logs: DirectoryStatus {
+            exists: codex_logs.exists(),
+            path: codex_logs,
+        },
+        data_dir: state.data_dir.clone(),
+        pricing_version: pricing.version,
+        pricing_note: pricing.note,
+        advice_version: advice.version,
+        backup_dir: state.data_dir.join("recorder").join("backups"),
+    })
+}
+#[tauri::command]
+fn clear_recorder_records(state: State<'_, AppState>) -> Result<(), String> {
+    recorder::clear_records(&state.data_dir).map_err(|error| error.to_string())
+}
+#[tauri::command]
+fn recorder_plan_uninstall(
+    state: State<'_, AppState>,
+    parts: RecorderParts,
+) -> Result<RecorderPlan, String> {
+    recorder::plan_uninstall(&state.home, &state.data_dir, parts).map_err(|error| error.to_string())
+}
+#[tauri::command]
+fn recorder_uninstall(
+    state: State<'_, AppState>,
+    parts: RecorderParts,
+) -> Result<RecorderPlan, String> {
+    recorder::uninstall(&state.home, &state.data_dir, parts).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -588,8 +639,11 @@ fn main() -> tauri::Result<()> {
             get_session_detail,
             dismiss_advice,
             restore_advice,
+            get_environment,
+            clear_recorder_records,
             recorder_status,
             recorder_plan,
+            recorder_plan_uninstall,
             recorder_install,
             recorder_uninstall
         ])

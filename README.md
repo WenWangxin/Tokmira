@@ -40,7 +40,7 @@ cargo run -p token-audit-cli -- advice --days 7
 
 默认不安装。先用 `token-audit recorder install --dry-run` 查看计划，再用 `token-audit recorder install` 安装状态栏记录器；加 `--hooks` 可单独安装 hooks，加 `--statusline --hooks` 可同时安装。`token-audit recorder status` 查看安装状态，`token-audit recorder records` 查看最近的额度记录。管理命令支持 `--home <目录>` 和 `--data-dir <目录>`，`status` 和 `records` 支持 `--json`。
 
-安装会修改 `<home>/.claude/settings.json`：状态栏替换为记录器命令并链式调用原命令；四类 hooks 只追加条目。每次修改前把原文件完整备份到 `<data_dir>/recorder/backups/`。用 `token-audit recorder uninstall` 先查看计划并卸载；可加 `--dry-run` 只预览。卸载保留记录文件；界面可通过核心库 `clear_records` 清除。默认数据目录为系统用户数据目录下的 `token-audit`。指定自定义 `--data-dir` 安装时，配置里的记录器命令会带上该路径，确保 Claude Code 调用时写入同一目录。
+安装会修改 `<home>/.claude/settings.json`：状态栏替换为记录器命令并链式调用原命令；四类 hooks 只追加条目。每次修改前把原文件完整备份到 `<data_dir>/recorder/backups/`。用 `token-audit recorder uninstall` 先查看计划并卸载；可加 `--dry-run` 只预览。`--statusline` 只卸载状态栏并恢复原来的状态栏命令，`--hooks` 只卸载 hooks；两个都不传时卸载全部，也可以同时传入。只卸一部分时，`state.json` 里另一部分的状态保留；两部分都卸完后，配置文件与一次全部卸载的结果相同。卸载保留记录文件；界面或 `clear_records` 可清除这些记录，不影响 Claude Code / Codex 自己的日志。默认数据目录为系统用户数据目录下的 `token-audit`。指定自定义 `--data-dir` 安装时，配置里的记录器命令会带上该路径，确保 Claude Code 调用时写入同一目录。
 
 ## 检查
 

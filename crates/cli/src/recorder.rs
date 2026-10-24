@@ -304,11 +304,15 @@ fn run_recorder(action: &str, args: impl Iterator<Item = OsString>) -> Result<()
                 }
             }
         }
-        "uninstall" if exe.is_none() && !parts.statusline && !parts.hooks && !json => {
-            let plan = core::plan_uninstall(&home, &data).map_err(|e| e.to_string())?;
+        "uninstall" if exe.is_none() && !json => {
+            if !parts.statusline && !parts.hooks {
+                parts.statusline = true;
+                parts.hooks = true;
+            }
+            let plan = core::plan_uninstall(&home, &data, parts).map_err(|e| e.to_string())?;
             print_plan(&plan);
             if !dry_run {
-                let result = core::uninstall(&home, &data).map_err(|e| e.to_string())?;
+                let result = core::uninstall(&home, &data, parts).map_err(|e| e.to_string())?;
                 if let Some(path) = result.backup_path {
                     println!("已备份到 {}", path.display());
                 }

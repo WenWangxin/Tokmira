@@ -299,3 +299,48 @@ fn records_display_local_record_and_reset_times() {
         _ => c.is_ascii_digit(),
     }));
 }
+
+#[cfg(unix)]
+#[test]
+fn uninstall_flags_remove_only_the_selected_part() {
+    let temp = TempDir::new();
+    fs::create_dir_all(temp.home().join(".claude")).expect("settings dir");
+    fs::write(
+        temp.settings(),
+        r#"{"statusLine":{"type":"command","command":"printf old"}}"#,
+    )
+    .expect("settings");
+    let install = Command::new(binary())
+        .args(["recorder", "install", "--statusline", "--hooks", "--home"])
+        .arg(temp.home())
+        .arg("--data-dir")
+        .arg(temp.data())
+        .arg("--exe")
+        .arg(binary())
+        .output()
+        .expect("install");
+    assert!(
+        install.status.success(),
+        "{}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+    let uninstall = Command::new(binary())
+        .args(["recorder", "uninstall", "--hooks", "--home"])
+        .arg(temp.home())
+        .arg("--data-dir")
+        .arg(temp.data())
+        .output()
+        .expect("uninstall");
+    assert!(
+        uninstall.status.success(),
+        "{}",
+        String::from_utf8_lossy(&uninstall.stderr)
+    );
+    let settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(temp.settings()).expect("settings")).expect("json");
+    assert!(settings["statusLine"]["command"]
+        .as_str()
+        .expect("command")
+        .contains("statusline"));
+    assert!(settings.get("hooks").is_none());
+}
