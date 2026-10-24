@@ -24,11 +24,15 @@ export function mockUsageDetail(window: UsageWindowRef): UsageDetail {
   const projects = empty ? [] : [rank('/sample/project', '示例项目', '2 个会话', 2000000, 15.4, 20), rank('/sample/audit', '审计工具', '2 个会话', 730000, 5.6, 7)]
   const models = empty ? [] : [rank('sample-model-large', '示例大模型', '19 次请求', 1840000, 14.2, 19), rank('sample-model-small', '示例小模型', '8 次请求', 890000, 6.8, 8)]
   const subagents = empty ? [] : [rank('main', '主对话', '22 次请求', 2400000, 18.2, 22), rank('subagent', '子代理', '5 次请求', 330000, 2.8, 5)]
+  const primary = window.tool === 'Claude' ? 'sample-claude-02' : 'sample-codex-01'
+  const secondary = window.tool === 'Claude' ? 'sample-claude-04' : 'sample-codex-03'
+  const primaryTitle = window.tool === 'Claude' ? '重构登录模块' : '迁移数据库脚本'
+  const secondaryTitle = window.tool === 'Claude' ? '写对账单元测试' : '写 README'
   const high_prompts = empty ? [] : [
-    { at: promptAt(.85), session_id: 'sample-session-01', title: '重构登录模块', delta: 4.2, requests: 3, tokens: 450000 },
-    { at: promptAt(.7), session_id: 'sample-session-01', title: '重构登录模块', delta: 4.0, requests: 2, tokens: 390000 },
-    { at: promptAt(.5), session_id: 'sample-session-02', title: '写对账单元测试', delta: 3.9, requests: 4, tokens: 350000 },
-    { at: promptAt(.35), session_id: 'sample-session-02', title: '写对账单元测试', delta: 3.6, requests: 2, tokens: 310000 },
+    { at: promptAt(.85), session_id: primary, title: primaryTitle, delta: 4.2, requests: 3, tokens: 450000 },
+    { at: promptAt(.7), session_id: primary, title: primaryTitle, delta: 4.0, requests: 2, tokens: 390000 },
+    { at: promptAt(.5), session_id: secondary, title: secondaryTitle, delta: 3.9, requests: 4, tokens: 350000 },
+    { at: promptAt(.35), session_id: secondary, title: secondaryTitle, delta: 3.6, requests: 2, tokens: 310000 },
   ]
   return {
     window, used_percent: 28, remaining_percent: 72, resets_at: window.end,

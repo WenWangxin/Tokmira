@@ -40,7 +40,7 @@ const icons = [LayoutDashboard, ChartColumn, Lightbulb, List, Settings2]
       </div>
     </aside>
 
-    <main class="content" :class="{ 'content-dashboard': $route.path === '/', 'content-usage': $route.path === '/usage' }">
+    <main class="content" :class="{ 'content-dashboard': $route.path === '/', 'content-usage': $route.path === '/usage', 'content-sessions': $route.path === '/sessions' }">
       <RouterView />
     </main>
   </div>

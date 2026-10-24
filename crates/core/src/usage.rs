@@ -124,7 +124,7 @@ pub fn list_usage_windows(
     five_hours
 }
 
-fn short_name(value: &str) -> String {
+pub(crate) fn directory_name(value: &str) -> String {
     value
         .rsplit(['/', '\\'])
         .find(|part| !part.is_empty())
@@ -134,15 +134,15 @@ fn short_name(value: &str) -> String {
 
 /// Untitled sessions (e.g. `codex exec`) often share a project, so the fallback
 /// keeps the short session ID next to the project name to tell them apart.
-fn session_name(id: &str, title: Option<&String>, project: Option<&str>) -> String {
+pub(crate) fn session_display_name(id: &str, title: Option<&str>, project: Option<&str>) -> String {
     let short_id: String = id.chars().take(8).collect();
     title
         .filter(|title| !title.trim().is_empty())
-        .cloned()
+        .map(str::to_owned)
         .or_else(|| {
             project
-                .filter(|p| !p.is_empty())
-                .map(|p| format!("{} · {short_id}", short_name(p)))
+                .filter(|path| !path.is_empty())
+                .map(|path| format!("{} · {short_id}", directory_name(path)))
         })
         .unwrap_or(short_id)
 }
@@ -251,12 +251,16 @@ pub fn usage_detail(
             .get(id)
             .cloned()
             .unwrap_or((None, Source::Unknown));
-        let name = session_name(id, input.titles.get(id), project.as_deref());
+        let name = session_display_name(
+            id,
+            input.titles.get(id).map(String::as_str),
+            project.as_deref(),
+        );
         let subtitle = format!(
             "{} · {}",
             project
                 .as_deref()
-                .map(short_name)
+                .map(directory_name)
                 .unwrap_or_else(|| "未知项目".to_owned()),
             source_name(source)
         );
@@ -267,7 +271,7 @@ pub fn usage_detail(
             if key.is_empty() {
                 "未知项目".to_owned()
             } else {
-                short_name(key)
+                directory_name(key)
             },
             format!(
                 "{} 个会话",
@@ -310,9 +314,11 @@ pub fn usage_detail(
             Some(UsagePrompt {
                 at,
                 session_id: p.session_id.clone(),
-                title: session_name(
+                title: session_display_name(
                     &p.session_id,
-                    p.title.as_ref().or_else(|| input.titles.get(&p.session_id)),
+                    p.title
+                        .as_deref()
+                        .or_else(|| input.titles.get(&p.session_id).map(String::as_str)),
                     project,
                 ),
                 delta: p.delta,

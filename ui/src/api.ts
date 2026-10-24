@@ -313,6 +313,15 @@ export interface AdviceReport {
   config_version: string
   tools: ToolAdvice[]
   prompt_tags: PromptTag[]
+  event_tags: EventTag[]
+}
+export interface EventTag {
+  tool: Tool
+  session_id: string
+  request_id: string | null
+  at: string
+  tag: string
+  severity: AdviceSeverity
 }
 
 const isPreview = () => import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
@@ -326,6 +335,7 @@ async function developmentAdvice(periodDays: number): Promise<AdviceReport> {
   // Mirror the backend: dismissed items are hidden and counted.
   return {
     ...report,
+    event_tags: report.event_tags ?? [],
     tools: report.tools.map(tool => ({
       ...tool,
       items: tool.items.filter(item => !previewDismissed.has(item.key)),
@@ -346,3 +356,83 @@ export const restoreAdvice = async (key: string) => {
 /** First diagnosis tag for a prompt, matched by tool, session and prompt time. */
 export const promptTag = (tags: PromptTag[] | undefined, tool: Tool, sessionId: string, promptAt: string | null) =>
   promptAt ? tags?.find(tag => tag.tool === tool && tag.session_id === sessionId && Date.parse(tag.prompt_at) === Date.parse(promptAt)) : undefined
+
+export interface SessionRow {
+  tool: Tool
+  session_id: string
+  title: string | null
+  display_name: string
+  project: string | null
+  project_name: string
+  source: Source
+  model: string
+  requests: number
+  total_tokens: number
+  cache_hit_rate: number | null
+  estimated_cost_usd: number
+  weekly_delta: number
+  first_at: string
+  last_at: string
+  has_quota_data: boolean
+}
+export interface TimelineTag { tag: string; severity: AdviceSeverity }
+export type TimelineEntry =
+  | { kind: 'Prompt'; at: string; gap_minutes_from_previous_prompt: number | null }
+  | {
+      kind: 'Request'
+      at: string
+      index: number
+      is_subagent: boolean
+      model: string
+      tokens: TokenCounts
+      weekly_delta: number
+      tag: TimelineTag | null
+    }
+export interface SessionDetail {
+  tool: Tool
+  session_id: string
+  title: string | null
+  display_name: string
+  project: string | null
+  project_name: string
+  source: Source
+  model: string
+  requests: number
+  total_tokens: number
+  cache_hit_rate: number | null
+  estimated_cost_usd: number
+  weekly_delta: number
+  has_quota_data: boolean
+  first_at: string
+  last_at: string
+  entries: TimelineEntry[]
+}
+
+const sessionListFiles = import.meta.glob<{ default: SessionRow[] }>('../.local/sessions.json')
+const sessionDetailFiles = import.meta.glob<{ default: SessionDetail }>('../.local/session-*.json')
+async function developmentSessions(): Promise<SessionRow[]> {
+  const { mockSessions } = await import('./mocks/sessions')
+  const variant = new URLSearchParams(window.location.search).get('mock')
+  if (variant === 'empty' || variant === 'nodata') return []
+  const local = sessionListFiles['../.local/sessions.json']
+  return local ? (await local()).default : mockSessions()
+}
+async function developmentSessionDetail(tool: Tool, sessionId: string): Promise<SessionDetail> {
+  const variant = new URLSearchParams(window.location.search).get('mock')
+  if (variant === 'empty' || variant === 'nodata') throw new Error('未找到该会话')
+  const file = sessionDetailFiles[`../.local/session-${sessionId}.json`]
+  if (file) return (await file()).default
+  if (sessionListFiles['../.local/sessions.json']) {
+    throw new Error('浏览器预览没有这份会话详情。请用 token-audit session --json 生成 ui/.local/session-<id>.json')
+  }
+  const { mockSessionDetail } = await import('./mocks/sessions')
+  const detail = mockSessionDetail(tool, sessionId)
+  if (!detail) throw new Error('未找到该会话')
+  return detail
+}
+export const getSessions = (days: 7 | 30 = 7) =>
+  isPreview() ? developmentSessions() : invoke<SessionRow[]>('get_sessions', { days })
+export const getSessionDetail = (tool: Tool, sessionId: string) =>
+  isPreview()
+    ? developmentSessionDetail(tool, sessionId)
+    : invoke<SessionDetail>('get_session_detail', { tool, sessionId })

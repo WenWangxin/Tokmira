@@ -471,4 +471,85 @@ fn small_overhead_does_not_tag_an_expensive_prompt() {
     }
     let report = report(&events, &prompts, &[]);
     assert!(report.prompt_tags.iter().all(|t| t.tag != "新会话启动开销"));
+    // Request tags are not gated by the prompt's 30% cost share.
+    assert_eq!(report.event_tags.len(), 1);
+    assert_eq!(report.event_tags[0].tag, "新会话启动开销");
+    assert_eq!(report.event_tags[0].at, at(100));
+    assert_eq!(report.event_tags[0].severity, Severity::Warning);
+}
+
+#[test]
+fn event_tags_keep_one_per_request_preferring_error_then_earlier_rule() {
+    let heavy = |session: &str, delta: f64| {
+        event(
+            Tool::Claude,
+            session,
+            30,
+            "claude-opus-5-5",
+            TokenCounts {
+                input: 10,
+                output: 100,
+                cache_read: 400_000,
+                cache_write_1h: 40_000,
+                ..TokenCounts::default()
+            },
+            delta,
+        )
+    };
+    // Start-up (earlier, Warning) and long context (later) hit the same request.
+    let warning = report(&[heavy("s", 0.0)], &[], &[]);
+    assert_eq!(warning.event_tags.len(), 1);
+    assert_eq!(warning.event_tags[0].tag, "新会话启动开销");
+    assert_eq!(warning.event_tags[0].severity, Severity::Warning);
+
+    let error = report(&[heavy("s", 100.0)], &[], &[]);
+    assert_eq!(error.event_tags.len(), 1);
+    assert_eq!(error.event_tags[0].tag, "上下文过长");
+    assert_eq!(error.event_tags[0].severity, Severity::Error);
+    assert_eq!(error.event_tags[0].at, at(30));
+}
+
+#[test]
+fn event_tags_follow_request_order_when_timestamps_match() {
+    let moment = at(30);
+    let mut startup = event(
+        Tool::Claude,
+        "s",
+        30,
+        "claude-opus-5-5",
+        TokenCounts {
+            input: 10,
+            output: 20,
+            cache_write_1h: 30_000,
+            ..TokenCounts::default()
+        },
+        0.0,
+    );
+    startup.event.timestamp = moment;
+    startup.event.request_id = Some("a".to_owned());
+    let mut long = event(
+        Tool::Claude,
+        "s",
+        30,
+        "claude-opus-5-5",
+        TokenCounts {
+            input: 10,
+            output: 20,
+            cache_read: 400_000,
+            ..TokenCounts::default()
+        },
+        0.0,
+    );
+    long.event.timestamp = moment;
+    long.event.request_id = Some("z".to_owned());
+    let report = report(&[startup, long], &[], &[]);
+    let tags: Vec<_> = report
+        .event_tags
+        .iter()
+        .map(|tag| (tag.tag.as_str(), tag.request_id.as_deref()))
+        .collect();
+    assert_eq!(
+        tags,
+        vec![("新会话启动开销", Some("a")), ("上下文过长", Some("z"))]
+    );
 }

@@ -7,8 +7,12 @@
 //! Percent conversion: an event's extra share of the weekly quota is its attributed weekly
 //! delta multiplied by (extra cost / event cost). When a tool has no attributed weekly
 //! quota in the period, percentages are `None` and the UI falls back to cost and tokens.
+//!
+//! `event_tags` marks each request that hit a rule. Unlike `prompt_tags`, a request tag
+//! does not require the diagnosis to explain 30% of the prompt's cost. One request keeps
+//! a single tag: Error wins, then the earlier rule.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -146,6 +150,19 @@ pub struct PromptTag {
     pub severity: Severity,
 }
 
+/// One request that hit at least one diagnosis rule.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct EventTag {
+    pub tool: Tool,
+    pub session_id: String,
+    /// Present when the log had a request id, so the timeline can tell apart
+    /// requests that share a timestamp.
+    pub request_id: Option<String>,
+    pub at: DateTime<Utc>,
+    pub tag: String,
+    pub severity: Severity,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ToolAdviceSummary {
     pub avoidable_weekly_pct: Option<f64>,
@@ -170,6 +187,8 @@ pub struct AdviceReport {
     pub config_version: String,
     pub tools: Vec<ToolAdvice>,
     pub prompt_tags: Vec<PromptTag>,
+    /// One tag per request that hit a rule. The 30% prompt-cost gate does not apply.
+    pub event_tags: Vec<EventTag>,
 }
 
 pub struct AdviceInput<'a> {
@@ -736,6 +755,46 @@ fn prompt_key(
     position.checked_sub(1).map(|index| times[index])
 }
 
+/// One chosen request tag, plus the scan index used to order tags that share a timestamp.
+struct ChosenTag {
+    index: usize,
+    tag: EventTag,
+}
+
+/// Keeps one tag per event. Error replaces Warning; an earlier rule keeps its tag
+/// when the new hit has the same severity.
+fn record_event_tag(
+    chosen: &mut HashMap<*const EventAttribution, ChosenTag>,
+    positions: &HashMap<*const EventAttribution, usize>,
+    rule: &RuleOutput<'_>,
+    severity: Severity,
+) {
+    for hit in &rule.hits {
+        let key = std::ptr::from_ref(hit.item);
+        let replace = match chosen.get(&key) {
+            Some(existing) if existing.tag.severity == Severity::Error => false,
+            Some(_) if severity != Severity::Error => false,
+            _ => true,
+        };
+        if replace {
+            chosen.insert(
+                key,
+                ChosenTag {
+                    index: positions.get(&key).copied().unwrap_or(usize::MAX),
+                    tag: EventTag {
+                        tool: hit.item.event.tool,
+                        session_id: hit.item.event.session_id.clone(),
+                        request_id: hit.item.event.request_id.clone(),
+                        at: hit.item.event.timestamp,
+                        tag: rule.tag.to_owned(),
+                        severity,
+                    },
+                },
+            );
+        }
+    }
+}
+
 fn prompt_tags_for(
     tool: Tool,
     rule: &RuleOutput<'_>,
@@ -778,6 +837,13 @@ pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc
     let since = now - Duration::days(i64::from(period_days));
     let mut tools = Vec::new();
     let mut tags = BTreeMap::new();
+    let mut chosen_tags_all = Vec::new();
+    let positions: HashMap<*const EventAttribution, usize> = input
+        .events
+        .iter()
+        .enumerate()
+        .map(|(index, event)| (std::ptr::from_ref(event), index))
+        .collect();
     for tool in [Tool::Claude, Tool::Codex] {
         let mut all: Vec<&EventAttribution> = input
             .events
@@ -835,10 +901,12 @@ pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc
         .into_iter()
         .flatten()
         .collect();
+        let mut chosen_tags = HashMap::new();
         let mut items = Vec::new();
         let mut hidden = 0;
         for rule in rules {
             let advice = finish(tool, &rule, has_quota, input);
+            record_event_tag(&mut chosen_tags, &positions, &rule, advice.severity);
             prompt_tags_for(
                 tool,
                 &rule,
@@ -881,6 +949,7 @@ pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc
             count: items.len(),
             sessions: sessions_touched.len(),
         };
+        chosen_tags_all.extend(chosen_tags.into_values());
         tools.push(ToolAdvice {
             tool,
             has_quota_data: has_quota,
@@ -906,5 +975,19 @@ pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc
                 },
             )
             .collect(),
+        // Same-timestamp tags stay in request order so the session timeline can
+        // attach each one to the matching request.
+        event_tags: {
+            chosen_tags_all.sort_by(|left, right| {
+                left.tag
+                    .tool
+                    .cmp(&right.tag.tool)
+                    .then(left.tag.session_id.cmp(&right.tag.session_id))
+                    .then(left.tag.at.cmp(&right.tag.at))
+                    .then(left.tag.request_id.cmp(&right.tag.request_id))
+                    .then(left.index.cmp(&right.index))
+            });
+            chosen_tags_all.into_iter().map(|item| item.tag).collect()
+        },
     }
 }

@@ -13,6 +13,7 @@ use token_audit_core::model::Tool;
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{read_claude, read_codex};
 use token_audit_core::recorder::{read_statusline_records, status};
+use token_audit_core::sessions::{list_sessions, session_detail, SessionInput};
 use token_audit_core::settings::read_settings;
 use token_audit_core::timeline::build_timeline;
 use token_audit_core::usage::{list_usage_windows, usage_detail};
@@ -24,6 +25,7 @@ struct Args {
     json: bool,
     window: Option<String>,
     days: u32,
+    id: Option<String>,
 }
 fn quota_label(display: &QuotaDisplay) -> String {
     if display.window_passed {
@@ -41,6 +43,7 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
     let mut json = false;
     let mut window = None;
     let mut days = None;
+    let mut id = None;
     let mut args = args.peekable();
     while let Some(flag) = args.next() {
         let flag = flag.to_str().ok_or("参数名不是有效文本")?;
@@ -52,7 +55,7 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
             "--data-dir" if data_dir.is_none() => {
                 data_dir = Some(PathBuf::from(args.next().ok_or("--data-dir 缺少目录")?))
             }
-            "--tool" if command != "overview" && tool.is_none() => {
+            "--tool" if !matches!(command, "overview" | "sessions") && tool.is_none() => {
                 tool = Some(match args.next().as_deref().and_then(|s| s.to_str()) {
                     Some("claude") => Tool::Claude,
                     Some("codex") => Tool::Codex,
@@ -67,7 +70,14 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
                         .into_owned(),
                 );
             }
-            "--days" if command == "advice" && days.is_none() => {
+            "--id" if command == "session" && id.is_none() => {
+                let value = args.next().ok_or("--id 缺少会话 ID")?;
+                if value.to_str().is_some_and(|text| text.starts_with("--")) {
+                    return Err("--id 缺少会话 ID".to_owned());
+                }
+                id = Some(value.to_string_lossy().into_owned());
+            }
+            "--days" if matches!(command, "advice" | "sessions") && days.is_none() => {
                 days = Some(match args.next().as_deref().and_then(|s| s.to_str()) {
                     Some("7") => 7,
                     Some("30") => 30,
@@ -86,6 +96,7 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
         json,
         window,
         days: days.unwrap_or(7),
+        id,
     })
 }
 
@@ -119,7 +130,88 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
         &claude_snapshots,
         &pricing,
     );
-    if command == "advice" {
+    let session_input = SessionInput {
+        events: &attribution.events,
+        titles: &titles,
+        pricing: &pricing,
+    };
+    if command == "sessions" {
+        let rows = list_sessions(&session_input, args.days, Utc::now());
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&rows).map_err(|_| "生成 JSON 失败")?
+            );
+        } else {
+            println!("近 {} 天：{} 个会话", args.days, rows.len());
+            for row in rows.iter().take(30) {
+                let hit = row
+                    .cache_hit_rate
+                    .map_or_else(|| "—".to_owned(), |rate| format!("{:.0}%", rate * 100.0));
+                let quota = if row.has_quota_data {
+                    format!("{:.1}%", row.weekly_delta)
+                } else {
+                    "—".to_owned()
+                };
+                println!(
+                    "{:?} {}  {}  请求 {}  token {}  命中 {}  额度 {}  {}",
+                    row.tool,
+                    row.session_id,
+                    row.display_name,
+                    row.requests,
+                    row.total_tokens,
+                    hit,
+                    quota,
+                    row.model
+                );
+            }
+            if rows.len() > 30 {
+                println!("其余 {} 个会话请用 --json 查看", rows.len() - 30);
+            }
+        }
+        return Ok(());
+    } else if command == "session" {
+        let tool = args.tool.ok_or("session 命令需要 --tool claude|codex")?;
+        let id = args.id.ok_or("session 命令需要 --id")?;
+        let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+        let report = build_advice(
+            &AdviceInput {
+                events: &attribution.events,
+                prompts: &prompts,
+                pricing: &pricing,
+                config: &config,
+                dismissed: &settings.dismissed_advice,
+            },
+            30,
+            Utc::now(),
+        );
+        let detail = session_detail(&session_input, &prompts, &report.event_tags, tool, &id)
+            .ok_or("未找到该会话")?;
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&detail).map_err(|_| "生成 JSON 失败")?
+            );
+        } else {
+            println!("{}（{}）", detail.display_name, detail.session_id);
+            println!(
+                "{} · {:?} · {}",
+                if detail.project_name.is_empty() {
+                    "未知项目"
+                } else {
+                    detail.project_name.as_str()
+                },
+                detail.source,
+                detail.model
+            );
+            println!(
+                "请求 {}，token {}，每周归因 {:.1}",
+                detail.requests, detail.total_tokens, detail.weekly_delta
+            );
+            println!("请求明细请用 --json 查看");
+        }
+        return Ok(());
+    } else if command == "advice" {
         let config = AdviceConfig::bundled().map_err(str::to_owned)?;
         let report = build_advice(
             &AdviceInput {

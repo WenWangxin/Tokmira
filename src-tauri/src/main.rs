@@ -24,6 +24,9 @@ use token_audit_core::model::{PromptEvent, Tool};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{self, CodexDaily};
 use token_audit_core::recorder::{self, RecorderParts, RecorderPlan, RecorderStatus};
+use token_audit_core::sessions::{
+    list_sessions, session_detail, SessionDetail, SessionInput, SessionRow,
+};
 use token_audit_core::settings::{self, AppSettings};
 use token_audit_core::timeline::build_timeline;
 use token_audit_core::usage::{list_usage_windows, usage_detail, UsageDetail, UsageWindowRef};
@@ -460,22 +463,77 @@ async fn get_advice(state: State<'_, AppState>, period_days: u32) -> Result<Advi
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
         with_usage(&home, &data_dir, &cached, |context| {
-            let config = AdviceConfig::bundled().map_err(str::to_owned)?;
-            Ok(build_advice(
-                &AdviceInput {
-                    events: &context.input.attribution.events,
-                    prompts: context.prompts,
-                    pricing: context.input.pricing,
-                    config: &config,
-                    dismissed: &context.settings.dismissed_advice,
-                },
-                period_days,
-                context.now,
-            ))
+            advice_report(context, period_days)
         })
     })
     .await
     .map_err(|_| "生成省额度建议失败".to_owned())?
+}
+
+fn session_input<'a>(context: &'a UsageContext<'a>) -> SessionInput<'a> {
+    SessionInput {
+        events: &context.input.attribution.events,
+        titles: context.input.titles,
+        pricing: context.input.pricing,
+    }
+}
+
+fn advice_report(context: &UsageContext<'_>, period_days: u32) -> Result<AdviceReport, String> {
+    let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+    Ok(build_advice(
+        &AdviceInput {
+            events: &context.input.attribution.events,
+            prompts: context.prompts,
+            pricing: context.input.pricing,
+            config: &config,
+            dismissed: &context.settings.dismissed_advice,
+        },
+        period_days,
+        context.now,
+    ))
+}
+
+#[tauri::command]
+async fn get_sessions(state: State<'_, AppState>, days: u32) -> Result<Vec<SessionRow>, String> {
+    if days != 7 && days != 30 {
+        return Err("统计天数只能是 7 或 30".to_owned());
+    }
+    let home = state.home.clone();
+    let data_dir = state.data_dir.clone();
+    let cached = Arc::clone(&state.scans);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_usage(&home, &data_dir, &cached, |context| {
+            Ok(list_sessions(&session_input(context), days, context.now))
+        })
+    })
+    .await
+    .map_err(|_| "生成会话列表失败".to_owned())?
+}
+
+#[tauri::command]
+async fn get_session_detail(
+    state: State<'_, AppState>,
+    tool: Tool,
+    session_id: String,
+) -> Result<SessionDetail, String> {
+    let home = state.home.clone();
+    let data_dir = state.data_dir.clone();
+    let cached = Arc::clone(&state.scans);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_usage(&home, &data_dir, &cached, |context| {
+            let tags = advice_report(context, 30)?.event_tags;
+            session_detail(
+                &session_input(context),
+                context.prompts,
+                &tags,
+                tool,
+                &session_id,
+            )
+            .ok_or_else(|| "未找到该会话".to_owned())
+        })
+    })
+    .await
+    .map_err(|_| "生成会话详情失败".to_owned())?
 }
 
 fn set_dismissed(state: &AppState, key: &str, dismissed: bool) -> Result<AppSettings, String> {
@@ -526,6 +584,8 @@ fn main() -> tauri::Result<()> {
             get_usage_windows,
             get_usage_detail,
             get_advice,
+            get_sessions,
+            get_session_detail,
             dismiss_advice,
             restore_advice,
             recorder_status,

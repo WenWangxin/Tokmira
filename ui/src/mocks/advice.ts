@@ -69,5 +69,6 @@ export function mockAdvice(periodDays: number, variant: string | null): AdviceRe
       { tool: 'Codex', has_quota_data: !noQuota, summary: summary(codex), items: codex, hidden: 0 },
     ],
     prompt_tags: [],
+    event_tags: [],
   }
 }

@@ -3,6 +3,7 @@ import PlaceholderPage from './views/PlaceholderPage.vue'
 import DashboardPage from './views/DashboardPage.vue'
 import UsagePage from './views/UsagePage.vue'
 import AdvicePage from './views/AdvicePage.vue'
+import SessionsPage from './views/SessionsPage.vue'
 
 export const pages = [
   { path: '/', title: '仪表盘', subtitle: '查看订阅额度与本地使用概况' },
@@ -16,8 +17,8 @@ const router = createRouter({
   history: createWebHashHistory(),
   routes: pages.map((page) => ({
     path: page.path,
-    component: page.path === '/' ? DashboardPage : page.path === '/usage' ? UsagePage : page.path === '/advice' ? AdvicePage : PlaceholderPage,
-    props: { title: page.title, subtitle: page.subtitle },
+    component: page.path === '/' ? DashboardPage : page.path === '/usage' ? UsagePage : page.path === '/advice' ? AdvicePage : page.path === '/sessions' ? SessionsPage : PlaceholderPage,
+    props: page.path === '/sessions' ? false : { title: page.title, subtitle: page.subtitle },
   })),
 })
 
