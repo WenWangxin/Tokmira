@@ -3641,6 +3641,9 @@ dependencies = [
 name = "token-audit-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "dirs",
+ "serde",
  "tauri",
  "tauri-build",
  "token_audit_core",

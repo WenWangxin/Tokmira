@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-24T10:00:00Z","type":"session_meta","payload":{"id":"legacy-session","originator":"codex-tui"}}
+{"timestamp":"2026-10-24T10:02:00Z","type":"event_msg","payload":{"type":"user_message"}}

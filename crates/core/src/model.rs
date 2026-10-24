@@ -1,13 +1,13 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Tool {
     Claude,
     Codex,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Source {
     ClaudeCli,
     ClaudeDesktop,
@@ -57,4 +57,23 @@ pub struct UsageEvent {
     pub project: Option<String>,
     pub is_subagent: bool,
     pub tokens: TokenCounts,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PromptEvent {
+    pub tool: Tool,
+    pub session_id: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl TokenCounts {
+    #[must_use]
+    pub fn total_without_reasoning(&self) -> u64 {
+        self.input
+            .saturating_add(self.output)
+            .saturating_add(self.cache_read)
+            .saturating_add(self.cache_write_5m)
+            .saturating_add(self.cache_write_1h)
+            .saturating_add(self.cache_write_unspecified)
+    }
 }

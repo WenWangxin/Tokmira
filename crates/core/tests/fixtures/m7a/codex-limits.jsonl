@@ -1,0 +1,4 @@
+{"timestamp":"2026-10-24T10:00:00Z","type":"session_meta","payload":{"id":"limit-session","originator":"codex-tui"}}
+{"timestamp":"2026-10-24T10:01:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"premium","primary":{"used_percent":90,"window_minutes":300,"resets_at":1792836000}}}}
+{"timestamp":"2026-10-24T10:02:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":3,"window_minutes":300,"resets_at":1792836000}}}}
+{"timestamp":"2026-10-24T10:03:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":4,"window_minutes":300,"resets_at":1792836000}}}}

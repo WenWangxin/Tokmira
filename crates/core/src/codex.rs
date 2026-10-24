@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::model::{Source, TokenCounts, Tool, UsageEvent};
+use crate::model::{PromptEvent, Source, TokenCounts, Tool, UsageEvent};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct CodexScanStats {
@@ -38,6 +38,8 @@ pub struct CodexScanStats {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CodexScan {
     pub events: Vec<UsageEvent>,
+    pub prompts: Vec<PromptEvent>,
+    pub titles: BTreeMap<String, String>,
     pub rate_limits: Vec<RateLimitSnapshot>,
     pub stats: CodexScanStats,
 }
@@ -388,6 +390,7 @@ fn scan_reader(
     let mut records = Vec::new();
     let mut fallback = Vec::new();
     let mut rate_limits = Vec::new();
+    let mut prompts = Vec::new();
     let mut previous_total: Option<RawUsage> = None;
     let mut has_record = false;
     let mut has_token_count = false;
@@ -427,6 +430,23 @@ fn scan_reader(
                 }
                 if let Some(cwd) = payload.cwd {
                     context.project = Some(cwd);
+                }
+                scan.stats.non_usage_lines += 1;
+            }
+            Some("event_msg")
+                if matches!(
+                    payload.kind.as_deref(),
+                    Some("task_started" | "user_message")
+                ) =>
+            {
+                if let Some(timestamp) = parsed_timestamp {
+                    if !context.session_id.is_empty() {
+                        prompts.push(PromptEvent {
+                            tool: Tool::Codex,
+                            session_id: context.session_id.clone(),
+                            timestamp,
+                        });
+                    }
                 }
                 scan.stats.non_usage_lines += 1;
             }
@@ -521,6 +541,7 @@ fn scan_reader(
             }
         }
     }
+    scan.prompts.extend(prompts);
     Ok(())
 }
 
@@ -564,8 +585,44 @@ pub fn scan_codex(home: &Path) -> Result<CodexScan, io::Error> {
         }
     }
     scan.events.sort_by_key(|event| event.timestamp);
+    scan.prompts
+        .sort_by(|a, b| (a.timestamp, &a.session_id).cmp(&(b.timestamp, &b.session_id)));
+    scan.prompts
+        .dedup_by(|a, b| a.session_id == b.session_id && a.timestamp == b.timestamp);
     scan.rate_limits.sort_by_key(|snapshot| snapshot.timestamp);
+    scan.titles = read_session_index(&home.join(".codex/session_index.jsonl"));
     Ok(scan)
+}
+
+fn read_session_index(path: &Path) -> BTreeMap<String, String> {
+    #[derive(Deserialize)]
+    struct Entry {
+        id: String,
+        thread_name: String,
+        updated_at: String,
+    }
+    let mut latest: BTreeMap<String, (DateTime<Utc>, String)> = BTreeMap::new();
+    let Ok(file) = File::open(path) else {
+        return BTreeMap::new();
+    };
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { break };
+        let Ok(entry) = serde_json::from_str::<Entry>(&line) else {
+            continue;
+        };
+        let Ok(at) = DateTime::parse_from_rfc3339(&entry.updated_at) else {
+            continue;
+        };
+        let at = at.with_timezone(&Utc);
+        let replace = latest.get(&entry.id).is_none_or(|(old, _)| at > *old);
+        if replace {
+            latest.insert(entry.id, (at, entry.thread_name));
+        }
+    }
+    latest
+        .into_iter()
+        .map(|(id, (_, title))| (id, title))
+        .collect()
 }
 
 #[cfg(test)]

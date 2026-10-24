@@ -30,8 +30,9 @@ pub enum CredentialSource {
     ClaudeCode,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CredentialPreference {
+    #[default]
     Auto,
     ClaudeDesktop,
     ClaudeCode,
@@ -331,14 +332,14 @@ pub struct ClaudeQuotaWindow {
     pub resets_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BreakdownRow {
     pub key: String,
     pub display_name: Option<String>,
     pub percent: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WeeklyBreakdown {
     pub as_of: Option<DateTime<Utc>>,
     pub window_started_at: Option<DateTime<Utc>>,

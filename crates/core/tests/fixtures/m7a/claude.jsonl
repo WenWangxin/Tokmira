@@ -1,0 +1,9 @@
+{"type":"ai-title","sessionId":"session-a","aiTitle":"自动标题"}
+{"type":"custom-title","sessionId":"session-a","customTitle":"首次自定义"}
+{"type":"custom-title","sessionId":"session-a","customTitle":"最终自定义"}
+{"type":"user","sessionId":"session-a","timestamp":"2026-10-24T10:00:00Z","message":{"content":"手写提示"}}
+{"type":"user","sessionId":"session-a","timestamp":"2026-10-24T10:01:00Z","message":{"content":[{"type":"text","text":"手写提示"}]}}
+{"type":"user","sessionId":"session-a","timestamp":"2026-10-24T10:02:00Z","message":{"content":[{"type":"text","text":"手写提示"},{"type":"tool_result","content":"手写工具结果"}]}}
+{"type":"user","sessionId":"session-a","timestamp":"2026-10-24T10:03:00Z","isSidechain":true,"message":{"content":"子代理提示"}}
+{"type":"user","sessionId":"session-a","timestamp":"2026-10-24T10:04:00Z","isMeta":true,"message":{"content":"元提示"}}
+{"type":"assistant","sessionId":"session-a","requestId":"req-a","timestamp":"2026-10-24T10:05:00Z","message":{"model":"claude-sonnet-4-5","content":[{"type":"text","text":"手写响应"}],"usage":{"input_tokens":10,"output_tokens":20}}}
