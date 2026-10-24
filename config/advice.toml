@@ -1,0 +1,63 @@
+# 省额度建议（消耗诊断）的阈值与外部链接。
+# 阈值依据 2026-10 在真实日志上的测量（见 docs/dev-plan.md 的 M7d），用户可用覆盖文件调整。
+version = "2026-10-24"
+
+[severity]
+# 可避免部分达到这么多周额度百分点，标为“多耗”（Error），否则为“提醒”（Warning）
+error_weekly_pct = 3.0
+# 没有额度数据时，按可避免的 API 等价费用判断
+error_cost_usd = 5.0
+
+[cache_rebuild]
+# 本次重新写入缓存（Codex 为未缓存输入）超过这么多 token 才算整段重建
+min_rebuild_tokens = 20000
+# 缓存读取占（读取 + 重建）的比例低于这个值，才认为缓存已失效
+max_read_share = 0.3
+# Claude 缓存时长：用了 1 小时缓存写入时按 60 分钟，否则按 5 分钟
+claude_ttl_5m_minutes = 5
+claude_ttl_1h_minutes = 60
+# Codex 未公开缓存时长，按这个间隔判断
+codex_ttl_minutes = 30
+
+[long_context]
+# 单次请求上下文（输入 + 缓存读 + 缓存写）超过这个值才提示；1M 上下文下 20 万以上很常见
+threshold_tokens = 300000
+# 估算可节省部分时，假设及时压缩到这个长度
+target_tokens = 150000
+
+[light_task]
+# 一次提示下的请求数不超过这个值、总输出少于这个 token 数，视为轻量任务
+max_requests = 3
+max_output_tokens = 800
+# 名称包含这些片段的模型视为高价模型
+claude_expensive = ["opus", "fable"]
+codex_expensive = ["gpt-6-astra"]
+# 估算节省时改用的模型
+claude_alternative = "claude-sonnet-5-5"
+codex_alternative = "gpt-6-sol"
+
+[subagents]
+# 子代理请求费用占会话费用的比例和请求次数都达到时才提示
+min_cost_share = 0.3
+min_requests = 10
+
+# 每条建议的外部链接（导流位）。为空时界面不显示按钮。链接不影响诊断结果。
+[links.cache_rebuild]
+label = ""
+url = ""
+
+[links.session_startup]
+label = ""
+url = ""
+
+[links.long_context]
+label = ""
+url = ""
+
+[links.expensive_light_task]
+label = ""
+url = ""
+
+[links.many_subagents]
+label = ""
+url = ""

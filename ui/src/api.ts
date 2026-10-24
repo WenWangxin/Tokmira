@@ -278,3 +278,71 @@ export const recorderStatus = () => invoke<RecorderStatus>('recorder_status')
 export const recorderPlan = (parts: RecorderParts) => invoke<RecorderPlan>('recorder_plan', { parts })
 export const recorderInstall = (parts: RecorderParts) => invoke<RecorderPlan>('recorder_install', { parts })
 export const recorderUninstall = () => invoke<RecorderPlan>('recorder_uninstall')
+
+export type AdviceSeverity = 'Error' | 'Warning'
+export interface AdviceLink { label: string; url: string }
+export interface AdviceItem {
+  id: string
+  key: string
+  tool: Tool
+  title: string
+  severity: AdviceSeverity
+  facts: string[]
+  description: string
+  occurrences: number
+  sessions: number
+  overhead_tokens: number
+  overhead_cost_usd: number
+  consumed_weekly_pct: number | null
+  avoidable: boolean
+  avoidable_cost_usd: number
+  avoidable_weekly_pct: number | null
+  link: AdviceLink | null
+}
+export interface ToolAdvice {
+  tool: Tool
+  has_quota_data: boolean
+  summary: { avoidable_weekly_pct: number | null; avoidable_cost_usd: number; count: number; sessions: number }
+  items: AdviceItem[]
+  hidden: number
+}
+export interface PromptTag { tool: Tool; session_id: string; prompt_at: string; tag: string; severity: AdviceSeverity }
+export interface AdviceReport {
+  generated_at: string
+  period_days: number
+  config_version: string
+  tools: ToolAdvice[]
+  prompt_tags: PromptTag[]
+}
+
+const isPreview = () => import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
+const adviceFiles = import.meta.glob<{ default: AdviceReport }>('../.local/advice-*.json')
+const previewDismissed = new Set<string>()
+async function developmentAdvice(periodDays: number): Promise<AdviceReport> {
+  const { mockAdvice } = await import('./mocks/advice')
+  const variant = new URLSearchParams(window.location.search).get('mock')
+  const local = adviceFiles[`../.local/advice-${periodDays}.json`]
+  const report = variant === 'empty' || variant === 'nodata' || !local ? mockAdvice(periodDays, variant) : (await local()).default
+  // Mirror the backend: dismissed items are hidden and counted.
+  return {
+    ...report,
+    tools: report.tools.map(tool => ({
+      ...tool,
+      items: tool.items.filter(item => !previewDismissed.has(item.key)),
+      hidden: tool.hidden + tool.items.filter(item => previewDismissed.has(item.key)).length,
+    })),
+  }
+}
+export const getAdvice = (periodDays: 7 | 30) =>
+  isPreview() ? developmentAdvice(periodDays) : invoke<AdviceReport>('get_advice', { periodDays })
+export const dismissAdvice = async (key: string) => {
+  if (isPreview()) { previewDismissed.add(key); return }
+  await invoke<AppSettings>('dismiss_advice', { key })
+}
+export const restoreAdvice = async (key: string) => {
+  if (isPreview()) { previewDismissed.delete(key); return }
+  await invoke<AppSettings>('restore_advice', { key })
+}
+/** First diagnosis tag for a prompt, matched by tool, session and prompt time. */
+export const promptTag = (tags: PromptTag[] | undefined, tool: Tool, sessionId: string, promptAt: string | null) =>
+  promptAt ? tags?.find(tag => tag.tool === tool && tag.session_id === sessionId && Date.parse(tag.prompt_at) === Date.parse(promptAt)) : undefined

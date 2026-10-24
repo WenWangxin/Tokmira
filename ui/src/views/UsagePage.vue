@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { Cpu, Folder, GitFork, List, Zap, Database, CircleAlert } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
-import { getUsageDetail, getUsageWindows, type Tool, type UsageDetail, type UsageRank, type UsageWindowRef } from '../api'
+import { getAdvice, getUsageDetail, getUsageWindows, promptTag, type AdviceReport, type Tool, type UsageDetail, type UsageRank, type UsageWindowRef } from '../api'
 
 const router = useRouter()
 const tool = ref<Tool>('Claude')
@@ -16,6 +16,7 @@ const loading = ref(true)
 const detailLoading = ref(false)
 const error = ref('')
 let detailRequest = 0
+const advice = ref<AdviceReport | null>(null)
 const dimensions = [
   { key: 'sessions', name: '会话', icon: List },
   { key: 'projects', name: '项目', icon: Folder },
@@ -61,7 +62,12 @@ function selectTool(next: Tool) {
   void selectWindow(windows.value[next][0] ?? null)
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  // Tags are optional decoration; the page works without them.
+  getAdvice(30).then(report => { advice.value = report }).catch(() => { advice.value = null })
+})
+const tagFor = (sessionId: string, at: string) => promptTag(advice.value?.prompt_tags, tool.value, sessionId, at)
 const rows = computed<UsageRank[]>(() => detail.value?.[dimension.value] ?? [])
 const visibleRows = computed(() => rows.value.slice(0, 8))
 const topPrompts = computed(() => detail.value?.high_prompts.slice(0, 6) ?? [])
@@ -138,7 +144,7 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
             <p v-else class="table-empty">本窗口内没有本机请求，增量全部计为未归属。</p>
           </section>
           <section class="card usage-prompts" aria-label="高耗提示"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><Zap :size="17" /></span><strong>高耗提示</strong></div><small>不记录内容</small></div>
-            <template v-if="topPrompts.length"><button v-for="prompt in topPrompts" :key="`${prompt.session_id}-${prompt.at}`" class="usage-prompt-row" @click="router.push('/sessions')"><span class="usage-prompt-info"><small>{{ toTime(prompt.at) }}</small><strong :title="prompt.title">{{ prompt.title }}</strong></span><strong class="usage-prompt-delta">+{{ percent(prompt.delta) }}</strong></button></template>
+            <template v-if="topPrompts.length"><button v-for="prompt in topPrompts" :key="`${prompt.session_id}-${prompt.at}`" class="usage-prompt-row" @click="router.push('/sessions')"><span class="usage-prompt-info"><small>{{ toTime(prompt.at) }}</small><strong :title="prompt.title">{{ prompt.title }}</strong><span v-if="tagFor(prompt.session_id, prompt.at)" class="advice-tag usage-prompt-tag" :class="tagFor(prompt.session_id, prompt.at)?.severity === 'Error' ? 'pill-error' : 'pill-warning'">{{ tagFor(prompt.session_id, prompt.at)?.tag }}</span></span><strong class="usage-prompt-delta">+{{ percent(prompt.delta) }}</strong></button></template>
             <p v-else class="table-empty">{{ detail.sessions.length ? '暂无可关联的提示记录。' : '本窗口内没有本机请求，增量全部计为未归属。' }}</p>
           </section>
         </div>

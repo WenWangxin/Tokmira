@@ -8,6 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri::State;
+use token_audit_core::advice::{build_advice, AdviceConfig, AdviceInput, AdviceReport};
 use token_audit_core::attribution::{attribute, Attribution, WindowKind};
 use token_audit_core::claude::{scan_claude, ClaudeScan};
 use token_audit_core::claude_quota::{
@@ -19,7 +20,7 @@ use token_audit_core::codex_app_server::{
     codex_candidates, read_codex_quota, resolve_launch, AppServerOptions, CodexQuotaError,
 };
 use token_audit_core::dashboard::{build_overview, Overview, OverviewInput};
-use token_audit_core::model::Tool;
+use token_audit_core::model::{PromptEvent, Tool};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{self, CodexDaily};
 use token_audit_core::recorder::{self, RecorderParts, RecorderPlan, RecorderStatus};
@@ -319,11 +320,19 @@ async fn get_attribution(state: State<'_, AppState>) -> Result<Attribution, Stri
     .map_err(|_| "生成额度归因失败".to_owned())?
 }
 
+/// Everything a page command needs, computed once from the cached scan.
+struct UsageContext<'a> {
+    input: &'a OverviewInput<'a>,
+    prompts: &'a [PromptEvent],
+    settings: &'a AppSettings,
+    now: DateTime<Utc>,
+}
+
 fn with_usage<R>(
     home: &std::path::Path,
     data_dir: &std::path::Path,
     cached: &Mutex<Option<Scans>>,
-    build: impl FnOnce(&OverviewInput<'_>, DateTime<Utc>) -> Result<R, String>,
+    build: impl FnOnce(&UsageContext<'_>) -> Result<R, String>,
 ) -> Result<R, String> {
     let scans = {
         let mut guard = cached.lock().map_err(|_| lock_error())?;
@@ -369,7 +378,12 @@ fn with_usage<R>(
         pricing: &pricing,
         recorder: recorder::status(home, data_dir),
     };
-    build(&input, Utc::now())
+    build(&UsageContext {
+        input: &input,
+        prompts: &prompts,
+        settings: &settings,
+        now: Utc::now(),
+    })
 }
 
 #[tauri::command]
@@ -381,7 +395,8 @@ async fn get_usage_windows(
     let data_dir = state.data_dir.clone();
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
-        with_usage(&home, &data_dir, &cached, |input, now| {
+        with_usage(&home, &data_dir, &cached, |context| {
+            let (input, now) = (context.input, context.now);
             Ok(list_usage_windows(input, tool, now, 6))
         })
     })
@@ -400,7 +415,8 @@ async fn get_usage_detail(
     let data_dir = state.data_dir.clone();
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
-        with_usage(&home, &data_dir, &cached, |input, now| {
+        with_usage(&home, &data_dir, &cached, |context| {
+            let (input, now) = (context.input, context.now);
             let window = list_usage_windows(input, tool, now, usize::MAX)
                 .into_iter()
                 .find(|w| w.kind == kind && w.window_id == window_id)
@@ -434,6 +450,55 @@ fn recorder_uninstall(state: State<'_, AppState>) -> Result<RecorderPlan, String
     recorder::uninstall(&state.home, &state.data_dir).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn get_advice(state: State<'_, AppState>, period_days: u32) -> Result<AdviceReport, String> {
+    if period_days != 7 && period_days != 30 {
+        return Err("统计天数只能是 7 或 30".to_owned());
+    }
+    let home = state.home.clone();
+    let data_dir = state.data_dir.clone();
+    let cached = Arc::clone(&state.scans);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_usage(&home, &data_dir, &cached, |context| {
+            let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+            Ok(build_advice(
+                &AdviceInput {
+                    events: &context.input.attribution.events,
+                    prompts: context.prompts,
+                    pricing: context.input.pricing,
+                    config: &config,
+                    dismissed: &context.settings.dismissed_advice,
+                },
+                period_days,
+                context.now,
+            ))
+        })
+    })
+    .await
+    .map_err(|_| "生成省额度建议失败".to_owned())?
+}
+
+fn set_dismissed(state: &AppState, key: &str, dismissed: bool) -> Result<AppSettings, String> {
+    let mut settings =
+        settings::read_settings(&state.data_dir).map_err(|_| "读取设置失败".to_owned())?;
+    settings.dismissed_advice.retain(|item| item != key);
+    if dismissed {
+        settings.dismissed_advice.push(key.to_owned());
+    }
+    settings::write_settings(&state.data_dir, &settings).map_err(|_| "保存设置失败".to_owned())?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn dismiss_advice(state: State<'_, AppState>, key: String) -> Result<AppSettings, String> {
+    set_dismissed(&state, &key, true)
+}
+
+#[tauri::command]
+fn restore_advice(state: State<'_, AppState>, key: String) -> Result<AppSettings, String> {
+    set_dismissed(&state, &key, false)
+}
+
 fn main() -> tauri::Result<()> {
     tauri::Builder::default()
         .setup(|app| {
@@ -460,6 +525,9 @@ fn main() -> tauri::Result<()> {
             get_attribution,
             get_usage_windows,
             get_usage_detail,
+            get_advice,
+            dismiss_advice,
+            restore_advice,
             recorder_status,
             recorder_plan,
             recorder_install,

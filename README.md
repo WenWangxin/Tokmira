@@ -28,6 +28,14 @@
 
 此命令会短暂读取本机 Claude 登录令牌，只向 `https://api.anthropic.com/api/oauth/usage` 发送查询；不会保存、打印或刷新令牌，也不会跟随重定向。令牌过期时请先打开对应 Claude 应用，由它自行刷新。Windows 当前只支持 Claude Code 凭据，Claude 桌面版的 DPAPI 格式尚未验证。接口未公开，成功响应结构尚未实测，后续可能变化。普通日志扫描和记录器不会执行此查询。
 
+## 省额度建议
+
+```bash
+cargo run -p token-audit-cli -- advice --days 7
+```
+
+基于近 7 天或 30 天的本地日志识别缓存过期重建、新会话启动开销、上下文过长、轻量任务用了高价模型、子代理过多，阈值见 `config/advice.toml`。只读用量字段，不读对话内容，不联网。
+
 ## Claude Code 记录器
 
 默认不安装。先用 `token-audit recorder install --dry-run` 查看计划，再用 `token-audit recorder install` 安装状态栏记录器；加 `--hooks` 可单独安装 hooks，加 `--statusline --hooks` 可同时安装。`token-audit recorder status` 查看安装状态，`token-audit recorder records` 查看最近的额度记录。管理命令支持 `--home <目录>` 和 `--data-dir <目录>`，`status` 和 `records` 支持 `--json`。

@@ -19,7 +19,7 @@ use token_audit_core::pricing::Pricing;
 use token_audit_core::report::{build_report, Metrics, Report, ReportOptions};
 
 fn usage() {
-    println!("       token-audit attribution [--home <目录>] [--data-dir <目录>] [--tool claude|codex] [--json]\n       token-audit overview [--home <目录>] [--data-dir <目录>] [--json]\n       token-audit usage [--home <目录>] [--data-dir <目录>] [--tool claude|codex] [--window current|<RFC3339 window_id>] [--json]");
+    println!("       token-audit attribution [--home <目录>] [--data-dir <目录>] [--tool claude|codex] [--json]\n       token-audit overview [--home <目录>] [--data-dir <目录>] [--json]\n       token-audit usage [--home <目录>] [--data-dir <目录>] [--tool claude|codex] [--window current|<RFC3339 window_id>] [--json]\n       token-audit advice [--home <目录>] [--data-dir <目录>] [--days 7|30] [--json]");
     println!(
         "用法：token-audit debug <claude|codex> [--home <目录>] [--json]\n       token-audit scan [--home <目录>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--tool claude|codex] [--pricing <覆盖文件>] [--json]\n       token-audit quota codex [--codex <路径>] [--timeout <秒>] [--json]\n       token-audit quota claude [--source auto|desktop|code] [--proxy <url>] [--no-proxy] [--timeout <秒>] [--keychain-timeout <秒>] [--json]\n       token-audit recorder <status|install|uninstall|records> [选项]\n       token-audit hook <statusline|event --tool claude>\n       token-audit --version"
     );
@@ -611,13 +611,15 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Some(command @ ("attribution" | "overview" | "usage")) => match local::run(command, args) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(message) => {
-                eprintln!("{message}");
-                ExitCode::FAILURE
+        Some(command @ ("advice" | "attribution" | "overview" | "usage")) => {
+            match local::run(command, args) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(message) => {
+                    eprintln!("{message}");
+                    ExitCode::FAILURE
+                }
             }
-        },
+        }
         Some("quota") => {
             let result = match args.next().as_deref().and_then(|arg| arg.to_str()) {
                 Some("codex") => run_quota(args),

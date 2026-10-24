@@ -1,3 +1,4 @@
+pub mod advice;
 pub mod attribution;
 pub mod claude;
 pub mod claude_quota;

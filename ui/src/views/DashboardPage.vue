@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Share, RefreshCw, CircleCheck, CircleAlert, Coins, Database, TrendingUp, ShieldCheck, Lightbulb, ChevronRight } from 'lucide-vue-next'
-import { getOverview, refreshQuotas, rescan, type Overview, type Origin, type QuotaDisplay, type Tool, type Source } from '../api'
+import { getAdvice, getOverview, refreshQuotas, rescan, type AdviceItem, type AdviceReport, type Overview, type Origin, type QuotaDisplay, type Tool, type Source } from '../api'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import Sparkline from '../components/Sparkline.vue'
@@ -18,6 +18,12 @@ const notice = ref('')
 const selectedTool = ref<Tool>('Claude')
 const selectedRange = ref<'five_hour' | 'today' | 'week'>('five_hour')
 const selectedList = ref<'sessions' | 'prompts'>('sessions')
+const advice = ref<AdviceReport | null>(null)
+
+// Advice is secondary: a failure here must not block the dashboard.
+async function loadAdvice() {
+  try { advice.value = await getAdvice(7) } catch { advice.value = null }
+}
 
 async function load() {
   loading.value = true
@@ -25,6 +31,7 @@ async function load() {
   try {
     const data = await getOverview()
     overview.value = data
+    void loadAdvice()
     const available = data.tools.filter(item => item.five_hour.used_percent !== null)
     selectedTool.value = available.sort((a, b) => (b.five_hour.used_percent ?? 0) - (a.five_hour.used_percent ?? 0))[0]?.tool ?? 'Claude'
   } catch (cause) {
@@ -44,6 +51,7 @@ async function refresh() {
     refreshError.value = [result.claude, result.codex].filter(message => !['已更新', '未开启', '60 秒内已查询', '开发预览'].includes(message)).join('；')
     notice.value = refreshError.value
     overview.value = await getOverview()
+    void loadAdvice()
   } catch (cause) {
     error.value = String(cause)
   } finally {
@@ -51,6 +59,24 @@ async function refresh() {
   }
 }
 onMounted(load)
+const adviceRank = (item: AdviceItem) => [item.avoidable_weekly_pct ?? -1, item.avoidable_cost_usd, item.overhead_cost_usd]
+const topAdvice = computed(() => (advice.value?.tools.flatMap(tool => tool.items) ?? [])
+  .slice().sort((a, b) => {
+    const [x, y] = [adviceRank(a), adviceRank(b)]
+    return y[0] - x[0] || y[1] - x[1] || y[2] - x[2]
+  }).slice(0, 3))
+const adviceCount = computed(() => advice.value?.tools.reduce((sum, tool) => sum + tool.items.length, 0) ?? 0)
+/** Savings headline from the tool with the largest avoidable share; quota pools are never summed. */
+const adviceHeadline = computed(() => {
+  const tools = advice.value?.tools.filter(tool => tool.items.length) ?? []
+  const withPct = tools.filter(tool => tool.summary.avoidable_weekly_pct !== null)
+    .sort((a, b) => (b.summary.avoidable_weekly_pct ?? 0) - (a.summary.avoidable_weekly_pct ?? 0))[0]
+  if (withPct) return { value: `${(withPct.summary.avoidable_weekly_pct ?? 0).toFixed(1)}%`, unit: `${withPct.tool} 周额度` }
+  const byCost = tools.sort((a, b) => b.summary.avoidable_cost_usd - a.summary.avoidable_cost_usd)[0]
+  return byCost ? { value: `$${byCost.summary.avoidable_cost_usd.toFixed(2)}`, unit: 'API 等价' } : null
+})
+const adviceImpact = (item: AdviceItem) => item.consumed_weekly_pct !== null
+  ? `${item.consumed_weekly_pct.toFixed(1)}%` : `$${item.overhead_cost_usd.toFixed(2)}`
 const empty = computed(() => overview.value?.summary.sessions === 0 && overview.value?.summary.requests === 0)
 const toolsWithData = computed(() => overview.value?.tools.filter(item => item.five_hour.used_percent !== null) ?? [])
 const trendTools = computed(() => toolsWithData.value.map(item => item.tool))
@@ -171,7 +197,20 @@ const showShare = () => { notice.value = '分享卡片将在后续版本提供' 
         <article class="card metric-card recorder-card"><div class="metric-head"><span class="metric-icon"><ShieldCheck :size="17" /></span><span>记录器</span><small>状态栏 + hooks</small></div><div class="metric-value">{{ recorderCount }}<span>/ 2</span></div><p :class="{ 'warning-text': overview.recorder.statusline_modified || overview.recorder.hooks_modified }">{{ recorderInfo }}</p></article>
       </section>
       <section class="middle-grid"><article class="card trend-card"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><TrendingUp :size="17" /></span><strong>额度走势</strong><div class="tool-switch" v-if="trendTools.length > 1"><button v-for="tool in trendTools" :key="tool" :class="{ active: selectedTool === tool }" @click="selectedTool = tool">{{ tool }}</button></div><span v-else-if="trendTools.length">{{ trendTools[0] }}</span></div><div class="segmented"><button v-for="item in ([['five_hour', '5 小时'], ['today', '今天'], ['week', '本周']] as const)" :key="item[0]" :class="{ active: selectedRange === item[0] }" @click="selectedRange = item[0]">{{ item[1] }}</button></div></div><QuotaTrend :overview="overview" :tool="selectedTool" :range="selectedRange" /><div class="chart-legend"><span class="legend-dot" />圆点代表单次提示及其额度增量</div></article>
-        <article class="card advice-card"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><Lightbulb :size="17" /></span><strong>省额度建议</strong></div></div><div class="advice-empty"><Lightbulb :size="27" /><p>正在完善消耗诊断，下一版本接入</p></div><button class="advice-button" @click="router.push('/advice')">查看全部建议</button></article></section>
+        <article class="card advice-card"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><Lightbulb :size="17" /></span><strong>省额度建议</strong></div><small v-if="adviceCount" class="advice-card-count">{{ adviceCount }} 条</small></div>
+          <template v-if="topAdvice.length">
+            <p v-if="adviceHeadline" class="advice-card-summary"><span>预计可节省</span><strong>{{ adviceHeadline.value }}</strong><span>{{ adviceHeadline.unit }}</span></p>
+            <div class="advice-card-rows">
+              <button v-for="item in topAdvice" :key="item.key" class="advice-card-row" @click="router.push('/advice')">
+                <img v-if="item.tool === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else class="tool-mark" />
+                <span>{{ item.title }}</span>
+                <span class="advice-tag" :class="item.severity === 'Error' ? 'pill-error' : 'pill-warning'">{{ adviceImpact(item) }}</span>
+                <ChevronRight :size="18" />
+              </button>
+            </div>
+          </template>
+          <div v-else class="advice-empty"><Lightbulb :size="27" /><p>{{ advice ? '近 7 天没有发现明显的额度浪费' : '正在分析近 7 天的用量' }}</p></div>
+          <button class="advice-button" @click="router.push('/advice')">查看全部建议</button></article></section>
       <section class="card sessions-card"><div class="sessions-top"><div class="summary-pills"><button :class="{ active: selectedList === 'sessions' }" @click="selectedList = 'sessions'">{{ overview.summary.sessions }} 个会话</button><button>{{ overview.summary.requests.toLocaleString('zh-CN') }} 次请求</button><button :class="{ active: selectedList === 'prompts' }" @click="selectedList = 'prompts'">{{ overview.summary.high_prompts }} 条高耗提示</button></div><button class="all-link" @click="router.push('/sessions')">查看全部</button></div><div class="table-scroll"><div class="table-head"><span>来源</span><span>会话</span><span>模型</span><span>token</span><span>缓存命中</span><span>额度</span></div><button v-for="row in tableRows" :key="`${row.tool}-${row.session_id}-${'at' in row ? row.at : ''}`" class="session-row" @click="router.push('/sessions')"><span class="row-source"><span class="row-icon"><img v-if="row.tool === 'Claude'" :src="ClaudeLogo" alt=""/><CodexLogo v-else /></span>{{ sourceLabel(row.source) }}</span><span class="truncate">{{ rowTitle(row) }}</span><span class="truncate">{{ modelLabel(row.model) }}</span><span class="numeric">{{ compact(row.total_tokens).value }} {{ compact(row.total_tokens).unit }}</span><span class="numeric" :class="{ 'error-text': row.cache_hit_rate !== null && row.cache_hit_rate < .5 }">{{ percent(row.cache_hit_rate) }}</span><span class="numeric">{{ quotaDelta(row.weekly_delta) }}</span></button><p v-if="!tableRows.length" class="table-empty">暂无记录</p></div></section>
     </template>
   </div>

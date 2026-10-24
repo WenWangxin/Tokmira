@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Local, Utc};
 use serde_json::json;
+use token_audit_core::advice::{build_advice, AdviceConfig, AdviceInput};
 use token_audit_core::attribution::{attribute, WindowKind};
 use token_audit_core::claude::scan_claude;
 use token_audit_core::codex::scan_codex;
@@ -22,6 +23,7 @@ struct Args {
     tool: Option<Tool>,
     json: bool,
     window: Option<String>,
+    days: u32,
 }
 fn quota_label(display: &QuotaDisplay) -> String {
     if display.window_passed {
@@ -38,6 +40,7 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
     let mut tool = None;
     let mut json = false;
     let mut window = None;
+    let mut days = None;
     let mut args = args.peekable();
     while let Some(flag) = args.next() {
         let flag = flag.to_str().ok_or("参数名不是有效文本")?;
@@ -64,6 +67,13 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
                         .into_owned(),
                 );
             }
+            "--days" if command == "advice" && days.is_none() => {
+                days = Some(match args.next().as_deref().and_then(|s| s.to_str()) {
+                    Some("7") => 7,
+                    Some("30") => 30,
+                    _ => return Err("--days 只能是 7 或 30".into()),
+                });
+            }
             _ => return Err(format!("未知或重复的参数：{flag}")),
         }
     }
@@ -75,6 +85,7 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
         tool,
         json,
         window,
+        days: days.unwrap_or(7),
     })
 }
 
@@ -108,7 +119,56 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
         &claude_snapshots,
         &pricing,
     );
-    if command == "usage" {
+    if command == "advice" {
+        let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+        let report = build_advice(
+            &AdviceInput {
+                events: &attribution.events,
+                prompts: &prompts,
+                pricing: &pricing,
+                config: &config,
+                dismissed: &settings.dismissed_advice,
+            },
+            args.days,
+            Utc::now(),
+        );
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|_| "生成 JSON 失败")?
+            );
+        } else {
+            for tool in &report.tools {
+                println!(
+                    "{:?}：{} 项，可避免 {}，涉及 {} 个会话（已隐藏 {} 项）",
+                    tool.tool,
+                    tool.summary.count,
+                    tool.summary.avoidable_weekly_pct.map_or_else(
+                        || format!("约 ${:.2}", tool.summary.avoidable_cost_usd),
+                        |pct| format!("{pct:.1}% 周额度")
+                    ),
+                    tool.summary.sessions,
+                    tool.hidden
+                );
+                for item in &tool.items {
+                    println!(
+                        "  {} [{:?}] 消耗 {} · 可避免 {} · {}",
+                        item.title,
+                        item.severity,
+                        item.consumed_weekly_pct.map_or_else(
+                            || format!("${:.2}", item.overhead_cost_usd),
+                            |pct| format!("{pct:.1}%")
+                        ),
+                        item.avoidable_weekly_pct.map_or_else(
+                            || format!("${:.2}", item.avoidable_cost_usd),
+                            |pct| format!("{pct:.1}%")
+                        ),
+                        item.facts.join(" / ")
+                    );
+                }
+            }
+        }
+    } else if command == "usage" {
         let now = Utc::now();
         let input = OverviewInput {
             events: &events,
