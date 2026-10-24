@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { CircleAlert, Coins, Database, ExternalLink, EyeOff, Folder, Gauge, History, Palette, Scale, ShieldCheck, SlidersHorizontal, Terminal, Trash2 } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Palette, Scale, ShieldCheck, SlidersHorizontal, Terminal, Trash2 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Toggle from '../components/Toggle.vue'
 import {
@@ -25,6 +26,7 @@ import {
   type Tool,
 } from '../api'
 import { adviceLabel, applyTheme, formatCalibration, formatPercent, parsePercent, privacyDetail, quotaMessageTone } from '../settingsLogic'
+import { openOnboarding } from '../onboardingState'
 
 type RecorderDialog = { kind: 'recorder'; enabling: boolean; parts: RecorderParts; plan: RecorderPlan }
 type SettingsDialog = RecorderDialog | { kind: 'claude' } | { kind: 'clear' }
@@ -53,6 +55,7 @@ const credentials: { value: CredentialPreference; label: string }[] = [
   { value: 'ClaudeDesktop', label: 'Claude 桌面版' },
   { value: 'ClaudeCode', label: 'Claude Code' },
 ]
+const router = useRouter()
 const parsedPercent = computed(() => parsePercent(percentText.value))
 const locked = computed(() => confirming.value || dialog.value !== null)
 const recorderDialog = computed(() => (dialog.value?.kind === 'recorder' ? dialog.value : null))
@@ -274,6 +277,12 @@ function openClear() {
   dialog.value = { kind: 'clear' }
 }
 
+function openGuide() {
+  if (locked.value) return
+  openOnboarding()
+  if (router.currentRoute.value.path !== '/') void router.push('/')
+}
+
 onMounted(load)
 </script>
 
@@ -436,6 +445,17 @@ onMounted(load)
           </div>
           <div class="settings-controls">
             <button type="button" class="settings-danger" :disabled="locked" @click="openClear">清除</button>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <span class="settings-icon"><Compass :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">重新查看引导</div>
+            <p class="settings-desc">再看一遍数据说明、已检测到的工具和额度来源。不会改动当前设置。</p>
+          </div>
+          <div class="settings-controls">
+            <button type="button" class="settings-tonal" :disabled="locked" @click="openGuide">打开</button>
           </div>
         </div>
       </article>

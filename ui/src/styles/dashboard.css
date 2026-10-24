@@ -13,7 +13,8 @@
 .state-action.state-warning { background: var(--warning); color: var(--on-primary); }
 .spinning { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.notice { display: flex; justify-content: space-between; padding: 9px 12px; border-radius: 10px; background: var(--warning-container); color: var(--on-warning-container); font-size: 12px; }
+.notice { display: flex; justify-content: space-between; gap: 12px; padding: 9px 12px; border-radius: 10px; background: var(--warning-container); color: var(--on-warning-container); font-size: 12px; overflow-wrap: anywhere; }
+.notice-success { background: var(--success-container); color: var(--on-success-container); }
 .notice button { border: 0; background: transparent; color: inherit; font-size: 17px; }
 .card { min-width: 0; border-radius: 20px; background: var(--surface-container); }
 .quota-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 16px; }

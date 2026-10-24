@@ -20,6 +20,7 @@ use token_audit_core::codex_app_server::{
     codex_candidates, read_codex_quota, resolve_launch, AppServerOptions, CodexQuotaError,
 };
 use token_audit_core::dashboard::{build_overview, Overview, OverviewInput};
+use token_audit_core::detect::{self, DetectedTool};
 use token_audit_core::model::{PromptEvent, Tool};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{self, CodexDaily};
@@ -331,6 +332,24 @@ struct UsageContext<'a> {
     now: DateTime<Utc>,
 }
 
+#[tauri::command]
+async fn detect_tools(state: State<'_, AppState>) -> Result<Vec<DetectedTool>, String> {
+    let home = state.home.clone();
+    let data_dir = state.data_dir.clone();
+    let cached = Arc::clone(&state.scans);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_usage(&home, &data_dir, &cached, |context| {
+            Ok(detect::detect_tools(
+                context.input.events,
+                context.input.codex_log,
+                context.input.claude_snapshots,
+            ))
+        })
+    })
+    .await
+    .map_err(|_| "检测本机工具失败".to_owned())?
+}
+
 fn with_usage<R>(
     home: &std::path::Path,
     data_dir: &std::path::Path,
@@ -628,6 +647,7 @@ fn main() -> tauri::Result<()> {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             update_settings,
+            detect_tools,
             rescan,
             refresh_quotas,
             get_overview,

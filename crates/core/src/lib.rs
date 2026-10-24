@@ -5,6 +5,7 @@ pub mod claude_quota;
 pub mod codex;
 pub mod codex_app_server;
 pub mod dashboard;
+pub mod detect;
 pub mod forecast;
 pub mod model;
 pub mod pricing;

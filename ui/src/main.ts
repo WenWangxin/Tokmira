@@ -10,6 +10,7 @@ import './styles/usage.css'
 import './styles/advice.css'
 import './styles/sessions.css'
 import './styles/settings.css'
+import './styles/onboarding.css'
 
 async function boot() {
   try {

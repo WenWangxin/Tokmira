@@ -1,9 +1,28 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import { ChartColumn, LayoutDashboard, Lightbulb, List, Settings2, ShieldCheck } from 'lucide-vue-next'
-import { RouterLink, RouterView } from 'vue-router'
+import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { getSettings } from './api'
+import OnboardingDialog from './components/OnboardingDialog.vue'
+import { previewOnboardingForced } from './onboardingLogic'
+import { onboardingOpen, openOnboarding } from './onboardingState'
 import { pages } from './router'
 
 const icons = [LayoutDashboard, ChartColumn, Lightbulb, List, Settings2]
+const router = useRouter()
+
+onMounted(async () => {
+  const preview = import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
+  const forced = previewOnboardingForced(window.location.search, preview)
+  try {
+    const settings = await getSettings()
+    if (!forced && settings.onboarding_completed) return
+  } catch {
+    if (!forced) return
+  }
+  if (router.currentRoute.value.path !== '/') await router.replace('/')
+  openOnboarding()
+})
 </script>
 
 <template>
@@ -44,4 +63,5 @@ const icons = [LayoutDashboard, ChartColumn, Lightbulb, List, Settings2]
       <RouterView />
     </main>
   </div>
+  <OnboardingDialog v-if="onboardingOpen" />
 </template>

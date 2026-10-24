@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { mockDetectedTools } from './mocks/onboarding'
 import { mockEnvironment, mockRecorderStatus, mockSettings, previewRecorderPlan } from './mocks/settings'
 import { clonePreview } from './settingsLogic'
 
@@ -232,6 +233,14 @@ export interface RecorderPlan {
 export interface ScanSummary { events: number; prompts: number; malformed_lines: number }
 export interface RefreshResult { claude: string; codex: string }
 export interface DirectoryStatus { path: string; exists: boolean }
+export interface DetectedTool {
+  source: Source
+  sessions: number
+  requests: number
+  last_used_at: string | null
+  plan: string | null
+}
+
 export interface EnvironmentInfo {
   claude_logs: DirectoryStatus
   codex_logs: DirectoryStatus
@@ -244,6 +253,10 @@ export interface EnvironmentInfo {
 
 export const getSettings = () =>
   isPreview() ? Promise.resolve(clonePreview(previewSettings)) : invoke<AppSettings>('get_settings')
+export const detectTools = () =>
+  isPreview()
+    ? Promise.resolve(clonePreview(mockDetectedTools(new URLSearchParams(window.location.search).get('mock'))))
+    : invoke<DetectedTool[]>('detect_tools')
 export const updateSettings = (settings: AppSettings) => {
   if (isPreview()) {
     const percent = settings.calibration?.five_hour_percent

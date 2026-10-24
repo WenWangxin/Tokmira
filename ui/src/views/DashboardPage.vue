@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Share, RefreshCw, CircleCheck, CircleAlert, Coins, Database, TrendingUp, ShieldCheck, Lightbulb, ChevronRight } from 'lucide-vue-next'
 import { getAdvice, getOverview, refreshQuotas, rescan, type AdviceItem, type AdviceReport, type Overview, type Origin, type QuotaDisplay, type Tool, type Source } from '../api'
@@ -7,6 +7,7 @@ import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import Sparkline from '../components/Sparkline.vue'
 import QuotaTrend from '../components/QuotaTrend.vue'
+import { dashboardRefreshToken, pendingDashboardNotice } from '../onboardingState'
 
 const router = useRouter()
 const overview = ref<Overview | null>(null)
@@ -15,6 +16,7 @@ const refreshing = ref(false)
 const error = ref('')
 const refreshError = ref('')
 const notice = ref('')
+const noticeTone = ref<'warning' | 'success'>('warning')
 const selectedTool = ref<Tool>('Claude')
 const selectedRange = ref<'five_hour' | 'today' | 'week'>('five_hour')
 const selectedList = ref<'sessions' | 'prompts'>('sessions')
@@ -25,8 +27,8 @@ async function loadAdvice() {
   try { advice.value = await getAdvice(7) } catch { advice.value = null }
 }
 
-async function load() {
-  loading.value = true
+async function load(quiet = false) {
+  if (!quiet || !overview.value) loading.value = true
   error.value = ''
   try {
     const data = await getOverview()
@@ -50,6 +52,7 @@ async function refresh() {
     const result = await refreshQuotas()
     refreshError.value = [result.claude, result.codex].filter(message => !['已更新', '未开启', '60 秒内已查询', '开发预览'].includes(message)).join('；')
     notice.value = refreshError.value
+    noticeTone.value = 'warning'
     overview.value = await getOverview()
     void loadAdvice()
   } catch (cause) {
@@ -58,7 +61,16 @@ async function refresh() {
     refreshing.value = false
   }
 }
-onMounted(load)
+onMounted(() => { void load() })
+watch(dashboardRefreshToken, () => {
+  const pending = pendingDashboardNotice.value
+  if (pending) {
+    notice.value = pending.text
+    noticeTone.value = pending.tone
+    pendingDashboardNotice.value = null
+  }
+  void load(true)
+})
 const adviceRank = (item: AdviceItem) => [item.avoidable_weekly_pct ?? -1, item.avoidable_cost_usd, item.overhead_cost_usd]
 const topAdvice = computed(() => (advice.value?.tools.flatMap(tool => tool.items) ?? [])
   .slice().sort((a, b) => {
@@ -176,9 +188,9 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
         </button>
       </div>
     </header>
-    <div v-if="notice" class="notice" role="status">{{ notice }} <button @click="notice = ''" aria-label="关闭提示">×</button></div>
+    <div v-if="notice" class="notice" :class="{ 'notice-success': noticeTone === 'success' }" role="status">{{ notice }} <button @click="notice = ''" aria-label="关闭提示">×</button></div>
     <div v-if="loading" class="skeleton-layout" aria-label="正在加载数据"><div class="skeleton" v-for="i in 9" :key="i" /></div>
-    <div v-else-if="error && !overview" class="center-state"><CircleAlert :size="30" /><strong>加载概览失败</strong><p>{{ error }}</p><button @click="load">重试</button></div>
+    <div v-else-if="error && !overview" class="center-state"><CircleAlert :size="30" /><strong>加载概览失败</strong><p>{{ error }}</p><button @click="load()">重试</button></div>
     <div v-else-if="empty" class="center-state"><Database :size="32" /><strong>未找到 Claude Code 或 Codex 的本地日志</strong><p>开始使用后可在此查看额度和用量。</p><button @click="refresh">重新扫描</button></div>
     <template v-else-if="overview">
       <section class="quota-grid" aria-label="订阅额度">
