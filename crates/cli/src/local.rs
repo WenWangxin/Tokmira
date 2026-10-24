@@ -15,6 +15,7 @@ use token_audit_core::quota_store::{read_claude, read_codex};
 use token_audit_core::recorder::{read_statusline_records, status};
 use token_audit_core::sessions::{list_sessions, session_detail, SessionInput};
 use token_audit_core::settings::read_settings;
+use token_audit_core::share::{share_summary, ShareSummary};
 use token_audit_core::timeline::build_timeline;
 use token_audit_core::usage::{list_usage_windows, usage_detail};
 
@@ -27,6 +28,54 @@ struct Args {
     days: u32,
     id: Option<String>,
 }
+fn print_share(summary: &ShareSummary) {
+    println!(
+        "{} 年 {} 月 API 等价估算：${:.2}",
+        summary.year, summary.month, summary.month_estimated_cost_usd
+    );
+    match summary.subscription_total_usd {
+        Some(total) => {
+            let multiple = summary
+                .subscription_value_multiple
+                .map_or_else(|| "—".to_owned(), |value| format!("{value:.2}"));
+            println!(
+                "已识别订阅 {} 份，合计 ${total:.2}，价值倍数 {multiple}",
+                summary.recognized_subscriptions
+            );
+        }
+        None => println!("未识别订阅套餐"),
+    }
+    if !summary.unrecognized_tools.is_empty() {
+        let names: Vec<_> = summary
+            .unrecognized_tools
+            .iter()
+            .map(|tool| match tool {
+                Tool::Claude => "Claude",
+                Tool::Codex => "Codex",
+            })
+            .collect();
+        println!("套餐未识别：{}", names.join("、"));
+    }
+    for tool in &summary.tools {
+        println!(
+            "{:?} {} ${:.2}",
+            tool.tool,
+            tool.plan.as_deref().unwrap_or("—"),
+            tool.estimated_cost_usd
+        );
+    }
+    let hit = summary
+        .cache_hit_rate
+        .map_or_else(|| "—".to_owned(), |rate| format!("{:.0}%", rate * 100.0));
+    println!("缓存命中率：{hit}；请求 {}", summary.requests);
+    if let Some(project) = &summary.top_project {
+        println!(
+            "消耗最高的项目：{} ${:.2}",
+            project.name, project.estimated_cost_usd
+        );
+    }
+}
+
 fn quota_label(display: &QuotaDisplay) -> String {
     if display.window_passed {
         "已重置，等待新数据".to_owned()
@@ -55,7 +104,7 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
             "--data-dir" if data_dir.is_none() => {
                 data_dir = Some(PathBuf::from(args.next().ok_or("--data-dir 缺少目录")?))
             }
-            "--tool" if !matches!(command, "overview" | "sessions") && tool.is_none() => {
+            "--tool" if !matches!(command, "overview" | "sessions" | "share") && tool.is_none() => {
                 tool = Some(match args.next().as_deref().and_then(|s| s.to_str()) {
                     Some("claude") => Tool::Claude,
                     Some("codex") => Tool::Codex,
@@ -135,7 +184,32 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
         titles: &titles,
         pricing: &pricing,
     };
-    if command == "sessions" {
+    if command == "share" {
+        let summary = share_summary(
+            &OverviewInput {
+                events: &events,
+                titles: &titles,
+                points: &points,
+                attribution: &attribution,
+                claude_snapshots: &claude_snapshots,
+                codex_snapshots: &codex_snapshots,
+                codex_log: &codex.rate_limits,
+                pricing: &pricing,
+                recorder: status(&args.home, &args.data_dir),
+            },
+            Utc::now(),
+            Local,
+        );
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary).map_err(|_| "生成 JSON 失败")?
+            );
+        } else {
+            print_share(&summary);
+        }
+        return Ok(());
+    } else if command == "sessions" {
         let rows = list_sessions(&session_input, args.days, Utc::now());
         if args.json {
             println!(

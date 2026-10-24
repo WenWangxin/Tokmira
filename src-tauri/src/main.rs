@@ -29,6 +29,7 @@ use token_audit_core::sessions::{
     list_sessions, session_detail, SessionDetail, SessionInput, SessionRow,
 };
 use token_audit_core::settings::{self, AppSettings};
+use token_audit_core::share::{self, share_summary, ShareSummary};
 use token_audit_core::timeline::build_timeline;
 use token_audit_core::usage::{list_usage_windows, usage_detail, UsageDetail, UsageWindowRef};
 
@@ -330,6 +331,29 @@ struct UsageContext<'a> {
     prompts: &'a [PromptEvent],
     settings: &'a AppSettings,
     now: DateTime<Utc>,
+}
+
+#[tauri::command]
+async fn get_share_summary(state: State<'_, AppState>) -> Result<ShareSummary, String> {
+    let home = state.home.clone();
+    let data_dir = state.data_dir.clone();
+    let cached = Arc::clone(&state.scans);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_usage(&home, &data_dir, &cached, |context| {
+            Ok(share_summary(context.input, context.now, chrono::Local))
+        })
+    })
+    .await
+    .map_err(|_| "生成分享摘要失败".to_owned())?
+}
+
+#[tauri::command]
+fn save_export(file_name: String, bytes: Vec<u8>) -> Result<String, String> {
+    let directory = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "无法确定下载目录".to_owned())?;
+    let path = share::save_export_file(&directory, &file_name, &bytes).map_err(str::to_owned)?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -651,6 +675,8 @@ fn main() -> tauri::Result<()> {
             rescan,
             refresh_quotas,
             get_overview,
+            get_share_summary,
+            save_export,
             get_attribution,
             get_usage_windows,
             get_usage_detail,

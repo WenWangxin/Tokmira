@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Local, Utc};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 struct Temp(PathBuf);
@@ -86,6 +86,30 @@ fn local_commands_use_only_fixture_home_and_saved_quota() {
             }
         }
     }
+    let output = Command::new(env!("CARGO_BIN_EXE_token-audit"))
+        .args(["share", "--json", "--home"])
+        .arg(temp.path())
+        .arg("--data-dir")
+        .arg(temp.path().join("data"))
+        .output()
+        .expect("run share command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(!text.contains("最终自定义"));
+    assert!(!text.contains("手写提示"));
+    assert!(!text.contains("session-a"));
+    let value: serde_json::Value = serde_json::from_str(&text).expect("share JSON");
+    let now = Local::now();
+    assert_eq!(value["year"].as_i64(), Some(i64::from(now.year())));
+    assert_eq!(value["month"].as_u64(), Some(u64::from(now.month())));
+    assert_eq!(value["subscription_total_usd"], 20.0);
+    assert_eq!(value["recognized_subscriptions"].as_u64(), Some(1));
+    assert!(value["tools"].is_array());
+    assert!(value["top_project"].is_null() || value["top_project"]["name"].is_string());
 }
 
 #[test]

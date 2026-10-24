@@ -7,6 +7,7 @@ import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import Sparkline from '../components/Sparkline.vue'
 import QuotaTrend from '../components/QuotaTrend.vue'
+import ShareDialog from '../components/ShareDialog.vue'
 import { dashboardRefreshToken, pendingDashboardNotice } from '../onboardingState'
 
 const router = useRouter()
@@ -21,6 +22,7 @@ const selectedTool = ref<Tool>('Claude')
 const selectedRange = ref<'five_hour' | 'today' | 'week'>('five_hour')
 const selectedList = ref<'sessions' | 'prompts'>('sessions')
 const advice = ref<AdviceReport | null>(null)
+const shareOpen = ref(false)
 
 // Advice is secondary: a failure here must not block the dashboard.
 async function loadAdvice() {
@@ -170,7 +172,6 @@ const sourceLabel = (source: Source) => ({ ClaudeCli: 'Claude Code · 命令行'
 const rowTitle = (row: { title: string | null; project: string | null; session_id: string }) => row.title || row.project?.split(/[\\/]/).filter(Boolean).at(-1) || row.session_id.slice(0, 8)
 const quotaDelta = (value: number) => value > 0 && value < .1 ? '<0.1%' : `${value.toFixed(1)}%`
 const modelLabel = (model: string) => model || '—'
-const showShare = () => { notice.value = '分享卡片将在后续版本提供' }
 const openSession = (row: { tool: Tool; session_id: string }) => {
   router.push({ path: '/sessions', query: { tool: row.tool, id: row.session_id } })
 }
@@ -181,7 +182,7 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
     <header class="dashboard-header">
       <div><h1>仪表盘</h1><p v-if="overview">{{ updatedAt(overview.generated_at) }} 更新 · 共 {{ overview.summary.sessions }} 个会话</p><p v-else>本地用量概况</p></div>
       <div class="header-actions">
-        <button class="round-action" title="分享" aria-label="分享" @click="showShare"><Share :size="21" /></button>
+        <button class="round-action" title="分享" aria-label="分享" @click="shareOpen = true"><Share :size="21" /></button>
         <button class="round-action" title="刷新" aria-label="刷新" :disabled="refreshing || loading" @click="refresh"><RefreshCw :size="21" :class="{ spinning: refreshing }" /></button>
         <button class="round-action state-action" :class="error || refreshError ? 'state-warning' : 'state-success'" :title="error || refreshError || '数据已就绪'" aria-label="数据状态" @click="notice = error || refreshError || '数据已就绪'">
           <CircleAlert v-if="error || refreshError" :size="22" /><CircleCheck v-else :size="22" />
@@ -228,5 +229,6 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
           <button class="advice-button" @click="router.push('/advice')">查看全部建议</button></article></section>
       <section class="card sessions-card"><div class="sessions-top"><div class="summary-pills"><button :class="{ active: selectedList === 'sessions' }" @click="selectedList = 'sessions'">{{ overview.summary.sessions }} 个会话</button><button>{{ overview.summary.requests.toLocaleString('zh-CN') }} 次请求</button><button :class="{ active: selectedList === 'prompts' }" @click="selectedList = 'prompts'">{{ overview.summary.high_prompts }} 条高耗提示</button></div><button class="all-link" @click="router.push('/sessions')">查看全部</button></div><div class="table-scroll"><div class="table-head"><span>来源</span><span>会话</span><span>模型</span><span>token</span><span>缓存命中</span><span>额度</span></div><button v-for="row in tableRows" :key="`${row.tool}-${row.session_id}-${'at' in row ? row.at : ''}`" class="session-row" @click="openSession(row)"><span class="row-source"><span class="row-icon"><img v-if="row.tool === 'Claude'" :src="ClaudeLogo" alt=""/><CodexLogo v-else /></span>{{ sourceLabel(row.source) }}</span><span class="truncate">{{ rowTitle(row) }}</span><span class="truncate">{{ modelLabel(row.model) }}</span><span class="numeric">{{ compact(row.total_tokens).value }} {{ compact(row.total_tokens).unit }}</span><span class="numeric" :class="{ 'error-text': row.cache_hit_rate !== null && row.cache_hit_rate < .5 }">{{ percent(row.cache_hit_rate) }}</span><span class="numeric">{{ quotaDelta(row.weekly_delta) }}</span></button><p v-if="!tableRows.length" class="table-empty">暂无记录</p></div></section>
     </template>
+    <ShareDialog v-if="shareOpen" @close="shareOpen = false" />
   </div>
 </template>

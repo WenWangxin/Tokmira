@@ -1,0 +1,139 @@
+<script setup lang="ts">
+import { onMounted, onUnmounted, reactive, ref, unref } from 'vue'
+import { Share, X } from 'lucide-vue-next'
+import { getShareSummary, saveExport } from '../api'
+import ShareCard from './ShareCard.vue'
+import Toggle from './Toggle.vue'
+import {
+  defaultShareOptions,
+  exportErrorText,
+  exportFileName,
+  renderSharePng,
+  shareMarkdown,
+  type ShareSummary,
+} from '../shareLogic'
+
+const emit = defineEmits<{ close: [] }>()
+const summary = ref<ShareSummary | null>(null)
+const loading = ref(true)
+const loadError = ref('')
+const status = ref('')
+const statusTone = ref<'ok' | 'bad'>('ok')
+const busy = ref(false)
+const options = reactive(defaultShareOptions())
+const card = ref<{ root: SVGSVGElement | null } | null>(null)
+const panel = ref<HTMLElement | null>(null)
+let alive = true
+
+function onKey(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  emit('close')
+}
+
+async function load() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const value = await getShareSummary()
+    if (alive) summary.value = value
+  } catch (cause) {
+    if (alive) loadError.value = exportErrorText(cause)
+  } finally {
+    if (alive) loading.value = false
+  }
+}
+
+async function exportImage() {
+  const svg = unref(card.value?.root ?? null)
+  const data = summary.value
+  if (!(svg instanceof SVGSVGElement) || !data || busy.value) return
+  busy.value = true
+  status.value = ''
+  try {
+    const png = await renderSharePng(svg)
+    const bytes = new Uint8Array(await png.arrayBuffer())
+    const saved = await saveExport(exportFileName(data, 'png'), bytes)
+    if (!alive) return
+    status.value = `已保存到 ${saved}`
+    statusTone.value = 'ok'
+  } catch (cause) {
+    if (!alive) return
+    status.value = exportErrorText(cause)
+    statusTone.value = 'bad'
+  } finally {
+    if (alive) busy.value = false
+  }
+}
+
+async function exportMarkdown() {
+  const data = summary.value
+  if (!data || busy.value) return
+  busy.value = true
+  status.value = ''
+  try {
+    const bytes = new TextEncoder().encode(shareMarkdown(data, options))
+    const saved = await saveExport(exportFileName(data, 'md'), bytes)
+    if (!alive) return
+    status.value = `已保存到 ${saved}`
+    statusTone.value = 'ok'
+  } catch (cause) {
+    if (!alive) return
+    status.value = exportErrorText(cause)
+    statusTone.value = 'bad'
+  } finally {
+    if (alive) busy.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKey)
+  panel.value?.focus()
+  void load()
+})
+onUnmounted(() => {
+  alive = false
+  document.removeEventListener('keydown', onKey)
+})
+</script>
+
+<template>
+  <div class="share-mask" @click.self="emit('close')">
+    <div ref="panel" class="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" tabindex="-1">
+      <button type="button" class="share-close" aria-label="关闭" @click="emit('close')"><X :size="18" /></button>
+      <div class="share-preview">
+        <ShareCard v-if="summary" ref="card" :summary="summary" :options="options" />
+        <p v-else-if="loading" class="share-preview-state">正在读取本月用量</p>
+        <p v-else class="share-preview-state">{{ loadError || '无法读取本月用量' }}</p>
+      </div>
+      <div class="share-side">
+        <div>
+          <h2 id="share-dialog-title">分享卡片</h2>
+          <p class="share-lead">导出为图片分享。金额为 API 等价估算，并非实际账单。</p>
+          <div class="share-options">
+            <div class="share-option">
+              <span>各工具明细</span>
+              <Toggle :checked="options.toolDetails" label="各工具明细" @toggle="options.toolDetails = !options.toolDetails" />
+            </div>
+            <div class="share-option">
+              <span>缓存命中率</span>
+              <Toggle :checked="options.cacheHitRate" label="缓存命中率" @toggle="options.cacheHitRate = !options.cacheHitRate" />
+            </div>
+            <div class="share-option share-option-project">
+              <div class="share-option">
+                <span>消耗最高的项目</span>
+                <Toggle :checked="options.topProject" label="消耗最高的项目" @toggle="options.topProject = !options.topProject" />
+              </div>
+              <p>项目名称默认隐藏，以保护你的工作隐私。</p>
+            </div>
+          </div>
+        </div>
+        <div class="share-actions">
+          <p v-if="status" class="share-status" :class="statusTone" role="status">{{ status }}</p>
+          <button type="button" class="share-primary" :disabled="!summary || busy" @click="exportImage"><Share :size="18" />导出图片</button>
+          <button type="button" class="share-secondary" :disabled="!summary || busy" @click="exportMarkdown">导出 Markdown</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

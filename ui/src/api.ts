@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mockDetectedTools } from './mocks/onboarding'
+import type { ShareSummary } from './shareLogic'
 import { mockEnvironment, mockRecorderStatus, mockSettings, previewRecorderPlan } from './mocks/settings'
 import { clonePreview } from './settingsLogic'
 
@@ -513,3 +514,32 @@ export const getSessionDetail = (tool: Tool, sessionId: string) =>
   isPreview()
     ? developmentSessionDetail(tool, sessionId)
     : invoke<SessionDetail>('get_session_detail', { tool, sessionId })
+
+const shareFiles = import.meta.glob<{ default: ShareSummary }>('../.local/share.json')
+async function developmentShare(): Promise<ShareSummary> {
+  const local = shareFiles['../.local/share.json']
+  if (local) return (await local()).default
+  const { mockShareSummary } = await import('./mocks/share')
+  return mockShareSummary()
+}
+function previewDownload(fileName: string, bytes: Uint8Array): string {
+  const mime = fileName.endsWith('.md') ? 'text/markdown;charset=utf-8' : 'image/png'
+  const body = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(body).set(bytes)
+  const blob = new Blob([body], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.append(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+  return fileName
+}
+export const getShareSummary = () =>
+  isPreview() ? developmentShare() : invoke<ShareSummary>('get_share_summary')
+export const saveExport = (fileName: string, bytes: Uint8Array) =>
+  isPreview()
+    ? Promise.resolve(previewDownload(fileName, bytes))
+    : invoke<string>('save_export', { fileName, bytes: Array.from(bytes) })

@@ -14,6 +14,7 @@ pub mod recorder;
 pub mod report;
 pub mod sessions;
 pub mod settings;
+pub mod share;
 pub mod timeline;
 pub mod usage;
 
