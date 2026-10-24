@@ -138,14 +138,21 @@ fn missing_and_empty_project_directories_are_empty_scans() {
     assert_eq!(empty.stats.files, 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn unreadable_file_does_not_abort_other_files() {
+    use std::os::unix::fs::PermissionsExt;
+
     let home = TempHome::new();
     home.copy_fixture();
-    fs::create_dir(home.path().join(".claude/projects/demo-a/broken.jsonl"))
-        .expect("create unreadable fixture entry");
+    let broken = home.path().join(".claude/projects/demo-a/broken.jsonl");
+    fs::write(&broken, "{}\n").expect("create unreadable fixture file");
+    fs::set_permissions(&broken, fs::Permissions::from_mode(0o000))
+        .expect("make fixture unreadable");
 
     let scan = scan_claude(home.path()).expect("scan despite unreadable file");
+    fs::set_permissions(&broken, fs::Permissions::from_mode(0o600))
+        .expect("restore permissions for cleanup");
     assert_eq!(scan.stats.files, 3);
     assert_eq!(scan.stats.unreadable_files, 1);
     assert_eq!(scan.events.len(), 6);
@@ -177,4 +184,35 @@ fn equal_output_duplicates_keep_first_sorted_path_and_line() {
         assert_eq!(repeated.stats, first.stats);
         assert_eq!(repeated.events, first.events);
     }
+}
+
+#[test]
+fn nested_subagent_transcripts_are_scanned() {
+    let home = TempHome::new();
+    let session_dir = home
+        .path()
+        .join(".claude/projects/demo-sub/fake-session/subagents");
+    fs::create_dir_all(&session_dir).expect("create nested subagent folder");
+    fs::write(
+        home.path().join(".claude/projects/demo-sub/fake-session.jsonl"),
+        r#"{"type":"assistant","sessionId":"fake-session","requestId":"req-main","timestamp":"2026-10-01T10:00:00Z","entrypoint":"cli","message":{"id":"msg-main","model":"claude-test","usage":{"input_tokens":1,"output_tokens":2}}}
+"#,
+    )
+    .expect("write main transcript");
+    fs::write(
+        session_dir.join("agent-fake.jsonl"),
+        r#"{"type":"assistant","sessionId":"fake-session","requestId":"req-sub","timestamp":"2026-10-01T10:00:05Z","entrypoint":"cli","isSidechain":true,"message":{"id":"msg-sub","model":"claude-test","usage":{"input_tokens":3,"output_tokens":4}}}
+"#,
+    )
+    .expect("write subagent transcript");
+    let scan = scan_claude(home.path()).expect("scan nested home");
+    assert_eq!(scan.stats.files, 2);
+    assert_eq!(scan.events.len(), 2);
+    let subagent = scan
+        .events
+        .iter()
+        .find(|event| event.request_id.as_deref() == Some("req-sub"))
+        .expect("subagent event is scanned");
+    assert!(subagent.is_subagent);
+    assert_eq!(subagent.session_id, "fake-session");
 }

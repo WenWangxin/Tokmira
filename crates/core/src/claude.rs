@@ -463,7 +463,33 @@ fn scan_file(
     Ok(())
 }
 
-/// Scans only direct JSONL children of each Claude project directory.
+/// Recursion bound for project subdirectories. Subagent transcripts live at
+/// `<project>/<session>/subagents/*.jsonl`; deeper levels are not expected.
+const MAX_PROJECT_DEPTH: usize = 4;
+
+/// Collects `*.jsonl` files under a project directory without following symlinks.
+/// Unreadable subdirectories are skipped, matching how unreadable files are treated.
+fn collect_jsonl(directory: &Path, depth: usize, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        if kind.is_dir() {
+            if depth < MAX_PROJECT_DEPTH {
+                collect_jsonl(&path, depth + 1, paths);
+            }
+        } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
+            paths.push(path);
+        }
+    }
+}
+
+/// Scans JSONL files in each Claude project directory, including subagent
+/// transcripts in nested `subagents/` folders.
 ///
 /// A missing projects directory is an empty scan. Failure to enumerate an existing
 /// projects directory is returned to the caller; individual file failures are counted.
@@ -486,24 +512,7 @@ pub fn scan_claude(home: &Path) -> Result<ClaudeScan, Error> {
         if !project.file_type()?.is_dir() {
             continue;
         }
-        let files = match fs::read_dir(project.path()) {
-            Ok(files) => files,
-            Err(_) => continue,
-        };
-        for file in files {
-            let file = match file {
-                Ok(file) => file,
-                Err(_) => continue,
-            };
-            let path = file.path();
-            if path
-                .extension()
-                .is_none_or(|extension| extension != "jsonl")
-            {
-                continue;
-            }
-            paths.push(path);
-        }
+        collect_jsonl(&project.path(), 0, &mut paths);
     }
     paths.sort();
     for path in paths {
