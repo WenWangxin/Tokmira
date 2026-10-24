@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri::State;
-use token_audit_core::attribution::{attribute, Attribution};
+use token_audit_core::attribution::{attribute, Attribution, WindowKind};
 use token_audit_core::claude::{scan_claude, ClaudeScan};
 use token_audit_core::claude_quota::{
     query_claude_quota, system_proxy, ClaudeQuotaError, QueryOptions, SystemSecretStore,
@@ -19,11 +19,13 @@ use token_audit_core::codex_app_server::{
     codex_candidates, read_codex_quota, resolve_launch, AppServerOptions, CodexQuotaError,
 };
 use token_audit_core::dashboard::{build_overview, Overview, OverviewInput};
+use token_audit_core::model::Tool;
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{self, CodexDaily};
 use token_audit_core::recorder::{self, RecorderParts, RecorderPlan, RecorderStatus};
 use token_audit_core::settings::{self, AppSettings};
 use token_audit_core::timeline::build_timeline;
+use token_audit_core::usage::{list_usage_windows, usage_detail, UsageDetail, UsageWindowRef};
 
 #[derive(Clone)]
 struct Scans {
@@ -316,6 +318,99 @@ async fn get_attribution(state: State<'_, AppState>) -> Result<Attribution, Stri
     .await
     .map_err(|_| "生成额度归因失败".to_owned())?
 }
+
+fn with_usage<R>(
+    home: &std::path::Path,
+    data_dir: &std::path::Path,
+    cached: &Mutex<Option<Scans>>,
+    build: impl FnOnce(&OverviewInput<'_>, DateTime<Utc>) -> Result<R, String>,
+) -> Result<R, String> {
+    let scans = {
+        let mut guard = cached.lock().map_err(|_| lock_error())?;
+        if guard.is_none() {
+            *guard = Some(scan(home)?);
+        }
+        guard.as_ref().ok_or_else(lock_error)?.clone()
+    };
+    let (claude_snapshots, _) = quota_store::read_claude(data_dir);
+    let (codex_snapshots, _) = quota_store::read_codex(data_dir);
+    let (statusline, _) = recorder::read_statusline_records(data_dir);
+    let settings = settings::read_settings(data_dir).map_err(|_| "读取设置失败".to_owned())?;
+    let points = build_timeline(
+        &claude_snapshots,
+        &codex_snapshots,
+        &statusline,
+        &scans.codex.rate_limits,
+        settings.calibration.as_ref(),
+    );
+    let pricing = Pricing::bundled().map_err(str::to_owned)?;
+    let mut events = scans.claude.events;
+    events.extend(scans.codex.events);
+    let mut prompts = scans.claude.prompts;
+    prompts.extend(scans.codex.prompts);
+    let mut titles: BTreeMap<_, _> = scans.claude.titles;
+    titles.extend(scans.codex.titles);
+    let attribution = attribute(
+        &events,
+        &prompts,
+        &titles,
+        &points,
+        &claude_snapshots,
+        &pricing,
+    );
+    let input = OverviewInput {
+        events: &events,
+        titles: &titles,
+        points: &points,
+        attribution: &attribution,
+        claude_snapshots: &claude_snapshots,
+        codex_snapshots: &codex_snapshots,
+        codex_log: &scans.codex.rate_limits,
+        pricing: &pricing,
+        recorder: recorder::status(home, data_dir),
+    };
+    build(&input, Utc::now())
+}
+
+#[tauri::command]
+async fn get_usage_windows(
+    state: State<'_, AppState>,
+    tool: Tool,
+) -> Result<Vec<UsageWindowRef>, String> {
+    let home = state.home.clone();
+    let data_dir = state.data_dir.clone();
+    let cached = Arc::clone(&state.scans);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_usage(&home, &data_dir, &cached, |input, now| {
+            Ok(list_usage_windows(input, tool, now, 6))
+        })
+    })
+    .await
+    .map_err(|_| "生成用量窗口失败".to_owned())?
+}
+
+#[tauri::command]
+async fn get_usage_detail(
+    state: State<'_, AppState>,
+    tool: Tool,
+    kind: WindowKind,
+    window_id: DateTime<Utc>,
+) -> Result<UsageDetail, String> {
+    let home = state.home.clone();
+    let data_dir = state.data_dir.clone();
+    let cached = Arc::clone(&state.scans);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_usage(&home, &data_dir, &cached, |input, now| {
+            let window = list_usage_windows(input, tool, now, usize::MAX)
+                .into_iter()
+                .find(|w| w.kind == kind && w.window_id == window_id)
+                .ok_or_else(|| "指定的用量窗口不存在".to_owned())?;
+            Ok(usage_detail(input, &window, now))
+        })
+    })
+    .await
+    .map_err(|_| "生成用量明细失败".to_owned())?
+}
 #[tauri::command]
 fn recorder_status(state: State<'_, AppState>) -> RecorderStatus {
     recorder::status(&state.home, &state.data_dir)
@@ -363,6 +458,8 @@ fn main() -> tauri::Result<()> {
             refresh_quotas,
             get_overview,
             get_attribution,
+            get_usage_windows,
+            get_usage_detail,
             recorder_status,
             recorder_plan,
             recorder_install,

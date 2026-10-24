@@ -111,6 +111,46 @@ export interface Overview {
 }
 
 export type WindowKind = 'FiveHour' | 'Weekly'
+export interface UsageWindowRef {
+  tool: Tool
+  kind: WindowKind
+  window_id: string
+  start: string
+  end: string
+  is_current: boolean
+}
+export interface UsageRank {
+  key: string
+  name: string
+  subtitle: string
+  tokens: number
+  requests: number
+  delta: number
+}
+export interface UsagePrompt {
+  at: string
+  session_id: string
+  title: string
+  delta: number
+  requests: number
+  tokens: number
+}
+export interface UsageDetail {
+  window: UsageWindowRef
+  used_percent: number
+  remaining_percent: number
+  resets_at: string
+  origin: Origin
+  attributed_total: number
+  unattributed_total: number
+  sessions: UsageRank[]
+  projects: UsageRank[]
+  models: UsageRank[]
+  subagents: UsageRank[]
+  high_prompts: UsagePrompt[]
+  official_weekly_breakdown: Attribution['latest_claude_weekly_breakdown']
+}
+export interface UsageResponse { windows: UsageWindowRef[]; detail: UsageDetail | null }
 export interface UsageEvent {
   tool: Tool
   source: Source
@@ -209,6 +249,31 @@ export const getOverview = () =>
     ? developmentOverview()
     : invoke<Overview>('get_overview')
 export const getAttribution = () => invoke<Attribution>('get_attribution')
+const usageFiles = import.meta.glob<{ default: UsageResponse }>('../.local/usage-*.json')
+async function developmentUsage(tool: Tool): Promise<UsageResponse> {
+  const { mockUsage } = await import('./mocks/usage')
+  const variant = new URLSearchParams(window.location.search).get('mock')
+  if (variant === 'empty' || variant === 'nodata') return mockUsage(tool, variant)
+  const local = usageFiles[`../.local/usage-${tool.toLowerCase()}.json`]
+  return local ? (await local()).default : mockUsage(tool, 'default')
+}
+export const getUsageWindows = async (tool: Tool) =>
+  import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
+    ? (await developmentUsage(tool)).windows
+    : invoke<UsageWindowRef[]>('get_usage_windows', { tool })
+export const getUsageDetail = async (tool: Tool, kind: WindowKind, windowId: string) => {
+  if (import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)) {
+    const response = await developmentUsage(tool)
+    if (response.detail?.window.kind === kind && response.detail.window.window_id === windowId) return response.detail
+    const { mockUsageDetail } = await import('./mocks/usage')
+    if (new URLSearchParams(window.location.search).get('mock') || !usageFiles[`../.local/usage-${tool.toLowerCase()}.json`]) {
+      const selected = response.windows.find(item => item.kind === kind && item.window_id === windowId)
+      if (selected) return mockUsageDetail(selected)
+    }
+    throw new Error('本地预览文件仅包含一个窗口；请用 CLI 为所选窗口重新生成 JSON')
+  }
+  return invoke<UsageDetail>('get_usage_detail', { tool, kind, windowId })
+}
 export const recorderStatus = () => invoke<RecorderStatus>('recorder_status')
 export const recorderPlan = (parts: RecorderParts) => invoke<RecorderPlan>('recorder_plan', { parts })
 export const recorderInstall = (parts: RecorderParts) => invoke<RecorderPlan>('recorder_install', { parts })

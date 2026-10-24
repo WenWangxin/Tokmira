@@ -12,6 +12,7 @@ pub mod recorder;
 pub mod report;
 pub mod settings;
 pub mod timeline;
+pub mod usage;
 
 /// Returns the version of the shared core library.
 #[must_use]

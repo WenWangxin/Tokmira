@@ -87,3 +87,36 @@ fn local_commands_use_only_fixture_home_and_saved_quota() {
         }
     }
 }
+
+#[test]
+fn usage_json_uses_only_fixture_directories() {
+    let temp = Temp::new();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../core/tests/fixtures/usage_cli_snapshot.jsonl");
+    let quota = temp.path().join("data/quota/claude.jsonl");
+    fs::create_dir_all(quota.parent().expect("quota parent")).expect("quota directory");
+    fs::copy(fixture, quota).expect("handwritten quota fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_token-audit"))
+        .args(["usage", "--tool", "claude", "--home"])
+        .arg(temp.path())
+        .arg("--data-dir")
+        .arg(temp.path().join("data"))
+        .arg("--window")
+        .arg("2020-01-01T05:00:00Z")
+        .arg("--json")
+        .output()
+        .expect("run usage command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("usage JSON");
+    assert_eq!(value["windows"][0]["window_id"], "2020-01-01T05:00:00Z");
+    assert_eq!(value["detail"]["used_percent"], 12.0);
+    assert_eq!(value["detail"]["unattributed_total"], 12.0);
+    assert_eq!(
+        value["detail"]["sessions"].as_array().map(Vec::len),
+        Some(0)
+    );
+}

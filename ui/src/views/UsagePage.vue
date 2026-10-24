@@ -1,0 +1,148 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { Cpu, Folder, GitFork, List, Zap, Database, CircleAlert } from 'lucide-vue-next'
+import ClaudeLogo from '../assets/logos/claude.svg'
+import CodexLogo from '../components/CodexLogo.vue'
+import { getUsageDetail, getUsageWindows, type Tool, type UsageDetail, type UsageRank, type UsageWindowRef } from '../api'
+
+const router = useRouter()
+const tool = ref<Tool>('Claude')
+const windows = ref<Record<Tool, UsageWindowRef[]>>({ Claude: [], Codex: [] })
+const selected = ref<UsageWindowRef | null>(null)
+const detail = ref<UsageDetail | null>(null)
+const dimension = ref<'sessions' | 'projects' | 'models' | 'subagents'>('sessions')
+const loading = ref(true)
+const detailLoading = ref(false)
+const error = ref('')
+let detailRequest = 0
+const dimensions = [
+  { key: 'sessions', name: '会话', icon: List },
+  { key: 'projects', name: '项目', icon: Folder },
+  { key: 'models', name: '模型', icon: Cpu },
+  { key: 'subagents', name: '子代理', icon: GitFork },
+] as const
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  try {
+    const [claude, codex] = await Promise.all([getUsageWindows('Claude'), getUsageWindows('Codex')])
+    windows.value = { Claude: claude, Codex: codex }
+    tool.value = claude.length ? 'Claude' : codex.length ? 'Codex' : 'Claude'
+    await selectWindow(windows.value[tool.value][0] ?? null)
+  } catch (cause) {
+    error.value = String(cause)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function selectWindow(window: UsageWindowRef | null) {
+  const request = ++detailRequest
+  selected.value = window
+  detail.value = null
+  error.value = ''
+  if (!window) return
+  detailLoading.value = true
+  try {
+    const result = await getUsageDetail(window.tool, window.kind, window.window_id)
+    if (request === detailRequest) detail.value = result
+  } catch (cause) {
+    if (request === detailRequest) error.value = String(cause)
+  } finally {
+    if (request === detailRequest) detailLoading.value = false
+  }
+}
+
+function selectTool(next: Tool) {
+  if (next === tool.value || !windows.value[next].length) return
+  tool.value = next
+  void selectWindow(windows.value[next][0] ?? null)
+}
+
+onMounted(load)
+const rows = computed<UsageRank[]>(() => detail.value?.[dimension.value] ?? [])
+const visibleRows = computed(() => rows.value.slice(0, 8))
+const topPrompts = computed(() => detail.value?.high_prompts.slice(0, 6) ?? [])
+const maxDelta = computed(() => Math.max(0, ...rows.value.map(row => row.delta)))
+const toTime = (value: string) => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+const toDay = (value: string) => { const date = new Date(value); return `${date.getMonth() + 1}/${date.getDate()}` }
+function windowLabel(window: UsageWindowRef) {
+  if (window.kind === 'Weekly') return '本周'
+  if (window.is_current) return '当前'
+  const day = new Date(window.start).toDateString()
+  if (day === new Date().toDateString()) return '今天'
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
+  return day === yesterday.toDateString() ? '昨天' : toDay(window.start)
+}
+const windowTimes = (window: UsageWindowRef) => window.kind === 'Weekly'
+  ? `${toDay(window.start)}–${toDay(window.end)}` : `${toTime(window.start)}–${toTime(window.end)}`
+const percent = (value: number) => `${value.toFixed(1)}%`
+const tokens = (value: number) => value >= 100_000_000 ? `${Number((value / 100_000_000).toFixed(1))} 亿`
+  : value >= 10_000 ? `${Number((value / 10_000).toFixed(1))} 万` : value.toLocaleString('zh-CN')
+const originText = computed(() => {
+  const origin = detail.value?.origin
+  if (origin === 'Official') return tool.value === 'Claude' ? '官方数据 · 官方查询' : '官方数据 · 本地接口'
+  if (origin === 'Statusline') return '官方数据 · 状态栏'
+  if (origin === 'Log') return '官方数据 · 日志'
+  if (origin === 'Manual') return '手动校准'
+  return '估算'
+})
+const chartSegments = computed(() => {
+  if (!detail.value) return []
+  const sessions = detail.value.sessions
+  const parts = sessions.slice(0, 4).map((item, index) => ({ name: item.name, value: item.delta, level: index }))
+  const other = sessions.slice(4).reduce((sum, item) => sum + item.delta, 0)
+  if (other > 0) parts.push({ name: '其他会话', value: other, level: 4 })
+  if (detail.value.unattributed_total > 0) parts.push({ name: '未归属', value: detail.value.unattributed_total, level: 5 })
+  return parts
+})
+const chartWidth = (value: number) => `${Math.max(0, Math.min(100, value))}%`
+const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.map(row =>
+  `${row.display_name || row.key} ${percent(row.percent)}`).join(' · ') ?? '')
+</script>
+
+<template>
+  <div class="dashboard-page usage-page" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
+    <header class="dashboard-header">
+      <div><h1>用量明细</h1><p>逐一追溯额度去向，精确到会话与单条提示</p></div>
+      <div class="usage-tool-switch" aria-label="选择工具">
+        <button v-for="item in (['Claude', 'Codex'] as const)" :key="item" :class="{ active: tool === item }" :disabled="!windows[item].length" :aria-pressed="tool === item" @click="selectTool(item)">
+          <img v-if="item === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else />{{ item }}
+        </button>
+      </div>
+    </header>
+    <div v-if="loading" class="center-state"><Database :size="28" /><strong>正在读取用量数据</strong></div>
+    <div v-else-if="error && !selected" class="center-state"><CircleAlert :size="28" /><strong>读取用量数据失败</strong><p>{{ error }}</p><button @click="load">重试</button></div>
+    <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>暂无 {{ tool }} 额度数据</strong><p>开启官方额度查询或安装状态栏记录器后，即可按会话和提示追溯额度。</p><button @click="router.push('/settings')">前往设置</button></div>
+    <template v-else>
+      <nav class="usage-window-list" aria-label="额度窗口">
+        <button v-for="window in windows[tool]" :key="`${window.kind}-${window.window_id}`" :class="{ active: selected?.kind === window.kind && selected?.window_id === window.window_id }" :aria-current="selected?.window_id === window.window_id ? 'true' : undefined" @click="selectWindow(window)">
+          <strong>{{ windowLabel(window) }}</strong><span>{{ windowTimes(window) }}</span>
+        </button>
+      </nav>
+      <div v-if="detailLoading" class="center-state"><Database :size="28" /><strong>正在生成窗口明细</strong></div>
+      <div v-else-if="error" class="center-state"><CircleAlert :size="28" /><strong>生成窗口明细失败</strong><p>{{ error }}</p><button @click="selectWindow(selected)">重试</button></div>
+      <template v-else-if="detail">
+        <section class="card usage-overview" aria-label="窗口概览">
+          <div class="usage-overview-top"><div class="usage-overview-main"><span>本窗口已用</span><strong>{{ percent(detail.used_percent) }}</strong><span class="origin-pill" :class="detail.origin === 'Manual' ? 'pill-warning' : detail.origin === 'Estimated' ? 'pill-neutral' : 'pill-success'">{{ originText }}</span></div><span class="usage-reset">{{ selected?.is_current ? `剩余 ${percent(detail.remaining_percent)}` : '已结束' }} · {{ toTime(detail.resets_at) }} 重置</span></div>
+          <div class="usage-bar" role="img" :aria-label="`已用 ${percent(detail.used_percent)}，已归属 ${percent(detail.attributed_total)}，未归属 ${percent(detail.unattributed_total)}`"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`" :class="`usage-segment usage-level-${part.level}`" :style="{ width: chartWidth(part.value) }" /><span class="usage-remainder" :style="{ width: chartWidth(detail.remaining_percent) }" /></div>
+          <div class="usage-legend"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`"><i :class="`usage-level-${part.level}`" />{{ part.name }} {{ percent(part.value) }}</span></div>
+          <p v-if="breakdown" class="usage-breakdown">官方本周占比：{{ breakdown }}</p>
+          <p class="usage-note">{{ breakdown ? '本机日志只覆盖 Claude Code；聊天和 Cowork 的部分以官方占比为准。' : '“未归属”指官方额度中无法与本机日志对应的部分，例如同一账号在其他设备上的使用。网页与桌面端聊天不在统计范围内。' }}</p>
+        </section>
+        <div class="usage-grid">
+          <section class="card usage-ranking" aria-label="用量排行"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><List :size="17" /></span><strong>用量排行</strong></div><div class="segmented"><button v-for="item in dimensions" :key="item.key" :class="{ active: dimension === item.key }" :aria-pressed="dimension === item.key" @click="dimension = item.key"><component :is="item.icon" :size="16" />{{ item.name }}</button></div></div>
+            <template v-if="visibleRows.length"><div v-for="row in visibleRows" :key="row.key" class="usage-rank-row"><div class="usage-rank-name"><strong :title="row.name">{{ row.name }}</strong><small>{{ row.subtitle }}</small></div><div class="usage-rank-track"><span :style="{ width: `${maxDelta ? Math.max(0, row.delta / maxDelta * 100) : 0}%` }" /></div><span class="usage-rank-tokens">{{ tokens(row.tokens) }}</span><strong class="usage-rank-delta">{{ percent(row.delta) }}</strong></div><p v-if="rows.length > 8" class="usage-more">还有 {{ rows.length - 8 }} 项</p></template>
+            <p v-else class="table-empty">本窗口内没有本机请求，增量全部计为未归属。</p>
+          </section>
+          <section class="card usage-prompts" aria-label="高耗提示"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><Zap :size="17" /></span><strong>高耗提示</strong></div><small>不记录内容</small></div>
+            <template v-if="topPrompts.length"><button v-for="prompt in topPrompts" :key="`${prompt.session_id}-${prompt.at}`" class="usage-prompt-row" @click="router.push('/sessions')"><span class="usage-prompt-info"><small>{{ toTime(prompt.at) }}</small><strong :title="prompt.title">{{ prompt.title }}</strong></span><strong class="usage-prompt-delta">+{{ percent(prompt.delta) }}</strong></button></template>
+            <p v-else class="table-empty">{{ detail.sessions.length ? '暂无可关联的提示记录。' : '本窗口内没有本机请求，增量全部计为未归属。' }}</p>
+          </section>
+        </div>
+      </template>
+    </template>
+  </div>
+</template>

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use chrono::{Local, Utc};
+use chrono::{DateTime, Local, Utc};
 use serde_json::json;
 use token_audit_core::attribution::{attribute, WindowKind};
 use token_audit_core::claude::scan_claude;
@@ -14,12 +14,14 @@ use token_audit_core::quota_store::{read_claude, read_codex};
 use token_audit_core::recorder::{read_statusline_records, status};
 use token_audit_core::settings::read_settings;
 use token_audit_core::timeline::build_timeline;
+use token_audit_core::usage::{list_usage_windows, usage_detail};
 
 struct Args {
     home: PathBuf,
     data_dir: PathBuf,
     tool: Option<Tool>,
     json: bool,
+    window: Option<String>,
 }
 fn quota_label(display: &QuotaDisplay) -> String {
     if display.window_passed {
@@ -30,11 +32,12 @@ fn quota_label(display: &QuotaDisplay) -> String {
             .map_or_else(|| "暂无数据".to_owned(), |percent| format!("{percent}%"))
     }
 }
-fn parse(args: impl Iterator<Item = OsString>, attribution: bool) -> Result<Args, String> {
+fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, String> {
     let mut home = None;
     let mut data_dir = None;
     let mut tool = None;
     let mut json = false;
+    let mut window = None;
     let mut args = args.peekable();
     while let Some(flag) = args.next() {
         let flag = flag.to_str().ok_or("参数名不是有效文本")?;
@@ -46,12 +49,20 @@ fn parse(args: impl Iterator<Item = OsString>, attribution: bool) -> Result<Args
             "--data-dir" if data_dir.is_none() => {
                 data_dir = Some(PathBuf::from(args.next().ok_or("--data-dir 缺少目录")?))
             }
-            "--tool" if attribution && tool.is_none() => {
+            "--tool" if command != "overview" && tool.is_none() => {
                 tool = Some(match args.next().as_deref().and_then(|s| s.to_str()) {
                     Some("claude") => Tool::Claude,
                     Some("codex") => Tool::Codex,
                     _ => return Err("--tool 只能是 claude 或 codex".into()),
                 });
+            }
+            "--window" if command == "usage" && window.is_none() => {
+                window = Some(
+                    args.next()
+                        .ok_or("--window 缺少窗口 ID")?
+                        .to_string_lossy()
+                        .into_owned(),
+                );
             }
             _ => return Err(format!("未知或重复的参数：{flag}")),
         }
@@ -63,11 +74,12 @@ fn parse(args: impl Iterator<Item = OsString>, attribution: bool) -> Result<Args
             .ok_or("无法确定数据目录")?,
         tool,
         json,
+        window,
     })
 }
 
 pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), String> {
-    let args = parse(args, command == "attribution")?;
+    let args = parse(args, command)?;
     let claude = scan_claude(&args.home).map_err(|_| "扫描 Claude 日志失败")?;
     let codex = scan_codex(&args.home).map_err(|_| "扫描 Codex 日志失败")?;
     let (claude_snapshots, _) = read_claude(&args.data_dir);
@@ -96,7 +108,76 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
         &claude_snapshots,
         &pricing,
     );
-    if command == "overview" {
+    if command == "usage" {
+        let now = Utc::now();
+        let input = OverviewInput {
+            events: &events,
+            titles: &titles,
+            points: &points,
+            attribution: &attribution,
+            claude_snapshots: &claude_snapshots,
+            codex_snapshots: &codex_snapshots,
+            codex_log: &codex.rate_limits,
+            pricing: &pricing,
+            recorder: status(&args.home, &args.data_dir),
+        };
+        let tool = args.tool.unwrap_or_else(|| {
+            if list_usage_windows(&input, Tool::Claude, now, 1).is_empty() {
+                Tool::Codex
+            } else {
+                Tool::Claude
+            }
+        });
+        let windows = list_usage_windows(&input, tool, now, 6);
+        let all_windows;
+        let search_windows = if args.window.as_deref().is_some_and(|w| w != "current") {
+            all_windows = list_usage_windows(&input, tool, now, usize::MAX);
+            &all_windows
+        } else {
+            &windows
+        };
+        let selected = match args.window.as_deref() {
+            Some("current") => windows
+                .iter()
+                .find(|w| w.kind == WindowKind::FiveHour && w.is_current),
+            Some(id) => {
+                let id = DateTime::parse_from_rfc3339(id)
+                    .map_err(|_| "--window 必须是 current 或 RFC3339 窗口 ID")?
+                    .with_timezone(&Utc);
+                search_windows.iter().find(|w| w.window_id == id)
+            }
+            None => windows
+                .iter()
+                .find(|w| w.kind == WindowKind::FiveHour && w.is_current)
+                .or_else(|| windows.first()),
+        };
+        if args.window.is_some() && selected.is_none() {
+            return Err("指定的用量窗口不存在".to_owned());
+        }
+        let detail = selected.map(|w| usage_detail(&input, w, now));
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({ "windows": windows, "detail": detail }))
+                    .map_err(|_| "生成 JSON 失败")?
+            );
+        } else if let Some(detail) = detail {
+            println!(
+                "{:?} {:?} {}：已用 {:.1}%，已归属 {:.1}%，未归属 {:.1}%",
+                tool,
+                detail.window.kind,
+                detail.window.window_id,
+                detail.used_percent,
+                detail.attributed_total,
+                detail.unattributed_total
+            );
+            for row in detail.sessions.iter().take(8) {
+                println!("{}：{} token，{:.1}%", row.name, row.tokens, row.delta);
+            }
+        } else {
+            println!("暂无额度数据");
+        }
+    } else if command == "overview" {
         let overview = build_overview(
             &OverviewInput {
                 events: &events,

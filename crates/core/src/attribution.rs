@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::claude_quota::WeeklyBreakdown;
 use crate::model::{PromptEvent, Source, TokenCounts, Tool, UsageEvent};
@@ -9,7 +9,7 @@ use crate::pricing::Pricing;
 use crate::quota_store::ClaudeSnapshot;
 use crate::timeline::{window_id, QuotaPoint, Window};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum WindowKind {
     FiveHour,
     Weekly,
