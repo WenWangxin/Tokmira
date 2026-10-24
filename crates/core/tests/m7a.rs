@@ -512,11 +512,117 @@ fn overview_uses_fixed_local_day_and_attribution() {
     assert_eq!(overview.tools[0].five_hour.origin, Some(Origin::Official));
     assert_eq!(overview.tools[1].five_hour.origin, Some(Origin::Estimated));
     assert_eq!(overview.trends[0].high_prompts.len(), 1);
+    assert_eq!(overview.trends[0].today.len(), 1);
+    assert_eq!(overview.daily_cache_hit_rate.len(), 14);
+    assert_eq!(
+        overview
+            .daily_cache_hit_rate
+            .last()
+            .and_then(|day| day.rate),
+        overview.today_cache_hit_rate
+    );
+    assert_eq!(overview.subscription_total_usd, None);
+    assert_eq!(overview.subscription_value_multiple, None);
+    assert_eq!(overview.recent_high_prompts.len(), 1);
+    assert_eq!(overview.recent_high_prompts[0].source, Source::ClaudeCli);
     assert!(overview.month_estimated_cost_usd > 0.0);
     assert_eq!(overview.daily_cost.len(), 24);
     assert!(overview.today_cache_hit_rate.is_some());
     assert!(overview.trends[0].five_hour[0].percent == 6.0);
     assert_eq!(attribution.windows[0].kind, WindowKind::FiveHour);
+}
+
+#[test]
+fn subscription_multiple_counts_only_tools_with_recognized_plans() {
+    let mut claude = event(1, 1_000_000, "claude-opus-5");
+    claude.session_id = "claude-sample".into();
+    let mut codex = event(2, 1_000_000, "gpt-6-sol");
+    codex.tool = Tool::Codex;
+    codex.source = Source::CodexCli;
+    codex.session_id = "codex-sample".into();
+    let events = vec![claude, codex];
+    let pricing = Pricing::bundled().expect("pricing");
+    let attribution = attribute(&events, &[], &BTreeMap::new(), &[], &[], &pricing);
+    let codex_snapshots = vec![CodexSnapshot {
+        at: at(1, 3),
+        limit_id: None,
+        plan_type: Some("plus".into()),
+        primary: None,
+        secondary: None,
+        reset_credits_available: None,
+    }];
+    let build = |claude_snapshots: &[ClaudeSnapshot], codex_snapshots: &[CodexSnapshot]| {
+        build_overview(
+            &OverviewInput {
+                events: &events,
+                titles: &BTreeMap::new(),
+                points: &[],
+                attribution: &attribution,
+                claude_snapshots,
+                codex_snapshots,
+                codex_log: &[],
+                pricing: &pricing,
+                recorder: RecorderStatus::default(),
+            },
+            at(2, 0),
+            Utc,
+        )
+    };
+    let codex_only = build(&[], &codex_snapshots);
+    let claude_cost = codex_only.month_cost_by_tool[&Tool::Claude];
+    let codex_cost = codex_only.month_cost_by_tool[&Tool::Codex];
+    assert!(claude_cost > 0.0 && codex_cost > 0.0);
+    approx(
+        codex_only.month_estimated_cost_usd,
+        claude_cost + codex_cost,
+    );
+    assert_eq!(codex_only.subscription_total_usd, Some(20.0));
+    approx(
+        codex_only.subscription_value_multiple.expect("known plan"),
+        codex_cost / 20.0,
+    );
+
+    let unknown = build(&[], &[]);
+    assert_eq!(unknown.subscription_total_usd, None);
+    assert_eq!(unknown.subscription_value_multiple, None);
+
+    let claude_snapshots = vec![ClaudeSnapshot {
+        at: at(1, 3),
+        subscription_type: Some("pro".into()),
+        five_hour: None,
+        seven_day: None,
+        weekly_breakdown: None,
+    }];
+    let both = build(&claude_snapshots, &codex_snapshots);
+    assert_eq!(both.subscription_total_usd, Some(40.0));
+    approx(
+        both.subscription_value_multiple.expect("both plans"),
+        (claude_cost + codex_cost) / 40.0,
+    );
+}
+
+#[test]
+fn month_cost_map_retains_usage_without_a_model_price() {
+    let events = vec![event(1, 100, "unpriced-handwritten-model")];
+    let pricing = Pricing::bundled().expect("pricing");
+    let attribution = attribute(&events, &[], &BTreeMap::new(), &[], &[], &pricing);
+    let overview = build_overview(
+        &OverviewInput {
+            events: &events,
+            titles: &BTreeMap::new(),
+            points: &[],
+            attribution: &attribution,
+            claude_snapshots: &[],
+            codex_snapshots: &[],
+            codex_log: &[],
+            pricing: &pricing,
+            recorder: RecorderStatus::default(),
+        },
+        at(2, 0),
+        Utc,
+    );
+    assert_eq!(overview.month_cost_by_tool.get(&Tool::Claude), Some(&0.0));
+    assert!(!overview.month_cost_by_tool.contains_key(&Tool::Codex));
 }
 
 #[test]
@@ -602,6 +708,14 @@ fn overview_uses_current_five_hour_and_weekly_prompt_thresholds() {
         Utc,
     );
     assert_eq!(overview.summary.high_prompts, 2);
+    assert_eq!(overview.trends[0].today.len(), 4);
+    assert_eq!(overview.trends[0].week.len(), 4);
+    assert_eq!(overview.trends[0].week_high_prompts.len(), 0);
+    assert_eq!(overview.recent_high_prompts.len(), 2);
+    assert!(
+        overview.recent_high_prompts[0].weekly_delta
+            >= overview.recent_high_prompts[1].weekly_delta
+    );
     assert_eq!(
         overview
             .recent_sessions
@@ -615,4 +729,64 @@ fn overview_uses_current_five_hour_and_weekly_prompt_thresholds() {
     approx(overview.recent_sessions[1].weekly_delta, 0.4);
     approx(overview.recent_sessions[2].weekly_delta, 0.4);
     approx(overview.recent_sessions[3].five_hour_delta, 0.0);
+}
+
+#[test]
+fn overview_prices_known_plans_and_marks_weekly_prompt() {
+    let mut first = point(0, 0.0, at(6, 0));
+    first.weekly = Some(Window {
+        used_percent: 0.0,
+        resets_at: Some(at(0, 0) + Duration::days(7)),
+        window_minutes: Some(10080),
+    });
+    let mut second = point(3, 3.0, at(6, 0));
+    second.weekly = Some(Window {
+        used_percent: 2.0,
+        resets_at: Some(at(0, 0) + Duration::days(7)),
+        window_minutes: Some(10080),
+    });
+    let points = vec![first, second];
+    let events = vec![event(1, 100, "claude-opus-5")];
+    let prompts = vec![PromptEvent {
+        tool: Tool::Claude,
+        session_id: "session-a".into(),
+        timestamp: at(1, 0),
+    }];
+    let pricing = Pricing::bundled().expect("pricing");
+    let titles = BTreeMap::from([("session-a".into(), "手写样例".into())]);
+    let attribution = attribute(&events, &prompts, &titles, &points, &[], &pricing);
+    let claude_snapshots = vec![ClaudeSnapshot {
+        at: at(1, 0),
+        subscription_type: Some("pro".into()),
+        five_hour: None,
+        seven_day: None,
+        weekly_breakdown: None,
+    }];
+    let overview = build_overview(
+        &OverviewInput {
+            events: &events,
+            titles: &titles,
+            points: &points,
+            attribution: &attribution,
+            claude_snapshots: &claude_snapshots,
+            codex_snapshots: &[],
+            codex_log: &[],
+            pricing: &pricing,
+            recorder: RecorderStatus::default(),
+        },
+        at(2, 0),
+        Utc,
+    );
+    assert_eq!(overview.tools[0].subscription_usd, Some(20.0));
+    assert_eq!(overview.tools[1].subscription_usd, None);
+    assert_eq!(overview.subscription_total_usd, Some(20.0));
+    assert_eq!(
+        overview.subscription_value_multiple,
+        Some(overview.month_estimated_cost_usd / 20.0)
+    );
+    assert_eq!(overview.today_token_total, 100);
+    assert_eq!(overview.recent_sessions[0].total_tokens, 100);
+    assert_eq!(overview.trends[0].week_high_prompts.len(), 1);
+    assert_eq!(overview.trends[0].today_high_prompts.len(), 1);
+    assert_eq!(overview.recent_high_prompts[0].total_tokens, 100);
 }

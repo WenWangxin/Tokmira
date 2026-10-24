@@ -10,6 +10,8 @@
 - 桌面应用：`pnpm tauri dev`
 - 命令行版本：`cargo run -p token-audit-cli -- --version`
 
+仪表盘刻度与提示标签的纯函数测试：`pnpm test`（需要 Node 22）。
+
 ## scan 用法
 
 运行 `cargo run -p token-audit-cli -- scan` 扫描当前用户目录下的 Claude Code 和 Codex 日志，输出中文汇总表。可用 `--home <目录>` 指定日志所在主目录；用 `--since YYYY-MM-DD`、`--until YYYY-MM-DD` 筛选本机时区的日期；用 `--tool claude|codex` 只看一种工具；加 `--json` 输出完整报告。

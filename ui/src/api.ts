@@ -44,6 +44,7 @@ export interface QuotaDisplay {
 export interface ToolOverview {
   tool: Tool
   plan: string | null
+  subscription_usd: number | null
   five_hour: QuotaDisplay
   weekly: QuotaDisplay
 }
@@ -68,6 +69,7 @@ export interface SessionOverview {
   model: string
   requests: number
   tokens: TokenCounts
+  total_tokens: number
   cache_hit_rate: number | null
   five_hour_delta: number
   weekly_delta: number
@@ -79,20 +81,32 @@ export interface Overview {
   generated_at: string
   tools: ToolOverview[]
   today_tokens: TokenCounts
+  today_token_total: number
   today_cache_read_share: number | null
   peak_hour: number | null
   hourly_tokens: number[]
   today_cache_hit_rate: number | null
+  daily_cache_hit_rate: { date: string; rate: number | null }[]
   cache_hit_change_from_yesterday: number | null
   month_estimated_cost_usd: number
+  month_cost_by_tool: Partial<Record<Tool, number>>
+  subscription_total_usd: number | null
+  subscription_value_multiple: number | null
   daily_cost: { date: string; estimated_cost_usd: number }[]
   recorder: RecorderStatus
   trends: {
     tool: Tool
+    five_hour_started_at: string | null
     five_hour: { at: string; percent: number }[]
     high_prompts: { at: string; delta: number; session_id: string; title: string | null }[]
+    today: { at: string; percent: number }[]
+    today_high_prompts: { at: string; delta: number; session_id: string; title: string | null }[]
+    week_started_at: string | null
+    week: { at: string; percent: number }[]
+    week_high_prompts: { at: string; delta: number; session_id: string; title: string | null }[]
   }[]
   recent_sessions: SessionOverview[]
+  recent_high_prompts: (Omit<SessionOverview, 'requests' | 'first_at' | 'last_at'> & { at: string })[]
   summary: { sessions: number; requests: number; high_prompts: number }
 }
 
@@ -174,9 +188,26 @@ export interface RefreshResult { claude: string; codex: string }
 
 export const getSettings = () => invoke<AppSettings>('get_settings')
 export const updateSettings = (settings: AppSettings) => invoke<AppSettings>('update_settings', { settings })
-export const rescan = () => invoke<ScanSummary>('rescan')
-export const refreshQuotas = () => invoke<RefreshResult>('refresh_quotas')
-export const getOverview = () => invoke<Overview>('get_overview')
+export const rescan = () =>
+  import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
+    ? Promise.resolve({ events: 0, prompts: 0, malformed_lines: 0 })
+    : invoke<ScanSummary>('rescan')
+export const refreshQuotas = () =>
+  import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
+    ? Promise.resolve({ claude: '开发预览', codex: '开发预览' })
+    : invoke<RefreshResult>('refresh_quotas')
+async function developmentOverview(): Promise<Overview> {
+  const { mockOverview } = await import('./mocks/overview')
+  const variant = new URLSearchParams(window.location.search).get('mock')
+  if (variant === 'empty' || variant === 'nodata') return mockOverview(variant)
+  const files = import.meta.glob<{ default: Overview }>('../.local/overview.json')
+  const local = files['../.local/overview.json']
+  return local ? (await local()).default : mockOverview('default')
+}
+export const getOverview = () =>
+  import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
+    ? developmentOverview()
+    : invoke<Overview>('get_overview')
 export const getAttribution = () => invoke<Attribution>('get_attribution')
 export const recorderStatus = () => invoke<RecorderStatus>('recorder_status')
 export const recorderPlan = (parts: RecorderParts) => invoke<RecorderPlan>('recorder_plan', { parts })

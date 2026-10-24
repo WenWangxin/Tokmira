@@ -3,6 +3,18 @@ currency = "USD"
 unit = "per_million_tokens"
 note = "API 等价价格，仅用于估算订阅用量价值，不是实际账单；claude-haiku-5-5 仅采用 10 万 token 以内档，本版不计算长上下文分档"
 
+# Monthly USD list prices for web subscriptions. Annual, regional, tax and app-store prices differ.
+# Sources: https://support.claude.com/en/articles/11049762-choose-a-claude-plan
+#          https://openai.com/chatgpt/pricing
+[subscriptions.claude]
+pro = 20
+max_5x = 100
+max_20x = 200
+
+[subscriptions.chatgpt]
+plus = 20
+pro = 200
+
 [[sources]]
 name = "Anthropic"
 url = "https://platform.claude.com/docs/en/about-claude/pricing"

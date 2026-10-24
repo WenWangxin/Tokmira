@@ -1,4 +1,5 @@
 use token_audit_core::model::TokenCounts;
+use token_audit_core::model::Tool;
 use token_audit_core::pricing::Pricing;
 
 #[test]
@@ -8,6 +9,18 @@ fn bundled_table_parses_and_charges_all_fields_except_reasoning() {
     assert_eq!(pricing.currency, "USD");
     assert_eq!(pricing.unit, "per_million_tokens");
     assert_eq!(pricing.sources.len(), 2);
+    assert_eq!(pricing.subscription_usd(Tool::Claude, "pro"), Some(20.0));
+    assert_eq!(
+        pricing.subscription_usd(Tool::Claude, "max_5x"),
+        Some(100.0)
+    );
+    assert_eq!(
+        pricing.subscription_usd(Tool::Claude, "max-20x"),
+        Some(200.0)
+    );
+    assert_eq!(pricing.subscription_usd(Tool::Codex, "plus"), Some(20.0));
+    assert_eq!(pricing.subscription_usd(Tool::Codex, "pro"), Some(200.0));
+    assert_eq!(pricing.subscription_usd(Tool::Codex, "team"), None);
     let tokens = TokenCounts {
         input: 1_000_000,
         output: 2_000_000,
@@ -103,5 +116,22 @@ fn malformed_or_partial_override_fails_without_echoing_content() {
     assert!(Pricing::bundled()
         .expect("bundled prices")
         .with_override("currency = 'EUR'")
+        .is_err());
+}
+
+#[test]
+fn subscription_override_preserves_other_plans_and_rejects_invalid_prices() {
+    let pricing = Pricing::bundled()
+        .expect("bundled prices")
+        .with_override("[subscriptions.claude]\npro = 25")
+        .expect("subscription override");
+    assert_eq!(pricing.subscription_usd(Tool::Claude, "pro"), Some(25.0));
+    assert_eq!(
+        pricing.subscription_usd(Tool::Claude, "max_5x"),
+        Some(100.0)
+    );
+    assert_eq!(pricing.subscription_usd(Tool::Codex, "plus"), Some(20.0));
+    assert!(pricing
+        .with_override("[subscriptions.chatgpt]\nplus = -1")
         .is_err());
 }

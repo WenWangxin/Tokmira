@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import PlaceholderPage from './views/PlaceholderPage.vue'
+import DashboardPage from './views/DashboardPage.vue'
 
 export const pages = [
   { path: '/', title: '仪表盘', subtitle: '查看订阅额度与本地使用概况' },
@@ -13,7 +14,7 @@ const router = createRouter({
   history: createWebHashHistory(),
   routes: pages.map((page) => ({
     path: page.path,
-    component: PlaceholderPage,
+    component: page.path === '/' ? DashboardPage : PlaceholderPage,
     props: { title: page.title, subtitle: page.subtitle },
   })),
 })

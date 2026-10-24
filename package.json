@@ -5,7 +5,8 @@
     "tauri": "tauri",
     "dev": "pnpm -C ui dev",
     "build": "pnpm -C ui build",
-    "typecheck": "pnpm -C ui typecheck"
+    "typecheck": "pnpm -C ui typecheck",
+    "test": "pnpm -C ui test"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.4"

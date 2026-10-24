@@ -35,6 +35,7 @@ pub struct QuotaDisplay {
 pub struct ToolOverview {
     pub tool: Tool,
     pub plan: Option<String>,
+    pub subscription_usd: Option<f64>,
     pub five_hour: QuotaDisplay,
     pub weekly: QuotaDisplay,
 }
@@ -53,8 +54,19 @@ pub struct PromptMarker {
 #[derive(Clone, Debug, Serialize)]
 pub struct ToolTrend {
     pub tool: Tool,
+    pub five_hour_started_at: Option<DateTime<Utc>>,
     pub five_hour: Vec<TrendPoint>,
     pub high_prompts: Vec<PromptMarker>,
+    pub today: Vec<TrendPoint>,
+    pub today_high_prompts: Vec<PromptMarker>,
+    pub week_started_at: Option<DateTime<Utc>>,
+    pub week: Vec<TrendPoint>,
+    pub week_high_prompts: Vec<PromptMarker>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct DayCacheHitRate {
+    pub date: NaiveDate,
+    pub rate: Option<f64>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct DayCost {
@@ -71,6 +83,7 @@ pub struct SessionOverview {
     pub model: String,
     pub requests: u64,
     pub tokens: TokenCounts,
+    pub total_tokens: u64,
     pub cache_hit_rate: Option<f64>,
     /// Percentage points attributed to this session in the current five-hour window only.
     pub five_hour_delta: f64,
@@ -78,6 +91,21 @@ pub struct SessionOverview {
     pub weekly_delta: f64,
     pub first_at: DateTime<Utc>,
     pub last_at: DateTime<Utc>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct HighPromptOverview {
+    pub at: DateTime<Utc>,
+    pub tool: Tool,
+    pub source: Source,
+    pub session_id: String,
+    pub title: Option<String>,
+    pub project: Option<String>,
+    pub model: String,
+    pub tokens: TokenCounts,
+    pub total_tokens: u64,
+    pub cache_hit_rate: Option<f64>,
+    pub weekly_delta: f64,
+    pub five_hour_delta: f64,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Summary {
@@ -91,16 +119,23 @@ pub struct Overview {
     pub generated_at: DateTime<Utc>,
     pub tools: Vec<ToolOverview>,
     pub today_tokens: TokenCounts,
+    pub today_token_total: u64,
     pub today_cache_read_share: Option<f64>,
     pub peak_hour: Option<u32>,
     pub hourly_tokens: [u64; 24],
     pub today_cache_hit_rate: Option<f64>,
+    pub daily_cache_hit_rate: Vec<DayCacheHitRate>,
     pub cache_hit_change_from_yesterday: Option<f64>,
     pub month_estimated_cost_usd: f64,
+    /// Tools with usage this month; an unpriced tool can have a zero cost.
+    pub month_cost_by_tool: BTreeMap<Tool, f64>,
+    pub subscription_total_usd: Option<f64>,
+    pub subscription_value_multiple: Option<f64>,
     pub daily_cost: Vec<DayCost>,
     pub recorder: RecorderStatus,
     pub trends: Vec<ToolTrend>,
     pub recent_sessions: Vec<SessionOverview>,
+    pub recent_high_prompts: Vec<HighPromptOverview>,
     pub summary: Summary,
 }
 fn cache_hit(tokens: &TokenCounts) -> Option<f64> {
@@ -157,23 +192,80 @@ fn current_five_hour_id(
                 .flatten()
         })
 }
-fn current_five_hour(points: &[QuotaPoint], tool: Tool, now: DateTime<Utc>) -> Vec<TrendPoint> {
-    let Some(id) = current_five_hour_id(points, tool, now) else {
-        return Vec::new();
-    };
-    let mut result: Vec<_> = points
+fn current_window(
+    points: &[QuotaPoint],
+    tool: Tool,
+    kind: WindowKind,
+    now: DateTime<Utc>,
+) -> (Option<DateTime<Utc>>, Vec<TrendPoint>) {
+    let latest = points
         .iter()
         .filter(|p| p.tool == tool && p.at <= now)
         .filter_map(|p| {
-            let w = p.five_hour.as_ref()?;
-            (window_id(w) == Some(id)).then_some(TrendPoint {
+            let window = match kind {
+                WindowKind::FiveHour => p.five_hour.as_ref(),
+                WindowKind::Weekly => p.weekly.as_ref(),
+            }?;
+            Some((p.at, window))
+        })
+        .max_by_key(|(at, _)| *at);
+    let Some((_, window)) = latest else {
+        return (None, Vec::new());
+    };
+    let Some(reset) = window.resets_at.filter(|reset| *reset > now) else {
+        return (None, Vec::new());
+    };
+    let id = window_id(window);
+    let minutes = match kind {
+        WindowKind::FiveHour => 300,
+        WindowKind::Weekly => 10080,
+    };
+    let mut series: Vec<_> = points
+        .iter()
+        .filter(|p| p.tool == tool && p.at <= now)
+        .filter_map(|p| {
+            let w = match kind {
+                WindowKind::FiveHour => p.five_hour.as_ref(),
+                WindowKind::Weekly => p.weekly.as_ref(),
+            }?;
+            (window_id(w) == id).then_some(TrendPoint {
                 at: p.at,
                 percent: w.used_percent,
             })
         })
         .collect();
-    result.sort_by_key(|p| p.at);
-    result
+    series.sort_by_key(|point| point.at);
+    (Some(reset - Duration::minutes(minutes)), series)
+}
+fn window_markers(
+    input: &OverviewInput<'_>,
+    tool: Tool,
+    kind: AttributionWindowKind,
+    start: DateTime<Utc>,
+    now: DateTime<Utc>,
+    window: Option<DateTime<Utc>>,
+) -> Vec<PromptMarker> {
+    let mut markers: Vec<_> = input
+        .attribution
+        .window_prompts
+        .iter()
+        .filter(|p| {
+            p.tool == tool
+                && p.kind == kind
+                && p.delta >= 1.0
+                && window.is_none_or(|id| p.window_id == id)
+        })
+        .filter_map(|p| {
+            Some(PromptMarker {
+                at: p.prompt_at.filter(|at| *at >= start && *at <= now)?,
+                delta: p.delta,
+                session_id: p.session_id.clone(),
+                title: p.title.clone(),
+            })
+        })
+        .collect();
+    markers.sort_by_key(|marker| marker.at);
+    markers
 }
 fn prompt_markers(input: &OverviewInput<'_>, tool: Tool, now: DateTime<Utc>) -> Vec<PromptMarker> {
     let id = current_five_hour_id(input.points, tool, now);
@@ -209,8 +301,13 @@ pub fn build_overview<Tz: TimeZone>(
     let yesterday = today.pred_opt();
     let mut today_tokens = TokenCounts::default();
     let mut yesterday_tokens = TokenCounts::default();
+    let daily_start = today
+        .checked_sub_days(chrono::Days::new(13))
+        .unwrap_or(today);
+    let mut daily_tokens: BTreeMap<NaiveDate, TokenCounts> = BTreeMap::new();
     let mut hourly_tokens = [0_u64; 24];
     let mut daily_cost: BTreeMap<NaiveDate, f64> = BTreeMap::new();
+    let mut month_cost_by_tool: BTreeMap<Tool, f64> = BTreeMap::new();
     let mut sessions: BTreeMap<(Tool, String), SessionOverview> = BTreeMap::new();
     let mut session_costs: BTreeMap<(Tool, String), f64> = BTreeMap::new();
     let recent_start = now - Duration::days(7);
@@ -221,6 +318,12 @@ pub fn build_overview<Tz: TimeZone>(
     for (index, event) in input.events.iter().enumerate() {
         let local = event.timestamp.with_timezone(&tz);
         let date = local.date_naive();
+        if date >= daily_start && date <= today {
+            daily_tokens
+                .entry(date)
+                .or_default()
+                .add_saturating(&event.tokens);
+        }
         if date == today {
             today_tokens.add_saturating(&event.tokens);
             let hour = local.hour() as usize;
@@ -235,6 +338,9 @@ pub fn build_overview<Tz: TimeZone>(
                 .cost_usd(&event.model, &event.tokens)
                 .unwrap_or(0.0);
             *daily_cost.entry(date).or_default() += cost;
+            if !event.tokens.is_zero() {
+                *month_cost_by_tool.entry(event.tool).or_default() += cost;
+            }
         }
         if event.timestamp < recent_start || event.timestamp > now {
             continue;
@@ -253,6 +359,7 @@ pub fn build_overview<Tz: TimeZone>(
             model: event.model.clone(),
             requests: 0,
             tokens: TokenCounts::default(),
+            total_tokens: 0,
             cache_hit_rate: None,
             five_hour_delta: 0.0,
             weekly_delta: 0.0,
@@ -284,6 +391,13 @@ pub fn build_overview<Tz: TimeZone>(
         .and_then(|(hour, total)| (*total > 0).then_some(hour as u32));
     let today_hit = cache_hit(&today_tokens);
     let yesterday_hit = cache_hit(&yesterday_tokens);
+    let daily_cache_hit_rate = (0..14)
+        .filter_map(|offset| daily_start.checked_add_days(chrono::Days::new(offset)))
+        .map(|date| DayCacheHitRate {
+            date,
+            rate: daily_tokens.get(&date).and_then(cache_hit),
+        })
+        .collect();
     if let Some(mut date) = NaiveDate::from_ymd_opt(today.year(), today.month(), 1) {
         while date <= today {
             daily_cost.entry(date).or_default();
@@ -303,6 +417,7 @@ pub fn build_overview<Tz: TimeZone>(
         .into_values()
         .map(|mut s| {
             s.cache_hit_rate = cache_hit(&s.tokens);
+            s.total_tokens = s.tokens.total_without_reasoning();
             s
         })
         .collect();
@@ -358,7 +473,53 @@ pub fn build_overview<Tz: TimeZone>(
         }
     }
     let high_prompts = high_prompt_keys.len();
-    let tools = [Tool::Claude, Tool::Codex]
+    let mut recent_high_prompts: Vec<_> = input
+        .attribution
+        .prompts
+        .iter()
+        .filter(|p| {
+            p.prompt_at
+                .is_some_and(|at| at >= recent_start && at <= now)
+        })
+        .filter(|p| {
+            high_prompt_keys.contains(&(p.tool, p.session_id.clone(), p.prompt_at.unwrap_or(now)))
+        })
+        .filter_map(|p| {
+            let at = p.prompt_at?;
+            let event = input
+                .events
+                .iter()
+                .filter(|event| {
+                    event.tool == p.tool
+                        && event.session_id == p.session_id
+                        && event.timestamp >= p.first_at
+                        && event.timestamp <= p.last_at
+                })
+                .max_by_key(|event| event.timestamp)?;
+            Some(HighPromptOverview {
+                at,
+                tool: p.tool,
+                source: event.source,
+                session_id: p.session_id.clone(),
+                title: p.title.clone(),
+                project: event.project.clone(),
+                model: event.model.clone(),
+                tokens: p.tokens,
+                total_tokens: p.tokens.total_without_reasoning(),
+                cache_hit_rate: cache_hit(&p.tokens),
+                weekly_delta: p.weekly_delta,
+                five_hour_delta: p.five_hour_delta,
+            })
+        })
+        .collect();
+    recent_high_prompts.sort_by(|a, b| {
+        b.weekly_delta
+            .total_cmp(&a.weekly_delta)
+            .then_with(|| b.five_hour_delta.total_cmp(&a.five_hour_delta))
+            .then_with(|| b.at.cmp(&a.at))
+    });
+    recent_high_prompts.truncate(5);
+    let tools: Vec<ToolOverview> = [Tool::Claude, Tool::Codex]
         .into_iter()
         .map(|tool| {
             let plan = match tool {
@@ -382,18 +543,94 @@ pub fn build_overview<Tz: TimeZone>(
             };
             ToolOverview {
                 tool,
+                subscription_usd: plan
+                    .as_deref()
+                    .and_then(|plan| input.pricing.subscription_usd(tool, plan)),
                 plan,
                 five_hour: display(input.points, tool, WindowKind::FiveHour, now),
                 weekly: display(input.points, tool, WindowKind::Weekly, now),
             }
         })
         .collect();
+    let subscription_total_usd = {
+        let prices: Vec<f64> = tools
+            .iter()
+            .filter_map(|tool: &ToolOverview| tool.subscription_usd)
+            .collect();
+        (!prices.is_empty()).then(|| prices.iter().sum())
+    };
+    let subscription_value_multiple =
+        subscription_total_usd
+            .filter(|total| *total > 0.0)
+            .map(|total| {
+                tools
+                    .iter()
+                    .filter(|tool| tool.subscription_usd.is_some())
+                    .map(|tool| month_cost_by_tool.get(&tool.tool).copied().unwrap_or(0.0))
+                    .sum::<f64>()
+                    / total
+            });
+    let today_start = now
+        .with_timezone(&tz)
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|midnight| tz.from_local_datetime(&midnight).earliest())
+        .map(|local| local.with_timezone(&Utc));
     let trends = [Tool::Claude, Tool::Codex]
         .into_iter()
-        .map(|tool| ToolTrend {
-            tool,
-            five_hour: current_five_hour(input.points, tool, now),
-            high_prompts: prompt_markers(input, tool, now),
+        .map(|tool| {
+            let (five_hour_started_at, five_hour) =
+                current_window(input.points, tool, WindowKind::FiveHour, now);
+            let (week_started_at, week) =
+                current_window(input.points, tool, WindowKind::Weekly, now);
+            let today = today_start.map_or_else(Vec::new, |start| {
+                input
+                    .points
+                    .iter()
+                    .filter(|p| p.tool == tool && p.at >= start && p.at <= now)
+                    .filter_map(|p| {
+                        p.five_hour.as_ref().map(|w| TrendPoint {
+                            at: p.at,
+                            percent: w.used_percent,
+                        })
+                    })
+                    .collect()
+            });
+            ToolTrend {
+                tool,
+                five_hour_started_at,
+                five_hour,
+                high_prompts: prompt_markers(input, tool, now),
+                today,
+                today_high_prompts: today_start.map_or_else(Vec::new, |start| {
+                    window_markers(
+                        input,
+                        tool,
+                        AttributionWindowKind::FiveHour,
+                        start,
+                        now,
+                        None,
+                    )
+                }),
+                week_started_at,
+                week,
+                week_high_prompts: week_started_at.map_or_else(Vec::new, |start| {
+                    window_markers(
+                        input,
+                        tool,
+                        AttributionWindowKind::Weekly,
+                        start,
+                        now,
+                        input
+                            .points
+                            .iter()
+                            .filter(|p| p.tool == tool && p.at <= now)
+                            .filter_map(|p| p.weekly.as_ref().map(|w| (p.at, window_id(w))))
+                            .max_by_key(|(at, _)| *at)
+                            .and_then(|(_, id)| id),
+                    )
+                }),
+            }
         })
         .collect();
     Overview {
@@ -403,15 +640,21 @@ pub fn build_overview<Tz: TimeZone>(
             today_tokens.cache_read as f64 / today_tokens.total_without_reasoning() as f64
         }),
         today_tokens,
+        today_token_total: today_tokens.total_without_reasoning(),
         peak_hour,
         hourly_tokens,
         today_cache_hit_rate: today_hit,
+        daily_cache_hit_rate,
         cache_hit_change_from_yesterday: today_hit.zip(yesterday_hit).map(|(a, b)| a - b),
         month_estimated_cost_usd,
+        month_cost_by_tool,
+        subscription_total_usd,
+        subscription_value_multiple,
         daily_cost,
         recorder: input.recorder.clone(),
         trends,
         recent_sessions,
+        recent_high_prompts,
         summary: Summary {
             sessions: all_recent_sessions.len(),
             requests,

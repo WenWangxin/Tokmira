@@ -59,6 +59,17 @@ fn local_commands_use_only_fixture_home_and_saved_quota() {
             assert_eq!(value["top_sessions"][0]["session_id_prefix"], "session-");
         } else {
             assert_eq!(value["tools"][0]["plan"], "pro");
+            assert_eq!(value["tools"][0]["subscription_usd"], 20.0);
+            assert_eq!(value["subscription_total_usd"], 20.0);
+            assert!(value["subscription_value_multiple"].is_number());
+            assert!(value["today_token_total"].is_number());
+            assert_eq!(
+                value["daily_cache_hit_rate"].as_array().map(Vec::len),
+                Some(14)
+            );
+            assert!(value["trends"][0]["today"].is_array());
+            assert!(value["trends"][0]["week"].is_array());
+            assert!(value["recent_high_prompts"].is_array());
             let now = Utc::now();
             let snapshot_at = DateTime::parse_from_rfc3339("2026-10-24T10:06:00Z")
                 .expect("fixture timestamp")

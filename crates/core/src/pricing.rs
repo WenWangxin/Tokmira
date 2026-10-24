@@ -48,6 +48,24 @@ struct DefaultTable {
     note: String,
     sources: Vec<PricingSource>,
     models: BTreeMap<String, ModelPrices>,
+    subscriptions: Subscriptions,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct Subscriptions {
+    #[serde(default)]
+    claude: BTreeMap<String, f64>,
+    #[serde(default)]
+    chatgpt: BTreeMap<String, f64>,
+}
+
+impl Subscriptions {
+    fn valid(&self) -> bool {
+        self.claude
+            .values()
+            .chain(self.chatgpt.values())
+            .all(|price| price.is_finite() && *price >= 0.0)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -65,6 +83,7 @@ struct OverrideTable {
     sources: Option<Vec<PricingSource>>,
     #[serde(default)]
     models: BTreeMap<String, ModelPrices>,
+    subscriptions: Option<Subscriptions>,
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +94,7 @@ pub struct Pricing {
     pub note: String,
     pub sources: Vec<PricingSource>,
     models: BTreeMap<String, ModelPrices>,
+    subscriptions: Subscriptions,
 }
 
 impl Pricing {
@@ -82,7 +102,10 @@ impl Pricing {
     pub fn bundled() -> Result<Self, &'static str> {
         let table: DefaultTable = toml::from_str(include_str!("../../../config/pricing.toml"))
             .map_err(|_| "内置价格表格式错误")?;
-        if table.models.is_empty() || table.models.values().any(|prices| !prices.valid()) {
+        if table.models.is_empty()
+            || table.models.values().any(|prices| !prices.valid())
+            || !table.subscriptions.valid()
+        {
             return Err("内置价格表价格无效");
         }
         Ok(Self {
@@ -92,6 +115,7 @@ impl Pricing {
             note: table.note,
             sources: table.sources,
             models: table.models,
+            subscriptions: table.subscriptions,
         })
     }
 
@@ -110,7 +134,12 @@ impl Pricing {
         {
             return Err("覆盖价格表必须使用 USD / per_million_tokens");
         }
-        if override_table.models.values().any(|prices| !prices.valid()) {
+        if override_table.models.values().any(|prices| !prices.valid())
+            || override_table
+                .subscriptions
+                .as_ref()
+                .is_some_and(|subscriptions| !subscriptions.valid())
+        {
             return Err("覆盖价格表价格无效");
         }
         if let Some(version) = override_table.version {
@@ -123,7 +152,33 @@ impl Pricing {
             self.sources = sources;
         }
         self.models.extend(override_table.models);
+        if let Some(subscriptions) = override_table.subscriptions {
+            self.subscriptions.claude.extend(subscriptions.claude);
+            self.subscriptions.chatgpt.extend(subscriptions.chatgpt);
+        }
         Ok(self)
+    }
+
+    #[must_use]
+    pub fn subscription_usd(&self, tool: crate::model::Tool, plan: &str) -> Option<f64> {
+        let normalized = plan.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        let key = match tool {
+            crate::model::Tool::Claude => match normalized.as_str() {
+                "pro" => "pro",
+                "max_5x" | "max5x" => "max_5x",
+                "max_20x" | "max20x" => "max_20x",
+                _ => return None,
+            },
+            crate::model::Tool::Codex => match normalized.as_str() {
+                "plus" => "plus",
+                "pro" => "pro",
+                _ => return None,
+            },
+        };
+        match tool {
+            crate::model::Tool::Claude => self.subscriptions.claude.get(key).copied(),
+            crate::model::Tool::Codex => self.subscriptions.chatgpt.get(key).copied(),
+        }
     }
 
     /// Exact match first, then longest model prefix followed by `-` or `@`.
