@@ -1,0 +1,88 @@
+.page-fade-through-leave-active { transition: opacity var(--motion-page-out) var(--ease-emphasized-accelerate); }
+.page-fade-through-leave-to { opacity: 0; }
+.page-fade-through-enter-active { transition: opacity var(--motion-page-in) var(--ease-emphasized-decelerate), transform var(--motion-page-in) var(--ease-emphasized-decelerate); }
+.page-fade-through-enter-from { opacity: 0; transform: translateY(8px); }
+
+.content-reveal { animation: content-reveal var(--motion-medium) var(--ease-emphasized-decelerate) both; }
+.dashboard-content { display: grid; gap: 16px; min-width: 0; }
+.settings-page > .settings-card:not(.content-reveal) { animation: content-reveal var(--motion-medium) var(--ease-emphasized-decelerate) both; }
+.quota-number > .animated-number, .metric-value > .animated-number { margin: 0; color: inherit; font: inherit; letter-spacing: inherit; }
+.metric-value .animated-decimal { margin-left: 3px; color: var(--on-surface-variant); font-size: 13px; font-weight: 400; letter-spacing: normal; }
+@keyframes content-reveal { from { opacity: 0; } to { opacity: 1; } }
+.first-card { animation: first-card var(--motion-medium) var(--ease-emphasized-decelerate) both; }
+.quota-grid .first-card:nth-child(2) { animation-delay: var(--motion-stagger); }
+.metric-grid .first-card:nth-child(1) { animation-delay: var(--motion-stagger-2); }
+.metric-grid .first-card:nth-child(2) { animation-delay: var(--motion-stagger-3); }
+.metric-grid .first-card:nth-child(3) { animation-delay: var(--motion-stagger-4); }
+.metric-grid .first-card:nth-child(4) { animation-delay: var(--motion-stagger-5); }
+@keyframes first-card { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.selection-slide-ready { position: relative; }
+.selection-slider { position: absolute; z-index: 0; top: 0; left: 0; border-radius: 999px; background: var(--primary); pointer-events: none; opacity: 0; }
+.selection-slide-ready .selection-slider { transition: transform var(--motion-medium) var(--ease-standard), width var(--motion-medium) var(--ease-standard), height var(--motion-medium) var(--ease-standard), opacity var(--motion-short) var(--ease-standard); }
+.selection-slide-ready > button { position: relative; z-index: 1; }
+.selection-slide-ready > button.active { background: transparent; }
+.tool-switch .selection-slider { background: var(--surface-container-highest); }
+.summary-pills .selection-slider { background: var(--primary); }
+.segmented > button, .tool-switch > button, .usage-tool-switch > button, .summary-pills > button { transition: color var(--motion-short) var(--ease-standard), background-color var(--motion-short) var(--ease-standard); }
+
+.content-fade-enter-active, .content-fade-leave-active { transition: opacity var(--motion-medium) var(--ease-standard); }
+.content-fade-enter-from, .content-fade-leave-to { opacity: 0; }
+.notice-enter-active, .notice-leave-active { transition: opacity var(--motion-medium) var(--ease-standard), transform var(--motion-medium) var(--ease-standard), max-height var(--motion-medium) var(--ease-standard), padding var(--motion-medium) var(--ease-standard), margin var(--motion-medium) var(--ease-standard); overflow: hidden; max-height: 120px; }
+.notice-enter-from { opacity: 0; transform: translateY(-6px); max-height: 0; padding-block: 0; margin-block: 0 -16px; }
+.notice-leave-to { opacity: 0; max-height: 0; padding-block: 0; margin-block: 0 -16px; }
+
+.dialog-enter-active, .dialog-leave-active { transition: opacity var(--motion-dialog-in) var(--ease-emphasized-decelerate); }
+.dialog-leave-active { transition-duration: var(--motion-dialog-out); transition-timing-function: var(--ease-emphasized-accelerate); }
+.dialog-enter-from, .dialog-leave-to { opacity: 0; }
+.dialog-enter-active .share-dialog, .dialog-enter-active .confirm-dialog { transition: opacity var(--motion-dialog-in) var(--ease-emphasized-decelerate), transform var(--motion-dialog-in) var(--ease-emphasized-decelerate); }
+.dialog-leave-active .share-dialog, .dialog-leave-active .confirm-dialog { transition: opacity var(--motion-dialog-out) var(--ease-emphasized-accelerate), transform var(--motion-dialog-out) var(--ease-emphasized-accelerate); }
+.dialog-enter-from .share-dialog, .dialog-enter-from .confirm-dialog, .dialog-leave-to .share-dialog, .dialog-leave-to .confirm-dialog { opacity: 0; transform: translateY(16px) scale(.96); }
+
+.drawer-mask-enter-active, .drawer-mask-leave-active { transition: opacity var(--motion-medium) var(--ease-standard); }
+.drawer-mask-enter-from, .drawer-mask-leave-to { opacity: 0; }
+.drawer-enter-active { transition: transform var(--motion-medium) var(--ease-emphasized-decelerate); }
+.drawer-leave-active { transition: transform var(--motion-dialog-out) var(--ease-emphasized-accelerate); }
+.drawer-enter-from, .drawer-leave-to { transform: translateX(100%); }
+
+.advice-list-move { transition: transform var(--motion-medium) var(--ease-standard); }
+.advice-list-leave-active { transition: opacity var(--motion-dialog-out) var(--ease-emphasized-accelerate), transform var(--motion-dialog-out) var(--ease-emphasized-accelerate); position: absolute; width: 100%; }
+.advice-list-leave-to { opacity: 0; transform: translateY(-8px); }
+.advice-list-enter-active { transition: opacity var(--motion-medium) var(--ease-emphasized-decelerate); }
+.advice-list-enter-from { opacity: 0; }
+
+.quota-ring circle:last-child { transition: stroke-dashoffset var(--motion-long) var(--ease-emphasized-decelerate); }
+.usage-segment, .usage-remainder, .usage-rank-track span { transition: width var(--motion-long) var(--ease-emphasized-decelerate); }
+.sparkline { animation: content-reveal var(--motion-medium) var(--ease-standard) both; }
+.round-action, .session-row, .session-line, .advice-card-row, .usage-prompt-row, .settings-page button, .advice-item button, .sessions-more, .share-dialog button, .confirm-dialog button { transition: background-color var(--motion-short) var(--ease-standard), color var(--motion-short) var(--ease-standard); }
+.round-action:active, .session-row:active, .session-line:active, .advice-card-row:active, .usage-prompt-row:active, .settings-page button:active:not(:disabled), .share-dialog button:active:not(:disabled), .confirm-dialog button:active:not(:disabled) { background-color: color-mix(in srgb, var(--primary) 20%, var(--surface-container-highest)); }
+.settings-tonal:hover, .advice-button:hover { background-color: color-mix(in srgb, var(--primary) 18%, var(--primary-container)); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; }
+  .page-fade-through-enter-active, .page-fade-through-leave-active, .content-fade-enter-active, .content-fade-leave-active, .notice-enter-active, .notice-leave-active, .dialog-enter-active, .dialog-leave-active, .drawer-mask-enter-active, .drawer-mask-leave-active { transition: opacity var(--motion-reduced) linear !important; }
+  .page-fade-through-enter-from, .notice-enter-from, .dialog-enter-from, .drawer-enter-from, .drawer-leave-to, .advice-list-leave-to { transform: none !important; }
+  .dialog-enter-active .share-dialog, .dialog-enter-active .confirm-dialog, .dialog-leave-active .share-dialog, .dialog-leave-active .confirm-dialog, .drawer-enter-active, .drawer-leave-active, .advice-list-move, .advice-list-leave-active, .selection-slide-ready .selection-slider, .quota-ring circle:last-child, .usage-segment, .usage-remainder, .usage-rank-track span, .toggle, .toggle-thumb { transition-duration: 0ms !important; }
+  .dialog-enter-from .share-dialog, .dialog-enter-from .confirm-dialog, .dialog-leave-to .share-dialog, .dialog-leave-to .confirm-dialog { transform: none !important; }
+}
+
+/* Cold loads reserve roughly the same space as the finished page. */
+.page-await { min-height: 540px; }
+.page-skeleton { display: grid; gap: 16px; min-height: 540px; align-content: start; }
+.page-skeleton .skeleton { display: block; min-height: 0; grid-column: auto; }
+.page-skeleton-stats, .page-skeleton-tabs, .page-skeleton-columns { display: grid; gap: 16px; }
+.page-skeleton-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.page-skeleton-stats .skeleton { height: 77px; }
+.page-skeleton-advice-row { height: 210px; }
+.page-skeleton-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.page-skeleton-tabs .skeleton { height: 62px; }
+.page-skeleton-overview { height: 210px; }
+.page-skeleton-columns { grid-template-columns: 1fr 1fr; }
+.page-skeleton-columns .skeleton { height: 300px; }
+.page-skeleton-table { height: 540px; }
+.page-skeleton-banner { height: 90px; }
+.page-skeleton-settings-card { height: 340px; }
+.no-entry-reveal .content-reveal,
+.no-entry-reveal .sparkline,
+.no-entry-reveal .first-card,
+.no-entry-reveal.settings-page > .settings-card:not(.content-reveal) { animation: none; }

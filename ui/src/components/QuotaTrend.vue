@@ -46,7 +46,7 @@ const time = (at: string) => new Date(at).toLocaleString('zh-CN', { month: 'nume
 </script>
 <template>
   <div class="trend-chart" :class="tool === 'Claude' ? 'claude' : 'codex'">
-    <svg viewBox="0 0 610 198" preserveAspectRatio="none" role="img" :aria-label="`${tool} ${range}额度走势`">
+    <Transition name="content-fade"><svg :key="`${tool}-${range}`" viewBox="0 0 610 198" preserveAspectRatio="none" role="img" :aria-label="`${tool} ${range}额度走势`">
       <g v-for="tick in yTicks" :key="tick">
         <line x1="38" :y1="y(tick)" x2="590" :y2="y(tick)" stroke="var(--outline-variant)" />
         <text x="0" :y="y(tick) + 4" class="axis">{{ tick }}%</text>
@@ -61,7 +61,7 @@ const time = (at: string) => new Date(at).toLocaleString('zh-CN', { month: 'nume
         <text v-if="markerLabels[index] !== null" :x="x(marker.at)" :y="markerLabels[index]!" text-anchor="middle" class="marker-label">+{{ marker.delta.toFixed(1) }}</text>
       </g>
       <text v-for="(tick, index) in ticks" :key="tick" :x="38 + index * 110.4" y="190" text-anchor="middle" class="axis">{{ tick }}</text>
-    </svg>
+    </svg></Transition>
     <div v-for="marker in markers" v-show="hovered === `${marker.session_id}-${marker.at}`" :key="`tip-${marker.session_id}-${marker.at}`"
       class="trend-tip" :style="{ left: `${x(marker.at) / 610 * 100}%`, top: `${Math.max(4, markerY(marker.at) - 75) / 198 * 100}%` }">
       <strong>{{ time(marker.at) }}</strong><span>{{ marker.title || marker.session_id.slice(0, 8) }}</span><b>+{{ marker.delta.toFixed(1) }}%</b>
@@ -72,7 +72,7 @@ const time = (at: string) => new Date(at).toLocaleString('zh-CN', { month: 'nume
 <style scoped>
 .trend-chart { position: relative; height: 198px; --trend-color: var(--tool-claude); }
 .trend-chart.codex { --trend-color: var(--tool-codex); }
-svg { width: 100%; height: 100%; overflow: visible; }
+svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .axis { fill: var(--on-surface-muted); font-size: 10px; }
 .marker-label { fill: var(--on-surface); font-size: 10px; font-weight: 600; }
 .trend-tip { position: absolute; z-index: 2; display: grid; gap: 3px; min-width: 120px; padding: 8px 10px; border: 1px solid var(--outline); border-radius: 9px; background: var(--surface-container-highest); box-shadow: 0 8px 20px var(--surface-bg); color: var(--on-surface); font-size: 11px; pointer-events: none; transform: translateX(-50%); }

@@ -4,6 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { CircleAlert, Database, Search, X } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
+import { vSelectionSlide } from '../components/selectionSlide'
+import PageSkeleton from '../components/PageSkeleton.vue'
+import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
+import { usePageRequest } from '../usePageRequest'
 import {
   getSessionDetail, getSessions,
   type SessionDetail, type SessionRow, type Source, type TimelineEntry, type TokenCounts, type Tool,
@@ -13,17 +17,22 @@ defineOptions({ inheritAttrs: false })
 
 const route = useRoute()
 const router = useRouter()
-const rows = ref<SessionRow[]>([])
-const loading = ref(true)
-const error = ref('')
-const query = ref('')
-const toolFilter = ref<'all' | Tool>('all')
-const visibleCount = ref(50)
+const listKey = pageCacheKey('sessions', 7)
+const listRequest = usePageRequest<SessionRow[]>(listKey)
+const rows = computed(() => listRequest.data.value ?? [])
+const { pending, loading, error, reveal } = listRequest
+const query = ref(pageSelection.sessions.query)
+const toolFilter = ref<'all' | Tool>(pageSelection.sessions.toolFilter)
+const visibleCount = ref(pageSelection.sessions.visibleCount)
 const detail = ref<SessionDetail | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
 const requestLimit = ref(50)
 let detailTicket = 0
+let detailTimer: ReturnType<typeof setTimeout> | undefined
+const detailPending = ref(false)
+let previousContentOverflow = ''
+let contentLocked = false
 
 function failure(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause)
@@ -40,36 +49,55 @@ const routeSession = computed(() => {
   return tool && id ? { tool, id } : null
 })
 
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    rows.value = await getSessions(7)
-  } catch (cause) {
-    error.value = failure(cause)
-  } finally {
-    loading.value = false
+function setContentLock(selected: boolean) {
+  const content = document.querySelector<HTMLElement>('.content')
+  if (!content) return
+  if (selected) {
+    if (!contentLocked) previousContentOverflow = content.style.overflowY
+    content.style.overflowY = 'hidden'
+    contentLocked = true
+  } else if (contentLocked) {
+    content.style.overflowY = previousContentOverflow
+    contentLocked = false
   }
+}
+
+async function load() {
+  await listRequest.load(listKey, () => getSessions(7))
 }
 async function loadDetail(tool: Tool, sessionId: string) {
   const ticket = ++detailTicket
-  detailLoading.value = true
+  if (detailTimer) clearTimeout(detailTimer)
+  const key = pageCacheKey('sessionDetail', tool, sessionId)
+  const cached = getPageCache<SessionDetail>(key)
+  detail.value = cached ?? null
+  detailPending.value = cached === undefined
+  detailLoading.value = false
   detailError.value = ''
-  detail.value = null
+  if (cached === undefined) detailTimer = setTimeout(() => { if (ticket === detailTicket) detailLoading.value = true }, 250)
+  const version = cacheVersion(key)
   try {
     const result = await getSessionDetail(tool, sessionId)
+    if (!cacheVersionMatches(key, version)) return
+    setPageCache(key, result)
     if (ticket === detailTicket) detail.value = result
   } catch (cause) {
-    if (ticket === detailTicket) detailError.value = failure(cause)
+    if (ticket === detailTicket && cached === undefined) detailError.value = failure(cause)
   } finally {
-    if (ticket === detailTicket) detailLoading.value = false
+    if (ticket === detailTicket) {
+      if (detailTimer) clearTimeout(detailTimer)
+      detailPending.value = false
+      detailLoading.value = false
+    }
   }
 }
 watch(routeSession, (selected) => {
   requestLimit.value = 50
-  document.body.style.overflow = selected ? 'hidden' : ''
+  setContentLock(Boolean(selected))
   if (!selected) {
     detailTicket += 1
+    if (detailTimer) clearTimeout(detailTimer)
+    detailPending.value = false
     detail.value = null
     detailError.value = ''
     detailLoading.value = false
@@ -77,7 +105,11 @@ watch(routeSession, (selected) => {
   }
   void loadDetail(selected.tool, selected.id)
 }, { immediate: true })
-onUnmounted(() => { document.body.style.overflow = '' })
+onMounted(() => setContentLock(Boolean(routeSession.value)))
+onUnmounted(() => {
+  setContentLock(false)
+  if (detailTimer) clearTimeout(detailTimer)
+})
 onMounted(load)
 function onKey(event: KeyboardEvent) {
   if (event.key === 'Escape' && routeSession.value) closeSession()
@@ -105,7 +137,12 @@ const quotaNote = computed(() => {
     filtered.value.some(row => row.tool === tool && !row.has_quota_data))
   return names.length ? `暂无 ${names.join('、')} 额度数据，额度列无法换算` : ''
 })
-watch([query, toolFilter], () => { visibleCount.value = 50 })
+watch([query, toolFilter], () => {
+  visibleCount.value = 50
+  pageSelection.sessions.query = query.value
+  pageSelection.sessions.toolFilter = toolFilter.value
+})
+watch(visibleCount, count => { pageSelection.sessions.visibleCount = count })
 watch([filtered, routeSession], () => {
   const selected = routeSession.value
   if (!selected) return
@@ -190,7 +227,7 @@ const detailSubtitle = computed(() => {
 </script>
 
 <template>
-  <div class="dashboard-page sessions-page">
+  <div class="dashboard-page sessions-page" :class="{ 'no-entry-reveal': !reveal }">
     <header class="dashboard-header">
       <div>
         <h1>会话</h1>
@@ -201,18 +238,19 @@ const detailSubtitle = computed(() => {
           <Search :size="16" aria-hidden="true" />
           <input v-model="query" type="search" placeholder="搜索会话或项目" aria-label="搜索会话或项目" />
         </label>
-        <div class="segmented" role="group" aria-label="筛选来源">
+        <div v-selection-slide class="segmented" role="group" aria-label="筛选来源">
           <button type="button" :class="{ active: toolFilter === 'all' }" :aria-pressed="toolFilter === 'all'" @click="toolFilter = 'all'">全部</button>
           <button v-for="tool in (['Claude', 'Codex'] as const)" :key="tool" type="button" :class="{ active: toolFilter === tool }" :aria-pressed="toolFilter === tool" @click="toolFilter = tool">{{ tool }}</button>
         </div>
       </div>
     </header>
 
-    <div v-if="loading" class="center-state"><Database :size="28" /><strong>正在读取会话</strong></div>
-    <div v-else-if="error" class="center-state"><CircleAlert :size="28" /><strong>读取会话失败</strong><p>{{ error }}</p><button type="button" @click="load">重试</button></div>
+    <PageSkeleton v-if="pending && loading" kind="sessions" />
+    <div v-else-if="pending" class="page-await" />
+    <div v-else-if="error && !listRequest.data.value" class="center-state"><CircleAlert :size="28" /><strong>读取会话失败</strong><p>{{ error }}</p><button type="button" @click="load">重试</button></div>
     <div v-else-if="!rows.length" class="center-state"><Database :size="28" /><strong>近 7 天没有会话</strong><p>开始使用 Claude Code 或 Codex 后，会话会显示在这里。</p></div>
     <div v-else-if="!filtered.length" class="center-state"><Search :size="28" /><strong>没有匹配的会话</strong><p>换一个关键词，或切换来源后再试。</p></div>
-    <section v-else class="card sessions-table" aria-label="会话列表">
+    <section v-else class="card sessions-table content-reveal" aria-label="会话列表">
       <div class="session-head"><span>来源</span><span>会话</span><span>请求</span><span>token</span><span>缓存命中</span><span>额度</span></div>
       <button v-for="row in visibleRows" :key="`${row.tool}-${row.session_id}`" type="button" class="session-line" :class="{ active: selected(row) }" :aria-current="selected(row) ? 'true' : undefined" @click="openSession(row)">
         <span class="row-source"><span class="row-icon"><img v-if="row.tool === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else /></span>{{ sourceLabel(row.source) }}</span>
@@ -226,9 +264,8 @@ const detailSubtitle = computed(() => {
       <p v-if="quotaNote" class="sessions-quota-note">{{ quotaNote }}</p>
     </section>
 
-    <template v-if="routeSession">
-      <button type="button" class="session-mask" aria-label="关闭会话详情" @click="closeSession" />
-      <aside class="session-drawer" role="dialog" aria-modal="true" aria-labelledby="session-detail-title" :style="{ '--session-tool': (detail?.tool ?? routeSession.tool) === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
+    <Transition name="drawer-mask"><button v-if="routeSession" type="button" class="session-mask" aria-label="关闭会话详情" @click="closeSession" /></Transition>
+    <Transition name="drawer"><aside v-if="routeSession" class="session-drawer" role="dialog" aria-modal="true" aria-labelledby="session-detail-title" :style="{ '--session-tool': (detail?.tool ?? routeSession.tool) === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
         <div class="session-drawer-head">
           <div>
             <h2 id="session-detail-title">{{ detailTitle }}</h2>
@@ -236,7 +273,8 @@ const detailSubtitle = computed(() => {
           </div>
           <button type="button" class="session-close" aria-label="关闭" @click="closeSession"><X :size="18" /></button>
         </div>
-        <div v-if="detailLoading" class="session-drawer-status"><Database :size="24" /><strong>正在读取请求明细</strong></div>
+        <PageSkeleton v-if="detailPending && detailLoading" kind="sessionDetail" />
+        <div v-else-if="detailPending" class="session-drawer-status" />
         <div v-else-if="detailError" class="session-drawer-status"><CircleAlert :size="24" /><strong>读取请求明细失败</strong><p>{{ detailError }}</p></div>
         <template v-else-if="detail">
           <div class="session-stats">
@@ -272,7 +310,6 @@ const detailSubtitle = computed(() => {
             <p class="session-footnote">提示内容不会被记录，仅保留时间。</p>
           </div>
         </template>
-      </aside>
-    </template>
+      </aside></Transition>
   </div>
 </template>

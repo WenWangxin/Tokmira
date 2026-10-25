@@ -12,6 +12,7 @@ import './styles/sessions.css'
 import './styles/settings.css'
 import './styles/onboarding.css'
 import './styles/share.css'
+import './styles/motion.css'
 
 async function boot() {
   try {

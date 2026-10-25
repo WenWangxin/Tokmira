@@ -1,22 +1,41 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Cpu, Folder, GitFork, List, Zap, Database, CircleAlert } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
+import { vSelectionSlide } from '../components/selectionSlide'
 import { getAdvice, getUsageDetail, getUsageWindows, promptTag, type AdviceReport, type Tool, type UsageDetail, type UsageRank, type UsageWindowRef } from '../api'
+import PageSkeleton from '../components/PageSkeleton.vue'
+import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
 
 const router = useRouter()
-const tool = ref<Tool>('Claude')
-const windows = ref<Record<Tool, UsageWindowRef[]>>({ Claude: [], Codex: [] })
-const selected = ref<UsageWindowRef | null>(null)
-const detail = ref<UsageDetail | null>(null)
-const dimension = ref<'sessions' | 'projects' | 'models' | 'subagents'>('sessions')
-const loading = ref(true)
+const windowsKey = pageCacheKey('usageWindows', 'all')
+const cachedWindows = getPageCache<Record<Tool, UsageWindowRef[]>>(windowsKey)
+const initialTool = pageSelection.usage.tool ?? (cachedWindows?.Claude.length ? 'Claude' : cachedWindows?.Codex.length ? 'Codex' : 'Claude')
+const initialWindow = cachedWindows?.[initialTool].find(item => item.window_id === pageSelection.usage.windowIds[initialTool])
+  ?? cachedWindows?.[initialTool][0] ?? null
+const initialDetail = initialWindow ? getPageCache<UsageDetail>(pageCacheKey('usageDetail', initialWindow.tool, initialWindow.kind, initialWindow.window_id)) ?? null : null
+const tool = ref<Tool>(initialTool)
+const windows = ref<Record<Tool, UsageWindowRef[]>>(cachedWindows ?? { Claude: [], Codex: [] })
+const selected = ref<UsageWindowRef | null>(initialWindow)
+const detail = ref<UsageDetail | null>(initialDetail)
+const dimension = ref<'sessions' | 'projects' | 'models' | 'subagents'>(pageSelection.usage.dimension)
+const pending = ref(cachedWindows === undefined)
+const loading = ref(false)
+const detailPending = ref(Boolean(initialWindow && !initialDetail))
 const detailLoading = ref(false)
+const barsReady = ref(initialDetail !== null)
+const reveal = ref(cachedWindows === undefined)
 const error = ref('')
+let loadingTimer: ReturnType<typeof setTimeout> | undefined
+let detailTimer: ReturnType<typeof setTimeout> | undefined
 let detailRequest = 0
-const advice = ref<AdviceReport | null>(null)
+const advice = ref<AdviceReport | null>(getPageCache<AdviceReport>(pageCacheKey('advice', 30)) ?? null)
+watch([tool, dimension], () => {
+  pageSelection.usage.tool = tool.value
+  pageSelection.usage.dimension = dimension.value
+})
 const dimensions = [
   { key: 'sessions', name: '会话', icon: List },
   { key: 'projects', name: '项目', icon: Folder },
@@ -25,47 +44,90 @@ const dimensions = [
 ] as const
 
 async function load() {
-  loading.value = true
+  if (!cachedWindows) {
+    pending.value = true
+    loadingTimer = setTimeout(() => { loading.value = true }, 250)
+  }
   error.value = ''
+  const version = cacheVersion(windowsKey)
   try {
     const [claude, codex] = await Promise.all([getUsageWindows('Claude'), getUsageWindows('Codex')])
+    if (!cacheVersionMatches(windowsKey, version)) return
     windows.value = { Claude: claude, Codex: codex }
-    tool.value = claude.length ? 'Claude' : codex.length ? 'Codex' : 'Claude'
-    await selectWindow(windows.value[tool.value][0] ?? null)
+    setPageCache(windowsKey, windows.value)
+    const nextTool = windows.value[tool.value].length ? tool.value : claude.length ? 'Claude' : codex.length ? 'Codex' : 'Claude'
+    tool.value = nextTool
+    const nextWindow = windows.value[nextTool].find(item => item.window_id === pageSelection.usage.windowIds[nextTool])
+      ?? windows.value[nextTool][0] ?? null
+    if (nextWindow?.window_id !== selected.value?.window_id || nextWindow?.kind !== selected.value?.kind || nextWindow?.tool !== selected.value?.tool) {
+      await selectWindow(nextWindow)
+    } else if (nextWindow) {
+      selected.value = nextWindow
+      void selectWindow(nextWindow)
+    }
   } catch (cause) {
-    error.value = String(cause)
+    if (!cachedWindows) error.value = String(cause)
   } finally {
+    if (loadingTimer) clearTimeout(loadingTimer)
+    pending.value = false
     loading.value = false
   }
 }
 
 async function selectWindow(window: UsageWindowRef | null) {
   const request = ++detailRequest
+  if (detailTimer) clearTimeout(detailTimer)
   selected.value = window
-  detail.value = null
+  barsReady.value = false
   error.value = ''
-  if (!window) return
-  detailLoading.value = true
+  if (!window) { detail.value = null; detailPending.value = false; return }
+  pageSelection.usage.windowIds[window.tool] = window.window_id
+  const key = pageCacheKey('usageDetail', window.tool, window.kind, window.window_id)
+  const cached = getPageCache<UsageDetail>(key)
+  detail.value = cached ?? null
+  detailPending.value = cached === undefined
+  detailLoading.value = false
+  barsReady.value = cached !== undefined
+  if (cached === undefined) detailTimer = setTimeout(() => { if (request === detailRequest) detailLoading.value = true }, 250)
+  const version = cacheVersion(key)
   try {
     const result = await getUsageDetail(window.tool, window.kind, window.window_id)
+    if (!cacheVersionMatches(key, version)) return
+    setPageCache(key, result)
     if (request === detailRequest) detail.value = result
   } catch (cause) {
-    if (request === detailRequest) error.value = String(cause)
+    if (request === detailRequest && cached === undefined) error.value = String(cause)
   } finally {
-    if (request === detailRequest) detailLoading.value = false
+    if (request === detailRequest) {
+      if (detailTimer) clearTimeout(detailTimer)
+      detailPending.value = false
+      detailLoading.value = false
+      if (cached === undefined && detail.value) {
+        await nextTick()
+        requestAnimationFrame(() => requestAnimationFrame(() => { if (request === detailRequest) barsReady.value = true }))
+      } else barsReady.value = true
+    }
   }
 }
 
 function selectTool(next: Tool) {
   if (next === tool.value || !windows.value[next].length) return
   tool.value = next
-  void selectWindow(windows.value[next][0] ?? null)
+  const window = windows.value[next].find(item => item.window_id === pageSelection.usage.windowIds[next]) ?? windows.value[next][0] ?? null
+  void selectWindow(window)
 }
 
+onUnmounted(() => {
+  detailRequest++
+  if (loadingTimer) clearTimeout(loadingTimer)
+  if (detailTimer) clearTimeout(detailTimer)
+})
 onMounted(() => {
   void load()
   // Tags are optional decoration; the page works without them.
-  getAdvice(30).then(report => { advice.value = report }).catch(() => { advice.value = null })
+  const key = pageCacheKey('advice', 30)
+  const version = cacheVersion(key)
+  getAdvice(30).then(report => { if (cacheVersionMatches(key, version)) { advice.value = report; setPageCache(key, report) } }).catch(() => {})
 })
 const tagFor = (sessionId: string, at: string) => promptTag(advice.value?.prompt_tags, tool.value, sessionId, at)
 const rows = computed<UsageRank[]>(() => detail.value?.[dimension.value] ?? [])
@@ -110,16 +172,17 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
 </script>
 
 <template>
-  <div class="dashboard-page usage-page" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
+  <div class="dashboard-page usage-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
     <header class="dashboard-header">
       <div><h1>用量明细</h1><p>逐一追溯额度去向，精确到会话与单条提示</p></div>
-      <div class="usage-tool-switch" aria-label="选择工具">
+      <div v-selection-slide class="usage-tool-switch" aria-label="选择工具">
         <button v-for="item in (['Claude', 'Codex'] as const)" :key="item" :class="{ active: tool === item }" :disabled="!windows[item].length" :aria-pressed="tool === item" @click="selectTool(item)">
           <img v-if="item === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else />{{ item }}
         </button>
       </div>
     </header>
-    <div v-if="loading" class="center-state"><Database :size="28" /><strong>正在读取用量数据</strong></div>
+    <PageSkeleton v-if="pending && loading" kind="usage" />
+    <div v-else-if="pending" class="page-await" />
     <div v-else-if="error && !selected" class="center-state"><CircleAlert :size="28" /><strong>读取用量数据失败</strong><p>{{ error }}</p><button @click="load">重试</button></div>
     <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>暂无 {{ tool }} 额度数据</strong><p>开启官方额度查询或安装状态栏记录器后，即可按会话和提示追溯额度。</p><button @click="router.push('/settings')">前往设置</button></div>
     <template v-else>
@@ -128,19 +191,20 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
           <strong>{{ windowLabel(window) }}</strong><span>{{ windowTimes(window) }}</span>
         </button>
       </nav>
-      <div v-if="detailLoading" class="center-state"><Database :size="28" /><strong>正在生成窗口明细</strong></div>
-      <div v-else-if="error" class="center-state"><CircleAlert :size="28" /><strong>生成窗口明细失败</strong><p>{{ error }}</p><button @click="selectWindow(selected)">重试</button></div>
+      <PageSkeleton v-if="detailPending && detailLoading" kind="usageDetail" />
+      <div v-else-if="detailPending" class="page-await" />
+      <div v-else-if="error && !detail" class="center-state"><CircleAlert :size="28" /><strong>生成窗口明细失败</strong><p>{{ error }}</p><button @click="selectWindow(selected)">重试</button></div>
       <template v-else-if="detail">
-        <section class="card usage-overview" aria-label="窗口概览">
+        <section class="card usage-overview content-reveal" aria-label="窗口概览">
           <div class="usage-overview-top"><div class="usage-overview-main"><span>本窗口已用</span><strong>{{ percent(detail.used_percent) }}</strong><span class="origin-pill" :class="detail.origin === 'Manual' ? 'pill-warning' : detail.origin === 'Estimated' ? 'pill-neutral' : 'pill-success'">{{ originText }}</span></div><span class="usage-reset">{{ selected?.is_current ? `剩余 ${percent(detail.remaining_percent)}` : '已结束' }} · {{ toTime(detail.resets_at) }} 重置</span></div>
-          <div class="usage-bar" role="img" :aria-label="`已用 ${percent(detail.used_percent)}，已归属 ${percent(detail.attributed_total)}，未归属 ${percent(detail.unattributed_total)}`"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`" :class="`usage-segment usage-level-${part.level}`" :style="{ width: chartWidth(part.value) }" /><span class="usage-remainder" :style="{ width: chartWidth(detail.remaining_percent) }" /></div>
+          <div class="usage-bar" role="img" :aria-label="`已用 ${percent(detail.used_percent)}，已归属 ${percent(detail.attributed_total)}，未归属 ${percent(detail.unattributed_total)}`"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`" :class="`usage-segment usage-level-${part.level}`" :style="{ width: barsReady ? chartWidth(part.value) : '0%' }" /><span class="usage-remainder" :style="{ width: barsReady ? chartWidth(detail.remaining_percent) : '0%' }" /></div>
           <div class="usage-legend"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`"><i :class="`usage-level-${part.level}`" />{{ part.name }} {{ percent(part.value) }}</span></div>
           <p v-if="breakdown" class="usage-breakdown">官方本周占比：{{ breakdown }}</p>
           <p class="usage-note">{{ breakdown ? '本机日志只覆盖 Claude Code；聊天和 Cowork 的部分以官方占比为准。' : '“未归属”指官方额度中无法与本机日志对应的部分，例如同一账号在其他设备上的使用。网页与桌面端聊天不在统计范围内。' }}</p>
         </section>
-        <div class="usage-grid">
-          <section class="card usage-ranking" aria-label="用量排行"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><List :size="17" /></span><strong>用量排行</strong></div><div class="segmented"><button v-for="item in dimensions" :key="item.key" :class="{ active: dimension === item.key }" :aria-pressed="dimension === item.key" @click="dimension = item.key"><component :is="item.icon" :size="16" />{{ item.name }}</button></div></div>
-            <template v-if="visibleRows.length"><div v-for="row in visibleRows" :key="row.key" class="usage-rank-row"><div class="usage-rank-name"><strong :title="row.name">{{ row.name }}</strong><small>{{ row.subtitle }}</small></div><div class="usage-rank-track"><span :style="{ width: `${maxDelta ? Math.max(0, row.delta / maxDelta * 100) : 0}%` }" /></div><span class="usage-rank-tokens">{{ tokens(row.tokens) }}</span><strong class="usage-rank-delta">{{ percent(row.delta) }}</strong></div><p v-if="rows.length > 8" class="usage-more">还有 {{ rows.length - 8 }} 项</p></template>
+        <div class="usage-grid content-reveal">
+          <section class="card usage-ranking" aria-label="用量排行"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><List :size="17" /></span><strong>用量排行</strong></div><div v-selection-slide class="segmented"><button v-for="item in dimensions" :key="item.key" :class="{ active: dimension === item.key }" :aria-pressed="dimension === item.key" @click="dimension = item.key"><component :is="item.icon" :size="16" />{{ item.name }}</button></div></div>
+            <template v-if="visibleRows.length"><div v-for="row in visibleRows" :key="row.key" class="usage-rank-row"><div class="usage-rank-name"><strong :title="row.name">{{ row.name }}</strong><small>{{ row.subtitle }}</small></div><div class="usage-rank-track"><span :style="{ width: barsReady ? `${maxDelta ? Math.max(0, row.delta / maxDelta * 100) : 0}%` : '0%' }" /></div><span class="usage-rank-tokens">{{ tokens(row.tokens) }}</span><strong class="usage-rank-delta">{{ percent(row.delta) }}</strong></div><p v-if="rows.length > 8" class="usage-more">还有 {{ rows.length - 8 }} 项</p></template>
             <p v-else class="table-empty">本窗口内没有本机请求，增量全部计为未归属。</p>
           </section>
           <section class="card usage-prompts" aria-label="高耗提示"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><Zap :size="17" /></span><strong>高耗提示</strong></div><small>不记录内容</small></div>

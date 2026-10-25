@@ -29,6 +29,45 @@
   --data-unattributed: #5a5a63;
 }
 
+/* The exported share card keeps the dark v2 palette in either app theme. */
+:root {
+  --motion-short: 150ms;
+  --motion-medium: 250ms;
+  --motion-long: 400ms;
+  --motion-page-out: 90ms;
+  --motion-page-in: 210ms;
+  --motion-dialog-in: 320ms;
+  --motion-dialog-out: 200ms;
+  --motion-count: 600ms;
+  --motion-spin: 900ms;
+  --motion-stagger: 30ms;
+  --motion-stagger-2: 60ms;
+  --motion-stagger-3: 90ms;
+  --motion-stagger-4: 120ms;
+  --motion-stagger-5: 150ms;
+  --motion-reduced: 80ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --scrim: rgb(0 0 0 / 46%);
+  --scrim-onboarding: rgb(0 0 0 / 42%);
+  --scrim-session: rgb(0 0 0 / 54%);
+  --shadow-dialog: 0 24px 80px rgb(0 0 0 / 42%);
+  --shadow-onboarding: 0 24px 80px rgb(0 0 0 / 45%);
+  --shadow-drawer: -16px 0 40px rgb(0 0 0 / 28%);
+  --shadow-confirm: 0 24px 60px rgb(0 0 0 / 35%);
+  --share-card-bg: #131316;
+  --share-card-text: #ececf1;
+  --share-card-muted: #a9a9b3;
+  --share-card-faint: #7a7a85;
+  --share-card-pill: #1d3a28;
+  --share-card-pill-text: #9ff0bd;
+  --share-card-track: #2a2a30;
+  --share-card-tile: #34343b;
+  --share-card-claude: #e08a62;
+  --share-card-codex: #3cc3a6;
+}
+
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
     color-scheme: light;

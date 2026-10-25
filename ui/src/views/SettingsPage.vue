@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Palette, Scale, ShieldCheck, SlidersHorizontal, Terminal, Trash2 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Toggle from '../components/Toggle.vue'
+import { vSelectionSlide } from '../components/selectionSlide'
 import {
   clearRecorderRecords,
   getEnvironment,
@@ -27,14 +28,22 @@ import {
 } from '../api'
 import { adviceLabel, applyTheme, formatCalibration, formatPercent, parsePercent, privacyDetail, quotaMessageTone } from '../settingsLogic'
 import { openOnboarding } from '../onboardingState'
+import PageSkeleton from '../components/PageSkeleton.vue'
+import { cacheVersion, cacheVersionMatches, getPageCache, invalidatePageCache, pageCacheKey, setPageCache } from '../pageCache'
 
 type RecorderDialog = { kind: 'recorder'; enabling: boolean; parts: RecorderParts; plan: RecorderPlan }
 type SettingsDialog = RecorderDialog | { kind: 'claude' } | { kind: 'clear' }
 
-const settings = ref<AppSettings | null>(null)
-const environment = ref<EnvironmentInfo | null>(null)
-const recorder = ref<RecorderStatus | null>(null)
-const loading = ref(true)
+type SettingsSnapshot = { settings: AppSettings; environment: EnvironmentInfo; recorder: RecorderStatus }
+const settingsKey = pageCacheKey('settings')
+const initial = getPageCache<SettingsSnapshot>(settingsKey)
+const settings = ref<AppSettings | null>(initial?.settings ?? null)
+const environment = ref<EnvironmentInfo | null>(initial?.environment ?? null)
+const recorder = ref<RecorderStatus | null>(initial?.recorder ?? null)
+const pending = ref(initial === undefined)
+const loading = ref(false)
+const reveal = ref(initial === undefined)
+let loadingTimer: ReturnType<typeof setTimeout> | undefined
 const loadError = ref('')
 const notice = ref('')
 const noticeError = ref(false)
@@ -96,29 +105,48 @@ function claudeCopy(preference: CredentialPreference) {
   return `将按自动顺序读取凭据：优先 Claude 桌面版，找不到或已过期时改用 Claude Code。读取桌面版时，macOS 会弹出钥匙串授权框，请选择“允许”。${sent}`
 }
 
+function saveSnapshot() {
+  if (settings.value && environment.value && recorder.value) {
+    setPageCache(settingsKey, { settings: settings.value, environment: environment.value, recorder: recorder.value })
+  }
+}
+
 async function load() {
-  loading.value = true
+  if (!settings.value) {
+    pending.value = true
+    loadingTimer = setTimeout(() => { loading.value = true }, 250)
+  }
   loadError.value = ''
+  const version = cacheVersion(settingsKey)
   try {
     const [nextSettings, nextEnvironment, nextRecorder] = await Promise.all([getSettings(), getEnvironment(), recorderStatus()])
+    if (!cacheVersionMatches(settingsKey, version)) return
     settings.value = nextSettings
     environment.value = nextEnvironment
     recorder.value = nextRecorder
+    saveSnapshot()
     applyTheme(nextSettings.theme)
     if (nextSettings.calibration) {
       calibrationTool.value = nextSettings.calibration.tool
       percentText.value = formatPercent(nextSettings.calibration.five_hour_percent)
     }
   } catch (cause) {
-    loadError.value = errorText(cause)
+    if (!settings.value) loadError.value = errorText(cause)
   } finally {
+    if (loadingTimer) clearTimeout(loadingTimer)
+    pending.value = false
     loading.value = false
   }
 }
 
 async function save(next: AppSettings) {
+  const previous = settings.value
   const saved = await updateSettings(next)
   settings.value = saved
+  saveSnapshot()
+  if (previous && (saved.claude_official_query !== previous.claude_official_query || saved.codex_app_server !== previous.codex_app_server || JSON.stringify(saved.calibration) !== JSON.stringify(previous.calibration) || saved.claude_credential !== previous.claude_credential)) {
+    invalidatePageCache('overview', 'advice', 'usageWindows', 'usageDetail', 'sessions', 'sessionDetail')
+  }
   applyTheme(saved.theme)
   return saved
 }
@@ -211,7 +239,9 @@ async function confirmRecorder() {
   dialogError.value = ''
   try {
     const result = current.enabling ? await recorderInstall(current.parts) : await recorderUninstall(current.parts)
+    invalidatePageCache('overview', 'advice', 'usageWindows', 'usageDetail', 'sessions', 'sessionDetail')
     recorder.value = await recorderStatus()
+    saveSnapshot()
     if (result.backup_path) showNotice(`已备份到 ${result.backup_path}`)
     else if (result.notes.length) showNotice(result.notes.join(' '))
     else showNotice('没有修改配置文件')
@@ -249,7 +279,9 @@ async function restore(key: string) {
   if (locked.value) return
   try {
     await restoreAdvice(key)
+    invalidatePageCache('advice', 'sessionDetail')
     settings.value = await getSettings()
+    saveSnapshot()
   } catch (cause) {
     showNotice(errorText(cause), true)
   }
@@ -261,7 +293,9 @@ async function confirmClear() {
   dialogError.value = ''
   try {
     await clearRecorderRecords()
+    invalidatePageCache('overview', 'advice', 'usageWindows', 'usageDetail', 'sessions', 'sessionDetail')
     recorder.value = await recorderStatus()
+    saveSnapshot()
     showNotice('已清除本地记录')
     dialog.value = null
   } catch (cause) {
@@ -284,10 +318,11 @@ function openGuide() {
 }
 
 onMounted(load)
+onUnmounted(() => { if (loadingTimer) clearTimeout(loadingTimer) })
 </script>
 
 <template>
-  <div class="dashboard-page settings-page">
+  <div class="dashboard-page settings-page" :class="{ 'no-entry-reveal': !reveal }">
     <header class="dashboard-header">
       <div>
         <h1>设置</h1>
@@ -295,14 +330,15 @@ onMounted(load)
       </div>
     </header>
 
-    <div v-if="loading" class="center-state"><Database :size="28" /><strong>正在读取设置</strong></div>
+    <PageSkeleton v-if="pending && loading" kind="settings" />
+    <div v-else-if="pending" class="page-await" />
     <div v-else-if="loadError" class="center-state">
       <CircleAlert :size="28" /><strong>读取设置失败</strong><p>{{ loadError }}</p><button type="button" @click="load">重试</button>
     </div>
     <template v-else-if="settings && environment && recorder">
-      <p v-if="notice" class="settings-notice" :class="{ 'settings-notice-error': noticeError }" role="status">{{ notice }}</p>
+      <Transition name="notice"><p v-if="notice" class="settings-notice" :class="{ 'settings-notice-error': noticeError }" role="status">{{ notice }}</p></Transition>
 
-      <section class="settings-banner">
+      <section class="settings-banner content-reveal">
         <span class="settings-banner-icon"><ShieldCheck :size="20" :stroke-width="2" aria-hidden="true" /></span>
         <div>
           <strong>所有数据均保留在本机</strong>
@@ -310,7 +346,7 @@ onMounted(load)
         </div>
       </section>
 
-      <article class="card settings-card">
+      <article class="card settings-card content-reveal">
         <header class="settings-card-head"><Database :size="16" aria-hidden="true" />数据来源</header>
 
         <div class="settings-row">
@@ -346,7 +382,7 @@ onMounted(load)
           </div>
         </div>
 
-        <div class="settings-row">
+        <div class="settings-row settings-row-complex">
           <span class="settings-icon"><ExternalLink :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
             <div class="settings-title">Claude 官方额度查询<span class="origin-pill settings-pill" :class="networkPill(settings.claude_official_query).tone"><i />{{ networkPill(settings.claude_official_query).text }}</span></div>
@@ -363,7 +399,7 @@ onMounted(load)
           </div>
         </div>
 
-        <div class="settings-row">
+        <div class="settings-row settings-row-complex">
           <span class="settings-icon"><Scale :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
             <div class="settings-title">手动校准</div>
@@ -396,7 +432,7 @@ onMounted(load)
             <p class="settings-desc">跟随系统，或固定为浅色、深色。</p>
           </div>
           <div class="settings-controls">
-            <div class="segmented settings-theme" role="group" aria-label="外观">
+            <div v-selection-slide class="segmented settings-theme" role="group" aria-label="外观">
               <button v-for="item in themes" :key="item.value" type="button" :class="{ active: settings.theme === item.value }" :aria-pressed="settings.theme === item.value" :disabled="locked" @click="setTheme(item.value)">{{ item.label }}</button>
             </div>
           </div>
@@ -461,7 +497,7 @@ onMounted(load)
       </article>
     </template>
 
-    <ConfirmDialog v-if="recorderDialog" :title="recorderDialog.enabling ? '安装记录器' : '卸载记录器'" :confirm-label="recorderDialog.enabling ? '安装' : '卸载'" :busy="confirming" @cancel="dialog = null" @confirm="confirmRecorder">
+    <Transition name="dialog"><ConfirmDialog v-if="recorderDialog" :title="recorderDialog.enabling ? '安装记录器' : '卸载记录器'" :confirm-label="recorderDialog.enabling ? '安装' : '卸载'" :busy="confirming" @cancel="dialog = null" @confirm="confirmRecorder">
       <p v-if="!recorderDialog.plan.changes.length" class="confirm-copy">没有需要修改的配置项。</p>
       <ul v-else class="plan-list">
         <li v-for="(change, index) in recorderDialog.plan.changes" :key="`${change.key_path}-${index}`" class="plan-change">
@@ -484,6 +520,6 @@ onMounted(load)
     <ConfirmDialog v-else-if="dialog?.kind === 'clear'" title="清除记录" confirm-label="清除" danger :busy="confirming" @cancel="dialog = null" @confirm="confirmClear">
       <p class="confirm-copy">删除状态栏和 hooks 的本地记录。Claude Code 与 Codex 自己的日志不会被删除。</p>
       <p v-if="dialogError" class="settings-result bad">{{ dialogError }}</p>
-    </ConfirmDialog>
+    </ConfirmDialog></Transition>
   </div>
 </template>
