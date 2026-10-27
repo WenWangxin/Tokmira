@@ -4496,7 +4496,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "token-audit-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "dirs 7.0.0",
@@ -4507,7 +4507,7 @@ dependencies = [
 
 [[package]]
 name = "token-audit-desktop"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "block2",
  "chrono",
@@ -4530,7 +4530,7 @@ dependencies = [
 
 [[package]]
 name = "token_audit_core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes",
  "base64 0.22.1",
