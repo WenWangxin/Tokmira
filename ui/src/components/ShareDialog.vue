@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { messages, m } from '../i18n/index.ts'
+const t = messages
 import { onMounted, onUnmounted, reactive, ref, unref } from 'vue'
 import { Share, X } from 'lucide-vue-next'
 import { getShareSummary, saveExport } from '../api'
@@ -55,7 +57,7 @@ async function exportImage() {
     const bytes = new Uint8Array(await png.arrayBuffer())
     const saved = await saveExport(exportFileName(data, 'png'), bytes)
     if (!alive) return
-    status.value = `已保存到 ${saved}`
+    status.value = m().share.savedTo(saved)
     statusTone.value = 'ok'
   } catch (cause) {
     if (!alive) return
@@ -75,7 +77,7 @@ async function exportMarkdown() {
     const bytes = new TextEncoder().encode(shareMarkdown(data, options))
     const saved = await saveExport(exportFileName(data, 'md'), bytes)
     if (!alive) return
-    status.value = `已保存到 ${saved}`
+    status.value = m().share.savedTo(saved)
     statusTone.value = 'ok'
   } catch (cause) {
     if (!alive) return
@@ -100,38 +102,38 @@ onUnmounted(() => {
 <template>
   <div class="share-mask" @click.self="emit('close')">
     <div ref="panel" class="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" tabindex="-1">
-      <button type="button" class="share-close" aria-label="关闭" @click="emit('close')"><X :size="18" /></button>
+      <button type="button" class="share-close" :aria-label="t.common.close" @click="emit('close')"><X :size="18" /></button>
       <div class="share-preview">
         <ShareCard v-if="summary" ref="card" :summary="summary" :options="options" />
-        <p v-else-if="loading" class="share-preview-state">正在读取本月用量</p>
-        <p v-else class="share-preview-state">{{ loadError || '无法读取本月用量' }}</p>
+        <p v-else-if="loading" class="share-preview-state">{{ t.share.loading }}</p>
+        <p v-else class="share-preview-state">{{ loadError || t.share.loadFailed }}</p>
       </div>
       <div class="share-side">
         <div>
-          <h2 id="share-dialog-title">分享卡片</h2>
-          <p class="share-lead">导出为图片分享。金额为 API 等价估算，并非实际账单。</p>
+          <h2 id="share-dialog-title">{{ t.share.dialogTitle }}</h2>
+          <p class="share-lead">{{ t.share.lead }}</p>
           <div class="share-options">
             <div class="share-option">
-              <span>各工具明细</span>
-              <Toggle :checked="options.toolDetails" label="各工具明细" @toggle="options.toolDetails = !options.toolDetails" />
+              <span>{{ t.share.mdTools }}</span>
+              <Toggle :checked="options.toolDetails" :label="t.share.mdTools" @toggle="options.toolDetails = !options.toolDetails" />
             </div>
             <div class="share-option">
-              <span>缓存命中率</span>
-              <Toggle :checked="options.cacheHitRate" label="缓存命中率" @toggle="options.cacheHitRate = !options.cacheHitRate" />
+              <span>{{ t.share.cacheHitRate }}</span>
+              <Toggle :checked="options.cacheHitRate" :label="t.share.cacheHitRate" @toggle="options.cacheHitRate = !options.cacheHitRate" />
             </div>
             <div class="share-option share-option-project">
               <div class="share-option">
-                <span>消耗最高的项目</span>
-                <Toggle :checked="options.topProject" label="消耗最高的项目" @toggle="options.topProject = !options.topProject" />
+                <span>{{ t.share.topProject }}</span>
+                <Toggle :checked="options.topProject" :label="t.share.topProject" @toggle="options.topProject = !options.topProject" />
               </div>
-              <p>项目名称默认隐藏，以保护你的工作隐私。</p>
+              <p>{{ t.share.projectPrivacy }}</p>
             </div>
           </div>
         </div>
         <div class="share-actions">
           <p v-if="status" class="share-status" :class="statusTone" role="status">{{ status }}</p>
-          <button type="button" class="share-primary" :disabled="!summary || busy" @click="exportImage"><Share :size="18" />导出图片</button>
-          <button type="button" class="share-secondary" :disabled="!summary || busy" @click="exportMarkdown">导出 Markdown</button>
+          <button type="button" class="share-primary" :disabled="!summary || busy" @click="exportImage"><Share :size="18" />{{ t.share.exportImage }}</button>
+          <button type="button" class="share-secondary" :disabled="!summary || busy" @click="exportMarkdown">{{ t.share.exportMarkdown }}</button>
         </div>
       </div>
     </div>

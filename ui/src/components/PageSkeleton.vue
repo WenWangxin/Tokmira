@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { messages, m } from '../i18n/index.ts'
+const t = messages
 defineProps<{ kind: 'advice' | 'usage' | 'usageDetail' | 'sessions' | 'sessionDetail' | 'settings' }>()
 </script>
 
 <template>
-  <div class="page-skeleton" :class="`page-skeleton-${kind}`" aria-label="正在加载数据">
+  <div class="page-skeleton" :class="`page-skeleton-${kind}`" :aria-label="t.common.loading">
     <template v-if="kind === 'advice'">
       <div class="page-skeleton-stats"><span v-for="i in 3" :key="i" class="skeleton" /></div>
       <span v-for="i in 3" :key="i" class="skeleton page-skeleton-advice-row" />

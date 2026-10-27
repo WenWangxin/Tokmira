@@ -147,11 +147,27 @@ pub(crate) fn session_display_name(id: &str, title: Option<&str>, project: Optio
         .unwrap_or(short_id)
 }
 
-fn source_name(source: Source) -> &'static str {
+fn source_name(source: Source, lang: crate::i18n::Lang) -> &'static str {
     match source {
-        Source::ClaudeCli | Source::CodexCli => "命令行",
-        Source::ClaudeDesktop | Source::CodexDesktop => "桌面端",
-        Source::Unknown => "未知来源",
+        Source::ClaudeCli | Source::CodexCli => lang.pick("命令行", "CLI"),
+        Source::ClaudeDesktop | Source::CodexDesktop => lang.pick("桌面端", "Desktop"),
+        Source::Unknown => lang.pick("未知来源", "Unknown source"),
+    }
+}
+
+fn session_count(count: usize, lang: crate::i18n::Lang) -> String {
+    if lang == crate::i18n::Lang::En && count == 1 {
+        "1 session".to_owned()
+    } else {
+        crate::tr!(lang, "{count} 个会话", "{count} sessions")
+    }
+}
+
+fn request_count(count: u64, lang: crate::i18n::Lang) -> String {
+    if lang == crate::i18n::Lang::En && count == 1 {
+        "1 request".to_owned()
+    } else {
+        crate::tr!(lang, "{count} 次请求", "{count} requests")
     }
 }
 
@@ -191,6 +207,15 @@ pub fn usage_detail(
     input: &OverviewInput<'_>,
     window: &UsageWindowRef,
     now: DateTime<Utc>,
+) -> UsageDetail {
+    usage_detail_lang(input, window, now, crate::i18n::Lang::Zh)
+}
+
+pub fn usage_detail_lang(
+    input: &OverviewInput<'_>,
+    window: &UsageWindowRef,
+    now: DateTime<Utc>,
+    lang: crate::i18n::Lang,
 ) -> UsageDetail {
     let matched = input.attribution.windows.iter().find(|w| {
         w.tool == window.tool && w.kind == window.kind && w.window_id == window.window_id
@@ -261,36 +286,33 @@ pub fn usage_detail(
             project
                 .as_deref()
                 .map(directory_name)
-                .unwrap_or_else(|| "未知项目".to_owned()),
-            source_name(source)
+                .unwrap_or_else(|| lang.pick("未知项目", "Unknown project").to_owned()),
+            source_name(source, lang)
         );
         (name, subtitle)
     });
     let projects = rank(by_project, &project_counts, |key, _| {
         (
             if key.is_empty() {
-                "未知项目".to_owned()
+                lang.pick("未知项目", "Unknown project").to_owned()
             } else {
                 directory_name(key)
             },
-            format!(
-                "{} 个会话",
-                project_sessions.get(key).map_or(0, BTreeSet::len)
-            ),
+            session_count(project_sessions.get(key).map_or(0, BTreeSet::len), lang),
         )
     });
     let models = rank(by_model, &model_counts, |key, requests| {
-        (key.to_owned(), format!("{requests} 次请求"))
+        (key.to_owned(), request_count(requests, lang))
     });
     let subagents = rank(by_subagent, &subagent_counts, |key, requests| {
         (
             if key == "subagent" {
-                "子代理"
+                lang.pick("子代理", "Subagent")
             } else {
-                "主对话"
+                lang.pick("主对话", "Main conversation")
             }
             .to_owned(),
-            format!("{requests} 次请求"),
+            request_count(requests, lang),
         )
     });
     let mut high_prompts: Vec<_> = input

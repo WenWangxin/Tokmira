@@ -5,12 +5,13 @@ use serde::Deserialize;
 use token_audit_core::attribution::{attribute, WindowKind};
 use token_audit_core::claude_quota::{BreakdownRow, WeeklyBreakdown};
 use token_audit_core::dashboard::OverviewInput;
+use token_audit_core::i18n::Lang;
 use token_audit_core::model::{PromptEvent, Source, TokenCounts, Tool, UsageEvent};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::ClaudeSnapshot;
 use token_audit_core::recorder::RecorderStatus;
 use token_audit_core::timeline::{Origin, QuotaPoint, Window};
-use token_audit_core::usage::{list_usage_windows, usage_detail};
+use token_audit_core::usage::{list_usage_windows, usage_detail, usage_detail_lang};
 
 #[derive(Deserialize)]
 struct PointRow {
@@ -137,6 +138,10 @@ fn windows_and_detail_use_only_the_selected_range() {
     assert!((current.unattributed_total - 4.0).abs() < 0.0001);
     assert_eq!(current.high_prompts.len(), 1);
     assert!(current.official_weekly_breakdown.is_none());
+    let english = usage_detail_lang(&input, &windows[0], now, Lang::En);
+    assert!(english.sessions[0].subtitle.contains("CLI"));
+    assert_eq!(english.projects[0].subtitle, "1 session");
+    assert_eq!(english.models[0].subtitle, "1 request");
     let weekly = usage_detail(&input, &windows[2], now);
     assert_eq!(
         weekly.official_weekly_breakdown.unwrap().rows[0].percent,

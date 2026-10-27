@@ -186,6 +186,26 @@ pub fn save_export_file(
     Err("保存文件失败")
 }
 
+pub fn save_export_file_lang(
+    directory: &Path,
+    file_name: &str,
+    bytes: &[u8],
+    lang: crate::i18n::Lang,
+) -> Result<PathBuf, String> {
+    save_export_file(directory, file_name, bytes).map_err(|error| {
+        match error {
+            "保存文件失败" => lang.pick("保存文件失败", "Could not save the file"),
+            "文件名无效" => lang.pick("文件名无效", "Invalid file name"),
+            "只能导出 PNG 或 Markdown 文件" => lang.pick(
+                "只能导出 PNG 或 Markdown 文件",
+                "Only PNG or Markdown files can be exported",
+            ),
+            _ => error,
+        }
+        .to_owned()
+    })
+}
+
 fn export_name_parts(file_name: &str) -> Result<(String, String), &'static str> {
     if file_name.is_empty()
         || file_name

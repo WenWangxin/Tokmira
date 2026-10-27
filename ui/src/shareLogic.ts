@@ -37,8 +37,8 @@ export interface CostBarSegment {
   width: number
 }
 
-export const SHARE_FOOTER = '基于本机日志核算 · 数据未离开设备'
-export const SHARE_DISCLAIMER = '金额为 API 等价估算，并非实际账单；基于本机日志核算，数据未离开设备。'
+export const shareFooter = () => m().share.footer
+export const shareDisclaimer = () => m().share.disclaimer
 
 const CLAUDE_PLANS: Record<string, string> = {
   pro: 'Claude Pro',
@@ -57,7 +57,7 @@ export function defaultShareOptions(): ShareOptions {
 }
 
 export function shareTitle(summary: Pick<ShareSummary, 'month'>): string {
-  return `token-audit · ${summary.month} 月用量报告`
+  return m().share.title(summary.month)
 }
 
 export function formatUsd(value: number): string {
@@ -84,7 +84,7 @@ export function formatAmountDigits(value: number): string {
 }
 
 export function formatCount(value: number): string {
-  return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return formatInteger(value)
 }
 
 export function formatPercent(rate: number | null): string {
@@ -95,23 +95,23 @@ export function formatPercent(rate: number | null): string {
 export function subscriptionCaption(summary: Pick<ShareSummary, 'recognized_subscriptions' | 'subscription_total_usd'>): string {
   const total = summary.subscription_total_usd
   if (summary.recognized_subscriptions >= 2 && total != null) {
-    return `两份订阅共 ${formatSubscriptionUsd(total)}，折合 API 费用`
+    return m().share.twoSubscriptions(formatSubscriptionUsd(total))
   }
   if (summary.recognized_subscriptions === 1 && total != null) {
-    return `订阅 ${formatSubscriptionUsd(total)}，折合 API 费用`
+    return m().share.oneSubscription(formatSubscriptionUsd(total))
   }
-  return '本月折合 API 费用'
+  return m().share.monthCost
 }
 
 export function valuePillText(multiple: number | null): string | null {
   if (multiple == null || !Number.isFinite(multiple)) return null
-  return `价值约为订阅的 ${multiple.toFixed(1)} 倍`
+  return m().share.valuePill(multiple.toFixed(1))
 }
 
 /** Shown beside the value pill when some, but not all, plans are unrecognized. */
 export function unrecognizedNote(summary: Pick<ShareSummary, 'subscription_value_multiple' | 'unrecognized_tools'>): string | null {
   if (summary.subscription_value_multiple == null || !summary.unrecognized_tools.length) return null
-  return `不含 ${summary.unrecognized_tools.join('、')}（套餐未识别）`
+  return m().share.unrecognized(listJoin(summary.unrecognized_tools))
 }
 
 export function toolRowLabel(tool: ShareToolCost): string {
@@ -122,12 +122,12 @@ export function toolRowLabel(tool: ShareToolCost): string {
 }
 
 export function projectLine(project: ShareProject | null, maxName?: number): string {
-  if (!project) return '消耗最高的项目：暂无'
+  if (!project) return m().share.noProject
   const chars = Array.from(project.name)
   const name = maxName && chars.length > maxName
     ? `${chars.slice(0, Math.max(1, maxName - 1)).join('')}…`
     : project.name
-  return `消耗最高的项目：${name} · ${formatUsd(project.estimated_cost_usd)}`
+  return m().share.project(name, formatUsd(project.estimated_cost_usd))
 }
 
 export function exportFileName(summary: Pick<ShareSummary, 'year' | 'month'>, extension: 'png' | 'md'): string {
@@ -156,25 +156,25 @@ export function shareMarkdown(summary: ShareSummary, options: ShareOptions): str
   const lines = [
     `# ${shareTitle(summary)}`,
     '',
-    `${subscriptionCaption(summary)}：${formatUsd(summary.month_estimated_cost_usd)}`,
+    m().share.mdLine(subscriptionCaption(summary), formatUsd(summary.month_estimated_cost_usd)),
   ]
   if (options.toolDetails && summary.tools.length) {
-    lines.push('', '## 各工具明细', '')
+    lines.push('', `## ${m().share.mdTools}`, '')
     for (const tool of summary.tools) {
-      lines.push(`- ${toolRowLabel(tool)}：${formatUsd(tool.estimated_cost_usd)}`)
+      lines.push(`- ${m().share.mdLine(toolRowLabel(tool), formatUsd(tool.estimated_cost_usd))}`)
     }
   }
   const pill = valuePillText(summary.subscription_value_multiple)
   if (pill) {
     const note = unrecognizedNote(summary)
-    lines.push('', note ? `${pill}。${note}。` : `${pill}。`)
+    lines.push('', note ? `${m().share.mdSentence(pill)}${m().share.mdSentence(note)}` : m().share.mdSentence(pill))
   }
   if (options.cacheHitRate) {
-    lines.push('', `缓存命中率：${formatPercent(summary.cache_hit_rate)}`)
+    lines.push('', m().share.mdLine(m().share.cacheHitRate, formatPercent(summary.cache_hit_rate)))
   }
-  lines.push('', `本月请求：${formatCount(summary.requests)} 次`)
+  lines.push('', m().share.mdLine(m().share.monthRequests, m().share.requests(formatCount(summary.requests))))
   if (options.topProject) lines.push('', projectLine(summary.top_project))
-  lines.push('', SHARE_DISCLAIMER)
+  lines.push('', shareDisclaimer())
   return lines.join('\n')
 }
 
@@ -184,9 +184,9 @@ export function svgDataUri(markup: string): string {
 
 export function exportErrorText(cause: unknown): string {
   if (typeof cause === 'string' && cause.trim()) return cause.trim()
-  if (cause instanceof DOMException && cause.name === 'SecurityError') return '导出图片失败'
+  if (cause instanceof DOMException && cause.name === 'SecurityError') return m().share.exportImageFailed
   if (cause instanceof Error && cause.message.trim()) return cause.message.trim()
-  return '导出失败'
+  return m().share.exportFailed
 }
 
 /** Draws the same SVG used for preview at 2× resolution. */
@@ -201,22 +201,23 @@ export async function renderSharePng(svg: SVGSVGElement): Promise<Blob> {
     const image = new Image()
     await new Promise<void>((resolve, reject) => {
       image.onload = () => resolve()
-      image.onerror = () => reject(new Error('无法绘制分享卡片'))
+      image.onerror = () => reject(new Error(m().share.drawFailed))
       image.src = url
     })
     const width = svg.viewBox.baseVal.width || Number(svg.getAttribute('width'))
     const height = svg.viewBox.baseVal.height || Number(svg.getAttribute('height'))
-    if (!width || !height) throw new Error('无法绘制分享卡片')
+    if (!width || !height) throw new Error(m().share.drawFailed)
     const canvas = document.createElement('canvas')
     canvas.width = Math.round(width * 2)
     canvas.height = Math.round(height * 2)
     const context = canvas.getContext('2d')
-    if (!context) throw new Error('无法绘制分享卡片')
+    if (!context) throw new Error(m().share.drawFailed)
     context.drawImage(image, 0, 0, canvas.width, canvas.height)
     const png = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
-    if (!png) throw new Error('无法生成图片')
+    if (!png) throw new Error(m().share.pngFailed)
     return png
   } finally {
     URL.revokeObjectURL(url)
   }
 }
+import { m, listJoin, formatInteger } from './i18n/index.ts'

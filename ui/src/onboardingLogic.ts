@@ -1,4 +1,7 @@
-import { quotaMessageTone } from './settingsLogic.ts'
+import { quotaMessageTone, quotaMessage } from './settingsLogic.ts'
+import { m } from './i18n/index.ts'
+import type { RecorderNote } from './api'
+import type { QuotaOutcome, RefreshResult } from './api'
 
 export interface OnboardingSelection {
   statusline: boolean
@@ -60,12 +63,15 @@ export interface ToolSourceInfo {
   quotaHint?: string
 }
 
-export const TOOL_SOURCES: readonly ToolSourceInfo[] = [
-  { source: 'ClaudeCli', name: 'Claude Code · 命令行', logo: 'claude', quotaFromLogs: false, quotaHint: '额度需开启记录器或官方查询' },
-  { source: 'ClaudeDesktop', name: 'Claude · 桌面版', logo: 'claude', quotaFromLogs: false },
-  { source: 'CodexCli', name: 'Codex · 命令行', logo: 'codex', quotaFromLogs: true },
-  { source: 'CodexDesktop', name: 'Codex · 桌面版', logo: 'codex', quotaFromLogs: true },
-]
+export function toolSources(): readonly ToolSourceInfo[] {
+  const t = m().onboarding
+  return [
+    { source: 'ClaudeCli', name: t.claudeCli, logo: 'claude', quotaFromLogs: false, quotaHint: t.claudeCliHint },
+    { source: 'ClaudeDesktop', name: t.claudeDesktop, logo: 'claude', quotaFromLogs: false },
+    { source: 'CodexCli', name: t.codexCli, logo: 'codex', quotaFromLogs: true },
+    { source: 'CodexDesktop', name: t.codexDesktop, logo: 'codex', quotaFromLogs: true },
+  ]
+}
 
 export interface DetectedSource {
   source: string
@@ -88,7 +94,7 @@ function sourceInfo(source: string, registry: readonly ToolSourceInfo[]): ToolSo
 }
 
 /** Registry rows in order, then any detected source the registry does not know yet. */
-export function detectedToolRows(detected: readonly DetectedSource[], registry: readonly ToolSourceInfo[] = TOOL_SOURCES): ToolRow[] {
+export function detectedToolRows(detected: readonly DetectedSource[], registry: readonly ToolSourceInfo[] = toolSources()): ToolRow[] {
   const extra = detected.filter(item => item.source !== 'Unknown' && !registry.some(info => info.source === item.source))
   return [...registry, ...extra.map(item => sourceInfo(item.source, registry))].map(info => {
     const found = detected.find(item => item.source === info.source)
@@ -106,8 +112,8 @@ export function detectedToolRows(detected: readonly DetectedSource[], registry: 
 
 /** Subtitle under a detected tool. No sessions means this source has no local log. */
 export function toolSubtitle(source: string, sessions: number, plan: string | null): string {
-  if (sessions <= 0) return '未检测到本机日志'
-  const count = `${sessions} 个会话`
+  if (sessions <= 0) return m().onboarding.noLogs
+  const count = m().onboarding.sessions(sessions)
   const name = planLabel(source, plan)
   return name ? `${name} · ${count}` : count
 }
@@ -117,9 +123,9 @@ export interface PrecisionPill {
   tone: 'success' | 'neutral'
 }
 
-export function precisionPill(source: string, sessions: number, registry: readonly ToolSourceInfo[] = TOOL_SOURCES): PrecisionPill {
-  if (sessions <= 0) return { text: '未检测到', tone: 'neutral' }
-  return sourceInfo(source, registry).quotaFromLogs ? { text: 'token 与额度精确', tone: 'success' } : { text: 'token 精确', tone: 'success' }
+export function precisionPill(source: string, sessions: number, registry: readonly ToolSourceInfo[] = toolSources()): PrecisionPill {
+  if (sessions <= 0) return { text: m().onboarding.notDetected, tone: 'neutral' }
+  return sourceInfo(source, registry).quotaFromLogs ? { text: m().onboarding.tokenAndQuota, tone: 'success' } : { text: m().onboarding.tokenExact, tone: 'success' }
 }
 
 /** One quota source in step 3. Add a row here (plus its setting) to offer a new one. */
@@ -131,45 +137,41 @@ export interface QuotaSourceInfo {
   hint?: string
 }
 
-export const QUOTA_SOURCES: readonly QuotaSourceInfo[] = [
-  { key: 'statusline', title: 'Claude Code 状态栏记录', description: '不联网。从 Claude Code 状态栏读取官方额度。' },
-  { key: 'claudeOfficial', title: 'Claude 官方额度查询', description: '联网。向 Anthropic 查询额度，令牌不保存。', hint: '首次查询时系统可能要求输入登录密码' },
-  { key: 'codexOfficial', title: 'Codex 官方额度', description: '联网。通过本机 Codex 查询额度，不读取你的令牌。' },
-]
-
-export function installOutcome(backupPath: string | null, notes: string[]): string[] {
-  if (backupPath) return [`已备份到 ${backupPath}`]
-  if (notes.length) return [...notes]
-  return ['没有修改配置文件']
+export function quotaSources(): readonly QuotaSourceInfo[] {
+  const t = m().onboarding
+  return [
+    { key: 'statusline', title: t.statuslineTitle, description: t.statuslineDesc },
+    { key: 'claudeOfficial', title: t.claudeTitle, description: t.claudeDesc, hint: t.claudeHint },
+    { key: 'codexOfficial', title: t.codexTitle, description: t.codexDesc },
+  ]
 }
 
+export function installOutcome(backupPath: string | null, notes: RecorderNote[]): string[] {
+  if (backupPath) return [m().settings.backedUp(backupPath)]
+  if (notes.length) return notes.map(note => m().recorder.note[note])
+  return [m().settings.noFileChanged]
+}
+
+export interface QuotaLine { text: string; outcome: QuotaOutcome }
 export function quotaOutcome(
   selection: OnboardingSelection,
-  result: { claude: string; codex: string },
-): string[] {
-  const lines: string[] = []
-  if (selection.claudeOfficial) lines.push(`Claude 官方额度：${result.claude}`)
-  if (selection.codexOfficial) lines.push(`Codex 官方额度：${result.codex}`)
+  result: RefreshResult,
+): QuotaLine[] {
+  const lines: QuotaLine[] = []
+  if (selection.claudeOfficial) lines.push({ text: m().onboarding.claudeOutcome(quotaMessage(result.claude)), outcome: result.claude })
+  if (selection.codexOfficial) lines.push({ text: m().onboarding.codexOutcome(quotaMessage(result.codex)), outcome: result.codex })
   return lines
 }
 
-/** Green when every quota sentence is an expected status; amber when a query reported an error. */
-export function outcomeTone(lines: string[]): 'success' | 'warning' {
-  const bad = lines.some(line => {
-    const separator = line.lastIndexOf('：')
-    if (separator === -1) return false
-    return quotaMessageTone(line.slice(separator + 1)) === 'bad'
-  })
-  return bad ? 'warning' : 'success'
+/** Green when every quota outcome is expected; amber when a query reported an error. */
+export function outcomeTone(lines: readonly QuotaLine[]): 'success' | 'warning' {
+  return lines.some(line => quotaMessageTone(line.outcome) === 'bad') ? 'warning' : 'success'
 }
 
 /** The message shown after setup: short when all went well, only the failures otherwise. */
-export function onboardingSummary(lines: string[]): { text: string; tone: 'success' | 'warning' } {
-  const failures = lines.filter(line => {
-    const separator = line.lastIndexOf('：')
-    return separator !== -1 && quotaMessageTone(line.slice(separator + 1)) === 'bad'
-  })
-  return failures.length ? { text: failures.join('；'), tone: 'warning' } : { text: '设置完成，额度会自动更新', tone: 'success' }
+export function onboardingSummary(lines: readonly QuotaLine[], operationErrors: readonly string[] = []): { text: string; tone: 'success' | 'warning' } {
+  const failures = [...operationErrors, ...lines.filter(line => quotaMessageTone(line.outcome) === 'bad').map(line => line.text)]
+  return failures.length ? { text: failures.join(m().onboarding.failureSeparator), tone: 'warning' } : { text: m().onboarding.done, tone: 'success' }
 }
 
 /** Browser preview only. Packaged and Tauri sessions follow the saved setting. */
@@ -187,13 +189,13 @@ export interface NotificationLine {
 
 /** What the reminder step and the settings page say about system notifications. */
 export function notificationLine(status: NotificationState): NotificationLine {
-  if (status === 'authorized') return { text: '已允许发送通知', tone: 'success' }
-  if (status === 'denied') return { text: '未允许，可在系统设置 → 通知中开启', tone: 'warning' }
-  if (status === 'not_determined') return { text: '尚未允许发送通知', tone: 'neutral' }
-  return { text: '无法读取通知权限', tone: 'neutral' }
+  if (status === 'authorized') return { text: m().notifications.authorized, tone: 'success' }
+  if (status === 'denied') return { text: m().notifications.denied, tone: 'warning' }
+  if (status === 'not_determined') return { text: m().notifications.notDetermined, tone: 'neutral' }
+  return { text: m().notifications.unknown, tone: 'neutral' }
 }
 
 /** Where the app stays after its window closes. */
 export function trayPlace(userAgent: string): string {
-  return /Mac/.test(userAgent) ? '菜单栏' : '任务栏右下角'
+  return /Mac/.test(userAgent) ? m().notifications.menuBar : m().notifications.taskbar
 }

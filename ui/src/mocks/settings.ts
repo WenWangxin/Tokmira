@@ -53,15 +53,15 @@ export function previewRecorderPlan(parts: RecorderParts, action: 'install' | 'u
   const changes: RecorderPlan['changes'] = []
   if (parts.statusline) {
     changes.push(action === 'install'
-      ? { file: previewFile, key_path: 'statusLine', action: '替换', before_command: 'printf old', after_command: statuslineCommand }
-      : { file: previewFile, key_path: 'statusLine', action: '恢复', before_command: statuslineCommand, after_command: 'printf old' })
+      ? { file: previewFile, key_path: 'statusLine', action: 'replace', before_command: 'printf old', after_command: statuslineCommand }
+      : { file: previewFile, key_path: 'statusLine', action: 'restore', before_command: statuslineCommand, after_command: 'printf old' })
   }
   if (parts.hooks) {
     for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop', 'SubagentStop']) {
       changes.push({
         file: previewFile,
         key_path: `hooks.${event}[0]`,
-        action: action === 'install' ? '新增' : '删除',
+        action: action === 'install' ? 'add' : 'remove',
         before_command: action === 'install' ? null : hookCommand,
         after_command: action === 'install' ? hookCommand : null,
       })

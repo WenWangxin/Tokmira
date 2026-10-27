@@ -249,16 +249,18 @@ export interface Attribution {
 }
 
 export interface RecorderParts { statusline: boolean; hooks: boolean }
+export type RecorderAction = 'add' | 'update' | 'replace' | 'restore' | 'remove'
+export type RecorderNote = 'statusline_backup_missing' | 'statusline_modified'
 export interface RecorderPlan {
   changes: {
     file: string
     key_path: string
-    action: string
+    action: RecorderAction
     before_command: string | null
     after_command: string | null
   }[]
   backup_path: string | null
-  notes: string[]
+  notes: RecorderNote[]
 }
 export interface ScanSummary { events: number; prompts: number; malformed_lines: number }
 /** What happened to one official quota query; `error` carries the backend's message. */
@@ -314,8 +316,8 @@ export const rescan = () =>
 export async function refreshQuotas(automatic = false): Promise<RefreshResult> {
   const result = isPreview()
     ? {
-        claude: previewSettings.claude_official_query ? '已更新' : '未开启',
-        codex: previewSettings.codex_app_server ? '已更新' : '未开启',
+        claude: { state: previewSettings.claude_official_query ? 'preview' as const : 'off' as const, message: '' },
+        codex: { state: previewSettings.codex_app_server ? 'preview' as const : 'off' as const, message: '' },
       }
     : await invoke<RefreshResult>('refresh_quotas', { automatic })
   noteQuotaResult(result)

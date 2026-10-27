@@ -33,6 +33,7 @@ use token_audit_core::codex_app_server::{
 use token_audit_core::dashboard::{build_overview, Overview, OverviewInput};
 use token_audit_core::detect::{self, DetectedTool};
 use token_audit_core::environment::scan_environment;
+use token_audit_core::i18n::Lang;
 use token_audit_core::model::{CompactEvent, PromptEvent, Tool};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{self, CodexDaily};
@@ -43,7 +44,7 @@ use token_audit_core::sessions::{
 use token_audit_core::settings::{self, AppSettings};
 use token_audit_core::share::{self, share_summary, ShareSummary};
 use token_audit_core::timeline::build_timeline;
-use token_audit_core::usage::{list_usage_windows, usage_detail, UsageDetail, UsageWindowRef};
+use token_audit_core::usage::{list_usage_windows, usage_detail_lang, UsageDetail, UsageWindowRef};
 
 #[derive(Clone)]
 struct Scans {
@@ -62,9 +63,80 @@ struct RefreshClock {
     claude_needs_authorization: bool,
 }
 
-/// Result of a background Claude query that could not read the credential without a
-/// prompt. The UI shows it as a button rather than an error.
-const NEEDS_AUTHORIZATION: &str = "需要授权";
+fn current_lang(data_dir: &std::path::Path) -> Lang {
+    settings::read_settings(data_dir)
+        .unwrap_or_default()
+        .language
+        .resolve(sys_locale::get_locale)
+}
+
+fn desktop_lang() -> Lang {
+    dirs::data_dir()
+        .map(|dir| current_lang(&dir.join("token-audit")))
+        .unwrap_or_else(|| {
+            token_audit_core::settings::Language::System.resolve(sys_locale::get_locale)
+        })
+}
+
+fn display_text(zh: &'static str, en: &'static str) -> String {
+    desktop_lang().pick(zh, en).to_owned()
+}
+
+fn config_error(error: &str) -> String {
+    let lang = desktop_lang();
+    match error {
+        "内置价格表格式错误" => lang.pick(
+            "内置价格表格式错误",
+            "Bundled pricing table has an invalid format",
+        ),
+        "内置价格表价格无效" => lang.pick(
+            "内置价格表价格无效",
+            "Bundled pricing table contains invalid prices",
+        ),
+        "内置建议配置格式错误" => lang.pick(
+            "内置建议配置格式错误",
+            "Bundled advice configuration has an invalid format",
+        ),
+        _ => lang.pick(
+            "配置文件格式错误",
+            "Configuration file has an invalid format",
+        ),
+    }
+    .to_owned()
+}
+
+#[derive(Clone, Copy, Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+enum QuotaState {
+    Off,
+    Updated,
+    NeedsAuthorization,
+    Backoff,
+    Recent,
+    Error,
+}
+
+#[derive(Serialize)]
+struct QuotaOutcome {
+    state: QuotaState,
+    message: String,
+}
+
+impl QuotaOutcome {
+    fn status(state: QuotaState) -> Self {
+        Self {
+            state,
+            message: String::new(),
+        }
+    }
+
+    fn error(message: String) -> Self {
+        Self {
+            state: QuotaState::Error,
+            message,
+        }
+    }
+}
 
 /// Whether a failed Claude query got as far as a request to Anthropic.
 fn reached_anthropic(error: &ClaudeQuotaError) -> bool {
@@ -83,18 +155,18 @@ fn claude_skip_reason(
     clock: &RefreshClock,
     now: DateTime<Utc>,
     automatic: bool,
-) -> Option<&'static str> {
+) -> Option<QuotaState> {
     if automatic && clock.claude_awaits_user {
-        return Some(NEEDS_AUTHORIZATION);
+        return Some(QuotaState::NeedsAuthorization);
     }
     if clock.claude_retry_at.is_some_and(|at| now < at) {
-        return Some("限流退避中");
+        return Some(QuotaState::Backoff);
     }
     if clock
         .last_claude
         .is_some_and(|at| now - at < chrono::Duration::seconds(60))
     {
-        return Some("60 秒内已查询");
+        return Some(QuotaState::Recent);
     }
     None
 }
@@ -122,11 +194,11 @@ impl ScanCache {
         let claude = self
             .claude
             .scan(home)
-            .map_err(|_| "扫描 Claude 日志失败".to_owned())?;
+            .map_err(|_| display_text("扫描 Claude 日志失败", "Could not scan Claude logs"))?;
         let codex = self
             .codex
             .scan(home)
-            .map_err(|_| "扫描 Codex 日志失败".to_owned())?;
+            .map_err(|_| display_text("扫描 Codex 日志失败", "Could not scan Codex logs"))?;
         let first = self.latest.is_none();
         self.latest = Some(Scans { claude, codex });
         Ok((
@@ -142,26 +214,48 @@ impl ScanCache {
     }
 }
 fn lock_error() -> String {
-    "应用状态暂不可用".to_owned()
+    display_text(
+        "应用状态暂不可用",
+        "Application state is temporarily unavailable",
+    )
 }
 fn cli_executable() -> Result<PathBuf, String> {
-    let current = std::env::current_exe().map_err(|_| "无法定位桌面应用程序".to_owned())?;
+    let current = std::env::current_exe().map_err(|_| {
+        display_text(
+            "无法定位桌面应用程序",
+            "Could not locate the desktop application",
+        )
+    })?;
     let name = if cfg!(windows) {
         "token-audit.exe"
     } else {
         "token-audit"
     };
-    let path = current.parent().ok_or("无法定位桌面应用目录")?.join(name);
+    let path = current
+        .parent()
+        .ok_or_else(|| {
+            display_text(
+                "无法定位桌面应用目录",
+                "Could not locate the desktop application folder",
+            )
+        })?
+        .join(name);
     if path.is_file() {
         Ok(path)
     } else {
-        Err(format!("未找到随应用分发的命令行程序：{}", path.display()))
+        Err(token_audit_core::tr!(
+            desktop_lang(),
+            "未找到随应用分发的命令行程序：{}",
+            "Bundled CLI executable not found: {}",
+            path.display()
+        ))
     }
 }
 
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
-    settings::read_settings(&state.data_dir).map_err(|_| "读取设置失败".to_owned())
+    settings::read_settings(&state.data_dir)
+        .map_err(|_| display_text("读取设置失败", "Could not read settings"))
 }
 #[tauri::command]
 fn update_settings(
@@ -182,7 +276,8 @@ fn update_settings(
             .update_notified_version
             .clone_from(&current.update_notified_version);
     }
-    settings::write_settings(&state.data_dir, &settings).map_err(|_| "保存设置失败".to_owned())?;
+    settings::write_settings(&state.data_dir, &settings)
+        .map_err(|_| display_text("保存设置失败", "Could not save settings"))?;
     // Switching the query on again is the user asking to retry the keychain.
     if settings.claude_official_query && !was_on {
         if let Ok(mut clock) = state.refresh.lock() {
@@ -208,7 +303,7 @@ async fn rescan(state: State<'_, AppState>) -> Result<ScanSummary, String> {
         })
     })
     .await
-    .map_err(|_| "扫描任务失败".to_owned())?
+    .map_err(|_| display_text("扫描任务失败", "Scan task failed"))?
 }
 #[derive(Serialize)]
 struct ScanSummary {
@@ -219,8 +314,8 @@ struct ScanSummary {
 
 #[derive(Serialize)]
 struct RefreshResult {
-    claude: String,
-    codex: String,
+    claude: QuotaOutcome,
+    codex: QuotaOutcome,
 }
 fn proxy() -> Option<String> {
     ["HTTPS_PROXY", "https_proxy", "ALL_PROXY"]
@@ -229,17 +324,18 @@ fn proxy() -> Option<String> {
         .or_else(system_proxy)
 }
 fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResult, String> {
-    let settings =
-        settings::read_settings(&state.data_dir).map_err(|_| "读取设置失败".to_owned())?;
+    let lang = current_lang(&state.data_dir);
+    let settings = settings::read_settings(&state.data_dir)
+        .map_err(|_| display_text("读取设置失败", "Could not read settings"))?;
     let mut clock = state.refresh.lock().map_err(|_| lock_error())?;
     let now = Utc::now();
     let mut result = RefreshResult {
-        claude: "未开启".to_owned(),
-        codex: "未开启".to_owned(),
+        claude: QuotaOutcome::status(QuotaState::Off),
+        codex: QuotaOutcome::status(QuotaState::Off),
     };
     if settings.claude_official_query {
         if let Some(reason) = claude_skip_reason(&clock, now, automatic) {
-            result.claude = reason.to_owned();
+            result.claude = QuotaOutcome::status(reason);
         } else {
             let previous_query = clock.last_claude;
             clock.last_claude = Some(now);
@@ -259,10 +355,16 @@ fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResul
             };
             match query_claude_quota(&store, &state.home, &UreqTransport, &options) {
                 Ok(quota) => {
-                    quota_store::append_claude(&state.data_dir, &(&quota).into())
-                        .map_err(|_| "保存 Claude 额度快照失败".to_owned())?;
+                    quota_store::append_claude(&state.data_dir, &(&quota).into()).map_err(
+                        |_| {
+                            display_text(
+                                "保存 Claude 额度快照失败",
+                                "Could not save Claude quota snapshot",
+                            )
+                        },
+                    )?;
                     clock.claude_needs_authorization = false;
-                    result.claude = "已更新".to_owned();
+                    result.claude = QuotaOutcome::status(QuotaState::Updated);
                 }
                 Err(ClaudeQuotaError::RateLimited { retry_after }) => {
                     clock.claude_retry_at = Some(
@@ -271,7 +373,7 @@ fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResul
                         )
                         .unwrap_or(chrono::Duration::minutes(5)),
                     );
-                    result.claude = "Anthropic 查询已限流".to_owned();
+                    result.claude = QuotaOutcome::status(QuotaState::Backoff);
                 }
                 Err(error) => {
                     if error.stale_credential() {
@@ -298,11 +400,11 @@ fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResul
                             ClaudeQuotaError::NoCredential
                                 | ClaudeQuotaError::CredentialDenied { .. }
                         ) {
-                        NEEDS_AUTHORIZATION.to_owned()
+                        QuotaOutcome::status(QuotaState::NeedsAuthorization)
                     } else {
-                        error.to_string()
+                        QuotaOutcome::error(error.message(lang))
                     };
-                    if result.claude == NEEDS_AUTHORIZATION {
+                    if result.claude.state == QuotaState::NeedsAuthorization {
                         clock.claude_needs_authorization = true;
                     }
                 }
@@ -314,7 +416,7 @@ fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResul
             .last_codex
             .is_some_and(|at| now - at < chrono::Duration::seconds(60))
         {
-            result.codex = "60 秒内已查询".to_owned();
+            result.codex = QuotaOutcome::status(QuotaState::Recent);
         } else {
             clock.last_codex = Some(now);
             result.codex = match codex_candidates(&state.home, std::env::var_os("PATH").as_deref())
@@ -324,8 +426,14 @@ fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResul
                 Some(path) => {
                     match read_codex_quota(&resolve_launch(&path), &AppServerOptions::default()) {
                         Ok(quota) => {
-                            quota_store::append_codex(&state.data_dir, &(&quota).into())
-                                .map_err(|_| "保存 Codex 额度快照失败".to_owned())?;
+                            quota_store::append_codex(&state.data_dir, &(&quota).into()).map_err(
+                                |_| {
+                                    display_text(
+                                        "保存 Codex 额度快照失败",
+                                        "Could not save Codex quota snapshot",
+                                    )
+                                },
+                            )?;
                             if let Some(usage) = quota.usage {
                                 let days: Vec<_> = usage
                                     .daily
@@ -335,18 +443,31 @@ fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResul
                                         tokens: d.tokens,
                                     })
                                     .collect();
-                                quota_store::write_codex_daily(&state.data_dir, &days)
-                                    .map_err(|_| "保存 Codex 每日用量失败".to_owned())?;
+                                quota_store::write_codex_daily(&state.data_dir, &days).map_err(
+                                    |_| {
+                                        display_text(
+                                            "保存 Codex 每日用量失败",
+                                            "Could not save Codex daily usage",
+                                        )
+                                    },
+                                )?;
                             }
-                            "已更新".to_owned()
+                            QuotaOutcome::status(QuotaState::Updated)
                         }
                         Err(CodexQuotaError::Rpc { code, .. }) => {
-                            format!("Codex app-server 错误代码 {code}")
+                            QuotaOutcome::error(token_audit_core::tr!(
+                                lang,
+                                "Codex app-server 错误代码 {code}",
+                                "Codex app-server error code {code}"
+                            ))
                         }
-                        Err(error) => error.to_string(),
+                        Err(error) => QuotaOutcome::error(error.message(lang)),
                     }
                 }
-                None => "未找到 Codex 命令行程序".to_owned(),
+                None => QuotaOutcome::error(
+                    lang.pick("未找到 Codex 命令行程序", "Codex CLI executable not found")
+                        .to_owned(),
+                ),
             };
         }
     }
@@ -364,7 +485,7 @@ async fn refresh_quotas(
         refresh_quotas_sync(&state, automatic.unwrap_or(false))
     })
     .await
-    .map_err(|_| "额度查询任务失败".to_owned())?;
+    .map_err(|_| display_text("额度查询任务失败", "Quota query task failed"))?;
     tray::signal(&app);
     result
 }
@@ -380,7 +501,7 @@ async fn get_overview(state: State<'_, AppState>) -> Result<Overview, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || overview_sync(&state))
         .await
-        .map_err(|_| "生成仪表盘失败".to_owned())?
+        .map_err(|_| display_text("生成仪表盘失败", "Could not build the dashboard"))?
 }
 
 #[tauri::command]
@@ -399,7 +520,8 @@ async fn get_attribution(state: State<'_, AppState>) -> Result<Attribution, Stri
         let (claude_snapshots, _) = quota_store::read_claude(&data_dir);
         let (codex_snapshots, _) = quota_store::read_codex(&data_dir);
         let (statusline, _) = recorder::read_statusline_records(&data_dir);
-        let settings = settings::read_settings(&data_dir).map_err(|_| "读取设置失败".to_owned())?;
+        let settings = settings::read_settings(&data_dir)
+            .map_err(|_| display_text("读取设置失败", "Could not read settings"))?;
         let points = build_timeline(
             &claude_snapshots,
             &codex_snapshots,
@@ -407,7 +529,7 @@ async fn get_attribution(state: State<'_, AppState>) -> Result<Attribution, Stri
             &scans.codex.rate_limits,
             settings.calibration.as_ref(),
         );
-        let pricing = Pricing::bundled().map_err(str::to_owned)?;
+        let pricing = Pricing::bundled().map_err(config_error)?;
         let mut events = scans.claude.events;
         events.extend(scans.codex.events);
         let mut prompts = scans.claude.prompts;
@@ -424,7 +546,7 @@ async fn get_attribution(state: State<'_, AppState>) -> Result<Attribution, Stri
         ))
     })
     .await
-    .map_err(|_| "生成额度归因失败".to_owned())?
+    .map_err(|_| display_text("生成额度归因失败", "Could not attribute quota usage"))?
 }
 
 /// Everything a page command needs, computed once from the cached scan.
@@ -448,15 +570,24 @@ async fn get_share_summary(state: State<'_, AppState>) -> Result<ShareSummary, S
         })
     })
     .await
-    .map_err(|_| "生成分享摘要失败".to_owned())?
+    .map_err(|_| display_text("生成分享摘要失败", "Could not build the share summary"))?
 }
 
 #[tauri::command]
-fn save_export(file_name: String, bytes: Vec<u8>) -> Result<String, String> {
+fn save_export(
+    state: State<'_, AppState>,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
     let directory = dirs::download_dir()
         .or_else(dirs::home_dir)
-        .ok_or_else(|| "无法确定下载目录".to_owned())?;
-    let path = share::save_export_file(&directory, &file_name, &bytes).map_err(str::to_owned)?;
+        .ok_or_else(|| display_text("无法确定下载目录", "Could not locate the Downloads folder"))?;
+    let path = share::save_export_file_lang(
+        &directory,
+        &file_name,
+        &bytes,
+        current_lang(&state.data_dir),
+    )?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -475,7 +606,7 @@ async fn detect_tools(state: State<'_, AppState>) -> Result<Vec<DetectedTool>, S
         })
     })
     .await
-    .map_err(|_| "检测本机工具失败".to_owned())?
+    .map_err(|_| display_text("检测本机工具失败", "Could not detect local tools"))?
 }
 
 fn with_usage<R>(
@@ -494,7 +625,8 @@ fn with_usage<R>(
     let (claude_snapshots, _) = quota_store::read_claude(data_dir);
     let (codex_snapshots, _) = quota_store::read_codex(data_dir);
     let (statusline, _) = recorder::read_statusline_records(data_dir);
-    let settings = settings::read_settings(data_dir).map_err(|_| "读取设置失败".to_owned())?;
+    let settings = settings::read_settings(data_dir)
+        .map_err(|_| display_text("读取设置失败", "Could not read settings"))?;
     let points = build_timeline(
         &claude_snapshots,
         &codex_snapshots,
@@ -502,7 +634,7 @@ fn with_usage<R>(
         &scans.codex.rate_limits,
         settings.calibration.as_ref(),
     );
-    let pricing = Pricing::bundled().map_err(str::to_owned)?;
+    let pricing = Pricing::bundled().map_err(config_error)?;
     let mut compactions = scans.claude.compactions;
     compactions.extend(scans.codex.compactions);
     let mut events = scans.claude.events;
@@ -556,7 +688,7 @@ async fn get_usage_windows(
         })
     })
     .await
-    .map_err(|_| "生成用量窗口失败".to_owned())?
+    .map_err(|_| display_text("生成用量窗口失败", "Could not build usage windows"))?
 }
 
 #[tauri::command]
@@ -575,12 +707,22 @@ async fn get_usage_detail(
             let window = list_usage_windows(input, tool, now, usize::MAX)
                 .into_iter()
                 .find(|w| w.kind == kind && w.window_id == window_id)
-                .ok_or_else(|| "指定的用量窗口不存在".to_owned())?;
-            Ok(usage_detail(input, &window, now))
+                .ok_or_else(|| {
+                    display_text(
+                        "指定的用量窗口不存在",
+                        "The selected usage window does not exist",
+                    )
+                })?;
+            Ok(usage_detail_lang(
+                input,
+                &window,
+                now,
+                current_lang(&data_dir),
+            ))
         })
     })
     .await
-    .map_err(|_| "生成用量明细失败".to_owned())?
+    .map_err(|_| display_text("生成用量明细失败", "Could not build usage details"))?
 }
 #[tauri::command]
 fn recorder_status(state: State<'_, AppState>) -> RecorderStatus {
@@ -590,7 +732,7 @@ fn recorder_status(state: State<'_, AppState>) -> RecorderStatus {
 fn recorder_plan(state: State<'_, AppState>, parts: RecorderParts) -> Result<RecorderPlan, String> {
     let exe = cli_executable()?;
     recorder::plan_install(&state.home, &state.data_dir, &exe, parts)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.message(current_lang(&state.data_dir)))
 }
 #[tauri::command]
 fn recorder_install(
@@ -598,7 +740,8 @@ fn recorder_install(
     parts: RecorderParts,
 ) -> Result<RecorderPlan, String> {
     let exe = cli_executable()?;
-    recorder::install(&state.home, &state.data_dir, &exe, parts).map_err(|error| error.to_string())
+    recorder::install(&state.home, &state.data_dir, &exe, parts)
+        .map_err(|error| error.message(current_lang(&state.data_dir)))
 }
 #[derive(Serialize)]
 struct DirectoryStatus {
@@ -617,8 +760,8 @@ struct AppEnvironment {
 }
 #[tauri::command]
 fn get_environment(state: State<'_, AppState>) -> Result<AppEnvironment, String> {
-    let pricing = Pricing::bundled().map_err(str::to_owned)?;
-    let advice = AdviceConfig::bundled().map_err(str::to_owned)?;
+    let pricing = Pricing::bundled().map_err(config_error)?;
+    let advice = AdviceConfig::bundled().map_err(config_error)?;
     let claude_logs = state.home.join(".claude").join("projects");
     let codex_logs = state.home.join(".codex").join("sessions");
     Ok(AppEnvironment {
@@ -632,34 +775,44 @@ fn get_environment(state: State<'_, AppState>) -> Result<AppEnvironment, String>
         },
         data_dir: state.data_dir.clone(),
         pricing_version: pricing.version,
-        pricing_note: pricing.note,
+        pricing_note: if current_lang(&state.data_dir) == Lang::En {
+            pricing.note_en
+        } else {
+            pricing.note
+        },
         advice_version: advice.version,
         backup_dir: state.data_dir.join("recorder").join("backups"),
     })
 }
 #[tauri::command]
 fn clear_recorder_records(state: State<'_, AppState>) -> Result<(), String> {
-    recorder::clear_records(&state.data_dir).map_err(|error| error.to_string())
+    recorder::clear_records(&state.data_dir)
+        .map_err(|error| error.message(current_lang(&state.data_dir)))
 }
 #[tauri::command]
 fn recorder_plan_uninstall(
     state: State<'_, AppState>,
     parts: RecorderParts,
 ) -> Result<RecorderPlan, String> {
-    recorder::plan_uninstall(&state.home, &state.data_dir, parts).map_err(|error| error.to_string())
+    recorder::plan_uninstall(&state.home, &state.data_dir, parts)
+        .map_err(|error| error.message(current_lang(&state.data_dir)))
 }
 #[tauri::command]
 fn recorder_uninstall(
     state: State<'_, AppState>,
     parts: RecorderParts,
 ) -> Result<RecorderPlan, String> {
-    recorder::uninstall(&state.home, &state.data_dir, parts).map_err(|error| error.to_string())
+    recorder::uninstall(&state.home, &state.data_dir, parts)
+        .map_err(|error| error.message(current_lang(&state.data_dir)))
 }
 
 #[tauri::command]
 async fn get_advice(state: State<'_, AppState>, period_days: u32) -> Result<AdviceReport, String> {
     if period_days != 7 && period_days != 30 {
-        return Err("统计天数只能是 7 或 30".to_owned());
+        return Err(display_text(
+            "统计天数只能是 7 或 30",
+            "The period must be 7 or 30 days",
+        ));
     }
     let home = state.home.clone();
     let data_dir = state.data_dir.clone();
@@ -670,7 +823,7 @@ async fn get_advice(state: State<'_, AppState>, period_days: u32) -> Result<Advi
         })
     })
     .await
-    .map_err(|_| "生成省额度建议失败".to_owned())?
+    .map_err(|_| display_text("生成省额度建议失败", "Could not build savings tips"))?
 }
 
 fn session_input<'a>(context: &'a UsageContext<'a>) -> SessionInput<'a> {
@@ -682,7 +835,7 @@ fn session_input<'a>(context: &'a UsageContext<'a>) -> SessionInput<'a> {
 }
 
 fn advice_report(context: &UsageContext<'_>, period_days: u32) -> Result<AdviceReport, String> {
-    let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+    let config = AdviceConfig::bundled().map_err(config_error)?;
     let projects: Vec<PathBuf> = context
         .input
         .events
@@ -719,7 +872,10 @@ fn advice_report(context: &UsageContext<'_>, period_days: u32) -> Result<AdviceR
 #[tauri::command]
 async fn get_sessions(state: State<'_, AppState>, days: u32) -> Result<Vec<SessionRow>, String> {
     if days != 7 && days != 30 {
-        return Err("统计天数只能是 7 或 30".to_owned());
+        return Err(display_text(
+            "统计天数只能是 7 或 30",
+            "The period must be 7 or 30 days",
+        ));
     }
     let home = state.home.clone();
     let data_dir = state.data_dir.clone();
@@ -730,7 +886,7 @@ async fn get_sessions(state: State<'_, AppState>, days: u32) -> Result<Vec<Sessi
         })
     })
     .await
-    .map_err(|_| "生成会话列表失败".to_owned())?
+    .map_err(|_| display_text("生成会话列表失败", "Could not build the session list"))?
 }
 
 #[tauri::command]
@@ -744,7 +900,7 @@ async fn get_session_detail(
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
         with_usage(&home, &data_dir, &cached, |context| {
-            let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+            let config = AdviceConfig::bundled().map_err(config_error)?;
             let tags = build_advice(
                 &AdviceInput {
                     events: &context.input.attribution.events,
@@ -767,21 +923,22 @@ async fn get_session_detail(
                 tool,
                 &session_id,
             )
-            .ok_or_else(|| "未找到该会话".to_owned())
+            .ok_or_else(|| display_text("未找到该会话", "Session not found"))
         })
     })
     .await
-    .map_err(|_| "生成会话详情失败".to_owned())?
+    .map_err(|_| display_text("生成会话详情失败", "Could not build session details"))?
 }
 
 fn set_dismissed(state: &AppState, key: &str, dismissed: bool) -> Result<AppSettings, String> {
-    let mut settings =
-        settings::read_settings(&state.data_dir).map_err(|_| "读取设置失败".to_owned())?;
+    let mut settings = settings::read_settings(&state.data_dir)
+        .map_err(|_| display_text("读取设置失败", "Could not read settings"))?;
     settings.dismissed_advice.retain(|item| item != key);
     if dismissed {
         settings.dismissed_advice.push(key.to_owned());
     }
-    settings::write_settings(&state.data_dir, &settings).map_err(|_| "保存设置失败".to_owned())?;
+    settings::write_settings(&state.data_dir, &settings)
+        .map_err(|_| display_text("保存设置失败", "Could not save settings"))?;
     Ok(settings)
 }
 
@@ -951,10 +1108,19 @@ fn main() -> tauri::Result<()> {
         )
         .setup(|app| {
             use tauri::Manager;
-            let home =
-                dirs::home_dir().ok_or_else(|| std::io::Error::other("无法确定用户主目录"))?;
+            let home = dirs::home_dir().ok_or_else(|| {
+                std::io::Error::other(display_text(
+                    "无法确定用户主目录",
+                    "Could not locate the home folder",
+                ))
+            })?;
             let data_dir = dirs::data_dir()
-                .ok_or_else(|| std::io::Error::other("无法确定应用数据目录"))?
+                .ok_or_else(|| {
+                    std::io::Error::other(display_text(
+                        "无法确定应用数据目录",
+                        "Could not locate the application data folder",
+                    ))
+                })?
                 .join("token-audit");
             let scans = Arc::new(Mutex::new(ScanCache::default()));
             let alerts = spawn_alerts(
@@ -1077,21 +1243,27 @@ mod tests {
         clock.claude_awaits_user = true;
         assert_eq!(
             claude_skip_reason(&clock, now, true),
-            Some(NEEDS_AUTHORIZATION)
+            Some(QuotaState::NeedsAuthorization)
         );
         // A manual refresh still goes ahead.
         assert_eq!(claude_skip_reason(&clock, now, false), None);
 
         clock.claude_awaits_user = false;
         clock.last_claude = Some(now - chrono::Duration::seconds(30));
-        assert_eq!(claude_skip_reason(&clock, now, true), Some("60 秒内已查询"));
+        assert_eq!(
+            claude_skip_reason(&clock, now, true),
+            Some(QuotaState::Recent)
+        );
         assert_eq!(
             claude_skip_reason(&clock, now, false),
-            Some("60 秒内已查询")
+            Some(QuotaState::Recent)
         );
 
         clock.last_claude = Some(now - chrono::Duration::seconds(61));
         clock.claude_retry_at = Some(now + chrono::Duration::minutes(5));
-        assert_eq!(claude_skip_reason(&clock, now, false), Some("限流退避中"));
+        assert_eq!(
+            claude_skip_reason(&clock, now, false),
+            Some(QuotaState::Backoff)
+        );
     }
 }

@@ -15,7 +15,7 @@ use token_audit_core::settings;
 use token_audit_core::update::{auto_check_due, should_notify};
 
 use crate::update_text::{info, message, UpdateInfo};
-use crate::{notifications, tray, AppState};
+use crate::{current_lang, desktop_lang, notifications, tray, AppState};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -54,13 +54,16 @@ async fn check(app: &AppHandle, data_dir: &Path) -> Result<Option<UpdateInfo>, S
         .updater_builder()
         .timeout(REQUEST_TIMEOUT)
         .build()
-        .map_err(|error| message(&error))?;
+        .map_err(|error| message(&error, current_lang(data_dir)))?;
     // Recorded before the request, so a failing network still counts toward the daily limit.
     if let Ok(mut current) = settings::read_settings(data_dir) {
         current.update_last_checked_at = Some(Utc::now());
         let _ = settings::write_settings(data_dir, &current);
     }
-    let found = updater.check().await.map_err(|error| message(&error))?;
+    let found = updater
+        .check()
+        .await
+        .map_err(|error| message(&error, current_lang(data_dir)))?;
     let found_info = found.as_ref().map(info);
     if let Ok(mut pending) = app.state::<UpdateState>().pending.lock() {
         *pending = found;
@@ -98,11 +101,24 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     let update = state
         .pending
         .lock()
-        .map_err(|_| "更新状态不可用".to_owned())?
+        .map_err(|_| {
+            desktop_lang()
+                .pick("更新状态不可用", "Update state is unavailable")
+                .to_owned()
+        })?
         .clone()
-        .ok_or("没有可安装的更新，请先检查更新")?;
+        .ok_or_else(|| {
+            desktop_lang()
+                .pick(
+                    "没有可安装的更新，请先检查更新",
+                    "No update is ready to install. Check for updates first.",
+                )
+                .to_owned()
+        })?;
     if state.installing.swap(true, Ordering::SeqCst) {
-        return Err("正在安装更新".to_owned());
+        return Err(desktop_lang()
+            .pick("正在安装更新", "An update is already being installed")
+            .to_owned());
     }
     let mut downloaded = 0_u64;
     let progress = app.clone();
@@ -116,7 +132,7 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
         )
         .await;
     state.installing.store(false, Ordering::SeqCst);
-    result.map_err(|error| message(&error))?;
+    result.map_err(|error| message(&error, desktop_lang()))?;
     state.installed.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -172,10 +188,19 @@ fn announce(app: &AppHandle, data_dir: &Path, found: &UpdateInfo) {
     if focused {
         let _ = app.emit("update-available", found);
     } else {
+        let lang = current_lang(data_dir);
         notifications::post(
             app,
-            &format!("token-audit {} 可以更新了", found.version),
-            "打开 token-audit，在“设置 → 关于与更新”中查看更新说明并安装。",
+            &token_audit_core::tr!(
+                lang,
+                "token-audit {} 可以更新了",
+                "token-audit {} is available",
+                found.version
+            ),
+            lang.pick(
+                "打开 token-audit，在“设置 → 关于与更新”中查看更新说明并安装。",
+                "Open token-audit and go to Settings → About & updates to review and install it.",
+            ),
         );
     }
 }

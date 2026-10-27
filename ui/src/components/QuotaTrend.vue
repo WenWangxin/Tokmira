@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { intlLocale, messages, monthDay } from '../i18n/index.ts'
+const t = messages
 import { computed, ref } from 'vue'
 import type { Overview, Tool } from '../api'
 import { placeMarkerLabels, quotaTicks } from './quotaChart'
 const props = defineProps<{ overview: Overview; tool: Tool; range: 'five_hour' | 'today' | 'week' }>()
 const hovered = ref<string | null>(null)
+const rangeLabel = computed(() => props.range === 'five_hour' ? t.value.dashboard.rangeFiveHour : props.range === 'today' ? t.value.dashboard.rangeToday : t.value.dashboard.rangeWeek)
 const trend = computed(() => props.overview.trends.find(item => item.tool === props.tool))
 const values = computed(() => trend.value?.[props.range] ?? [])
 const markers = computed(() => {
@@ -37,16 +40,16 @@ const markerY = (at: string) => {
 const ticks = computed(() => Array.from({ length: 6 }, (_, index) => {
   if (props.range === 'five_hour') return `+${index}h`
   const time = new Date(start.value + index * (end.value - start.value) / 5)
-  return props.range === 'today' ? `${String(time.getHours()).padStart(2, '0')}:00` : `${time.getMonth() + 1}/${time.getDate()}`
+  return props.range === 'today' ? `${String(time.getHours()).padStart(2, '0')}:00` : monthDay(time)
 }))
 const markerLabels = computed(() => placeMarkerLabels(markers.value.map(marker =>
   ({ x: x(marker.at), y: markerY(marker.at), delta: marker.delta }))))
 const currentX = computed(() => 38 + Math.max(0, Math.min(1, (Date.parse(props.overview.generated_at) - start.value) / (end.value - start.value))) * 552)
-const time = (at: string) => new Date(at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+const time = (at: string) => new Date(at).toLocaleString(intlLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 </script>
 <template>
   <div class="trend-chart" :class="tool === 'Claude' ? 'claude' : 'codex'">
-    <Transition name="content-fade"><svg :key="`${tool}-${range}`" viewBox="0 0 610 198" preserveAspectRatio="none" role="img" :aria-label="`${tool} ${range}额度走势`">
+    <Transition name="content-fade"><svg :key="`${tool}-${range}`" viewBox="0 0 610 198" preserveAspectRatio="none" role="img" :aria-label="t.dashboard.trendLabel(tool, rangeLabel)">
       <g v-for="tick in yTicks" :key="tick">
         <line x1="38" :y1="y(tick)" x2="590" :y2="y(tick)" stroke="var(--outline-variant)" />
         <text x="0" :y="y(tick) + 4" class="axis">{{ tick }}%</text>
@@ -66,7 +69,7 @@ const time = (at: string) => new Date(at).toLocaleString('zh-CN', { month: 'nume
       class="trend-tip" :style="{ left: `${x(marker.at) / 610 * 100}%`, top: `${Math.max(4, markerY(marker.at) - 75) / 198 * 100}%` }">
       <strong>{{ time(marker.at) }}</strong><span>{{ marker.title || marker.session_id.slice(0, 8) }}</span><b>+{{ marker.delta.toFixed(1) }}%</b>
     </div>
-    <p v-if="!values.length" class="no-trend">暂无额度走势</p>
+    <p v-if="!values.length" class="no-trend">{{ t.dashboard.noTrend }}</p>
   </div>
 </template>
 <style scoped>

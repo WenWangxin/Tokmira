@@ -20,7 +20,7 @@ import {
   type NotificationStatus,
 } from '../api'
 import {
-  QUOTA_SOURCES,
+  quotaSources,
   detectedToolRows,
   initialOnboardingChoices,
   installOutcome,
@@ -29,14 +29,14 @@ import {
   quotaOutcome,
   trayPlace,
   type OnboardingSelection,
+  type QuotaLine,
 } from '../onboardingLogic'
+import { m, messages } from '../i18n/index.ts'
 import { finishOnboarding } from '../onboardingState'
 
-const CHECKS = [
-  '默认不发起任何网络请求',
-  '绝不上传 Key、令牌或对话内容',
-  '核心算法开源，结果可独立复现',
-]
+const t = messages
+const checks = computed(() => t.value.onboarding.checks)
+const quotaChoices = computed(() => quotaSources())
 
 const STEPS = 4
 const REMINDER_STEP = 3
@@ -52,9 +52,11 @@ const autostartAvailable = ref(true)
 const notifications = ref<NotificationStatus>('unknown')
 const notificationBusy = ref(false)
 let askedForNotifications = false
-const place = trayPlace(navigator.userAgent)
+const place = computed(() => trayPlace(navigator.userAgent))
 const planError = ref('')
 const feedback = ref<string[]>([])
+const quotaFeedback = ref<QuotaLine[]>([])
+const operationErrors = ref<string[]>([])
 const actionError = ref('')
 const busy = ref(false)
 // Set only while “完成” installs and queries, so the button can show it is working.
@@ -73,13 +75,13 @@ let enterDone: (() => void) | null = null
 
 const rows = computed(() => detectedToolRows(tools.value ?? []))
 const notifyLine = computed(() => notificationLine(notifications.value))
-const primaryLabel = computed(() => (step.value === 1 ? '开始' : step.value < STEPS ? '下一步' : '完成'))
+const primaryLabel = computed(() => (step.value === 1 ? m().onboarding.start : step.value < STEPS ? m().onboarding.next : m().onboarding.finish))
 const nextDisabled = computed(() => busy.value || transitioning.value || (step.value === 2 && detecting.value && !tools.value))
 const stepTitle = computed(() => {
-  if (step.value === 1) return '你的数据，只留在这台电脑上'
-  if (step.value === 2) return '已检测到以下工具'
-  if (step.value === REMINDER_STEP) return '开启后台提醒'
-  return '选择额度来源'
+  if (step.value === 1) return m().onboarding.step1Title
+  if (step.value === 2) return m().onboarding.step2Title
+  if (step.value === REMINDER_STEP) return m().onboarding.step3Title
+  return m().onboarding.step4Title
 })
 
 function errorText(cause: unknown) {
@@ -170,7 +172,9 @@ async function applyReminders(current: Awaited<ReturnType<typeof getSettings>>) 
     const autostart = await getAutostart()
     if (autostart.enabled !== reminders.value.autostart) await setAutostart(reminders.value.autostart)
   } catch (cause) {
-    feedback.value = [...feedback.value, `开机自动启动：${errorText(cause)}`]
+    const line = m().onboarding.autostartFailed(errorText(cause))
+    feedback.value = [...feedback.value, line]
+    operationErrors.value = [...operationErrors.value, line]
   }
   return saved
 }
@@ -281,7 +285,7 @@ async function finish(skipChanges: boolean) {
   busy.value = true
   finishing.value = !skipChanges
   actionError.value = ''
-  if (!skipChanges) feedback.value = []
+  if (!skipChanges) { feedback.value = []; quotaFeedback.value = []; operationErrors.value = [] }
   try {
     const current = await applyReminders(await getSettings())
     if (!skipChanges) {
@@ -296,17 +300,17 @@ async function finish(skipChanges: boolean) {
       })
       if (selection.value.claudeOfficial || selection.value.codexOfficial) {
         const refreshed = await refreshQuotas()
-        feedback.value = [...feedback.value, ...quotaOutcome(selection.value, refreshed)]
+        quotaFeedback.value = quotaOutcome(selection.value, refreshed)
       }
       await updateSettings({ ...saved, onboarding_completed: true })
-      const summary = onboardingSummary(feedback.value)
+      const summary = onboardingSummary(quotaFeedback.value, operationErrors.value)
       await nextTick()
       finishOnboarding(summary.text, summary.tone)
       closing.value = true
       return
     }
     await updateSettings({ ...current, onboarding_completed: true })
-    const summary = feedback.value.length ? onboardingSummary(feedback.value) : { text: '', tone: 'success' as const }
+    const summary = operationErrors.value.length || quotaFeedback.value.length ? onboardingSummary(quotaFeedback.value, operationErrors.value) : { text: '', tone: 'success' as const }
     finishOnboarding(summary.text, summary.tone)
     closing.value = true
   } catch (cause) {
@@ -360,17 +364,17 @@ onUnmounted(() => {
             <template v-if="step === 1">
               <span class="onboarding-badge success"><ShieldCheck :size="22" :stroke-width="2" aria-hidden="true" /></span>
               <h2 id="onboarding-title">{{ stepTitle }}</h2>
-              <p id="onboarding-lead" class="onboarding-lead">token-audit 读取 AI 编程工具存放在本机的日志，帮你看清额度余量、消耗去向与节省空间。</p>
+              <p id="onboarding-lead" class="onboarding-lead">{{ t.onboarding.lead }}</p>
               <ul class="onboarding-checks">
-                <li v-for="item in CHECKS" :key="item"><CircleCheck :size="18" aria-hidden="true" />{{ item }}</li>
+                <li v-for="item in checks" :key="item"><CircleCheck :size="18" aria-hidden="true" />{{ item }}</li>
               </ul>
             </template>
 
             <template v-else-if="step === 2">
               <span class="onboarding-badge primary"><Database :size="22" :stroke-width="2" aria-hidden="true" /></span>
               <h2 id="onboarding-title">{{ stepTitle }}</h2>
-              <p v-if="detecting && !tools" class="onboarding-status">正在检测本机日志</p>
-              <p v-else-if="detectError && !tools" class="onboarding-error">{{ detectError }} <button type="button" class="onboarding-text" @click="loadTools">重试</button></p>
+              <p v-if="detecting && !tools" class="onboarding-status">{{ t.onboarding.detecting }}</p>
+              <p v-else-if="detectError && !tools" class="onboarding-error">{{ detectError }} <button type="button" class="onboarding-text" @click="loadTools">{{ t.common.retry }}</button></p>
               <ul v-else class="onboarding-tools">
                 <li v-for="row in rows" :key="row.source" class="onboarding-tool">
                   <span class="onboarding-logo"><img v-if="row.logo === 'claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else-if="row.logo === 'codex'" /><Bot v-else :size="18" aria-hidden="true" /></span>
@@ -382,32 +386,32 @@ onUnmounted(() => {
                   <span class="origin-pill settings-pill" :class="row.pill.tone === 'success' ? 'pill-success' : 'pill-neutral'"><i />{{ row.pill.text }}</span>
                 </li>
               </ul>
-              <p class="onboarding-footnote"><Info :size="15" aria-hidden="true" />网页版和桌面端的聊天不计入统计。</p>
+              <p class="onboarding-footnote"><Info :size="15" aria-hidden="true" />{{ t.onboarding.chatsExcluded }}</p>
             </template>
 
             <template v-else-if="step === REMINDER_STEP">
               <span class="onboarding-badge primary"><BellRing :size="22" :stroke-width="2" aria-hidden="true" /></span>
               <h2 id="onboarding-title">{{ stepTitle }}</h2>
-              <p class="onboarding-lead">关闭窗口后留在{{ place }}，发现费额度的用法就提醒你。</p>
+              <p class="onboarding-lead">{{ t.onboarding.remindersLead(place) }}</p>
               <div class="onboarding-choices">
                 <div class="onboarding-choice">
                   <div class="onboarding-choice-main">
-                    <strong>省额度提醒</strong>
-                    <p>同一问题只提醒一次。</p>
+                    <strong>{{ t.onboarding.alertsTitle }}</strong>
+                    <p>{{ t.onboarding.alertsDesc }}</p>
                   </div>
-                  <Toggle :checked="reminders.notifications" :disabled="busy" label="省额度提醒" @toggle="toggleReminder('notifications')" />
+                  <Toggle :checked="reminders.notifications" :disabled="busy" :label="t.onboarding.alertsTitle" @toggle="toggleReminder('notifications')" />
                 </div>
                 <div class="onboarding-choice">
                   <div class="onboarding-choice-main">
-                    <strong>开机自动启动</strong>
-                    <p>登录后在{{ place }}静默运行。</p>
-                    <p v-if="!autostartAvailable" class="onboarding-hint">开发版不可用，请在打包后的应用里开启</p>
+                    <strong>{{ t.onboarding.autostartTitle }}</strong>
+                    <p>{{ t.onboarding.autostartDesc(place) }}</p>
+                    <p v-if="!autostartAvailable" class="onboarding-hint">{{ t.onboarding.autostartDev }}</p>
                   </div>
-                  <Toggle :checked="reminders.autostart && autostartAvailable" :disabled="busy || !autostartAvailable" label="开机自动启动" @toggle="toggleReminder('autostart')" />
+                  <Toggle :checked="reminders.autostart && autostartAvailable" :disabled="busy || !autostartAvailable" :label="t.onboarding.autostartTitle" @toggle="toggleReminder('autostart')" />
                 </div>
               </div>
               <section class="onboarding-plan onboarding-notify" aria-live="polite">
-                <h3>系统通知</h3>
+                <h3>{{ t.onboarding.systemNotifications }}</h3>
                 <div class="onboarding-notify-row">
                   <span class="onboarding-notify-status" :class="`notify-${notifyLine.tone}`"><i aria-hidden="true" />{{ notifyLine.text }}</span>
                 </div>
@@ -417,9 +421,9 @@ onUnmounted(() => {
             <template v-else>
               <span class="onboarding-badge warning"><Zap :size="22" :stroke-width="2" aria-hidden="true" /></span>
               <h2 id="onboarding-title">{{ stepTitle }}</h2>
-              <p class="onboarding-lead">建议全部开启，额度最准确。也可以不开启，额度会显示为“暂无数据”，用量统计不受影响。</p>
+              <p class="onboarding-lead">{{ t.onboarding.sourcesLead }}</p>
               <div class="onboarding-choices">
-                <div v-for="item in QUOTA_SOURCES" :key="item.key" class="onboarding-choice">
+                <div v-for="item in quotaChoices" :key="item.key" class="onboarding-choice">
                   <div class="onboarding-choice-main">
                     <strong>{{ item.title }}</strong>
                     <p>{{ item.description }}</p>
@@ -428,8 +432,9 @@ onUnmounted(() => {
                   <Toggle :checked="selection[item.key]" :disabled="busy" :label="item.title" @toggle="toggle(item.key)" />
                 </div>
               </div>
-              <section v-if="feedback.length || planError || actionError" class="onboarding-plan" aria-live="polite">
+              <section v-if="feedback.length || quotaFeedback.length || planError || actionError" class="onboarding-plan" aria-live="polite">
                 <p v-for="(line, index) in feedback" :key="`done-${index}`" class="onboarding-outcome">{{ line }}</p>
+                <p v-for="(line, index) in quotaFeedback" :key="`quota-${index}`" class="onboarding-outcome">{{ line.text }}</p>
                 <p v-if="planError" class="onboarding-error">{{ planError }}</p>
                 <p v-if="actionError" class="onboarding-error">{{ actionError }}</p>
               </section>
@@ -439,14 +444,14 @@ onUnmounted(() => {
       </div>
 
       <footer ref="footer" class="onboarding-footer">
-        <div class="onboarding-steps" :aria-label="`第 ${step} 步，共 ${STEPS} 步`">
+        <div class="onboarding-steps" :aria-label="t.onboarding.stepOf(step, STEPS)">
           <span v-for="index in STEPS" :key="index" :aria-current="index === step ? 'step' : undefined" />
         </div>
         <div class="onboarding-actions">
-          <button v-if="step > 1" type="button" class="onboarding-text" :disabled="busy || transitioning" @click="changeStep(-1)">上一步</button>
-          <button v-if="step === STEPS" type="button" class="onboarding-text" :disabled="busy || transitioning" @click="skip">暂不开启</button>
+          <button v-if="step > 1" type="button" class="onboarding-text" :disabled="busy || transitioning" @click="changeStep(-1)">{{ t.onboarding.back }}</button>
+          <button v-if="step === STEPS" type="button" class="onboarding-text" :disabled="busy || transitioning" @click="skip">{{ t.onboarding.skip }}</button>
           <button type="button" class="onboarding-primary" :class="{ 'onboarding-primary-wide': step === STEPS }" :disabled="nextDisabled" :aria-busy="finishing" @click="next">
-            <template v-if="finishing"><LoaderCircle class="onboarding-spinner" :size="16" aria-hidden="true" />正在开启…</template>
+            <template v-if="finishing"><LoaderCircle class="onboarding-spinner" :size="16" aria-hidden="true" />{{ t.onboarding.enabling }}</template>
             <template v-else>{{ primaryLabel }}</template>
           </button>
         </div>

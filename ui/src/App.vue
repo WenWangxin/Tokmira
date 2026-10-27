@@ -9,10 +9,18 @@ import ToastHost from './components/ToastHost.vue'
 import { showToast } from './toast'
 import { previewOnboardingForced } from './onboardingLogic'
 import { onboardingOpen, openOnboarding } from './onboardingState'
-import { settingsRevision, startRealtime } from './realtime'
+import { lastQuotaResult, settingsRevision, startRealtime, usageRevision } from './realtime'
+import { invalidatePageCache } from './pageCache'
 import { pages } from './router'
+import { applyLanguage, locale, m, messages } from './i18n/index.ts'
 
 const icons = [LayoutDashboard, ChartColumn, Lightbulb, List, Settings2]
+const t = messages
+watch(locale, () => {
+  lastQuotaResult.value = null
+  invalidatePageCache('usageDetail')
+  usageRevision.value += 1
+})
 // On macOS the window uses an overlay title bar, so the traffic lights sit on
 // top of the sidebar. The browser preview on a Mac mimics the same layout.
 const macOverlay = /Mac/.test(navigator.userAgent) && ('__TAURI_INTERNALS__' in window || import.meta.env.DEV)
@@ -132,17 +140,17 @@ const stopRealtime = '__TAURI_INTERNALS__' in window
   : undefined
 // Background reminders arrive here instead of the system while the window has focus.
 const stopAlerts = '__TAURI_INTERNALS__' in window
-  ? listen<AdviceAlert>('advice-alert', event => { showToast(`${event.payload.title}：${event.payload.body}`, 'warning', 10_000) })
+  ? listen<AdviceAlert>('advice-alert', event => { showToast(m().app.alert(event.payload.title, event.payload.body), 'warning', 10_000) })
   : undefined
 // A new version found by the automatic check while the window is in front.
 const stopUpdates = '__TAURI_INTERNALS__' in window
-  ? listen<UpdateInfo>('update-available', event => { showToast(`token-audit ${event.payload.version} 可以更新了，可在“设置 → 关于与更新”中安装。`, 'info', 10_000) })
+  ? listen<UpdateInfo>('update-available', event => { showToast(m().app.updateAvailable(event.payload.version), 'info', 10_000) })
   : undefined
 const stopNavigate = '__TAURI_INTERNALS__' in window
   ? listen<string>('navigate', event => { void router.push(event.payload) })
   : undefined
 const stopSettings = '__TAURI_INTERNALS__' in window
-  ? listen('settings-changed', () => { settingsRevision.value += 1 })
+  ? listen('settings-changed', () => { settingsRevision.value += 1; void getSettings().then(settings => applyLanguage(settings.language)).catch(() => applyLanguage('system')) })
   : undefined
 onUnmounted(() => { cancelAnimationFrame(indicatorFrame); stopRealtime?.(); void stopAlerts?.then(stop => stop()); void stopUpdates?.then(stop => stop()); void stopNavigate?.then(stop => stop()); void stopSettings?.then(stop => stop()) })
 </script>
@@ -150,21 +158,21 @@ onUnmounted(() => { cancelAnimationFrame(indicatorFrame); stopRealtime?.(); void
 <template>
   <div class="app-shell" :class="{ 'sidebar-expanded': expanded, 'mac-overlay': macOverlay }">
     <div v-if="macOverlay" class="titlebar-drag" data-tauri-drag-region />
-    <aside class="sidebar" aria-label="主导航">
+    <aside class="sidebar" :aria-label="t.app.mainNav">
       <div v-if="macOverlay" class="sidebar-titlebar" data-tauri-drag-region />
       <div class="brand" data-tauri-drag-region>
         <!-- Figma Logo (20:28): 17px gauge with a 2px stroke, so 2 * 24 / 17 in Lucide's 24-unit box. -->
         <span class="brand-icon" aria-hidden="true"><Gauge :size="17" :stroke-width="2 * 24 / 17" /></span>
         <div class="brand-copy">
           <strong class="brand-name">token-audit</strong>
-          <span class="brand-subtitle">本地用量洞察</span>
+          <span class="brand-subtitle">{{ t.app.brandSubtitle }}</span>
         </div>
-        <button type="button" class="sidebar-toggle" :aria-label="expanded ? '收起侧边栏' : '展开侧边栏'" :aria-expanded="expanded" @click="toggleSidebar">
+        <button type="button" class="sidebar-toggle" :aria-label="expanded ? t.app.collapse : t.app.expand" :aria-expanded="expanded" @click="toggleSidebar">
           <PanelLeftClose v-if="expanded" :size="20" :stroke-width="2" aria-hidden="true" />
           <PanelLeftOpen v-else :size="20" :stroke-width="2" aria-hidden="true" />
         </button>
       </div>
-      <nav ref="navigation" class="navigation" aria-label="页面">
+      <nav ref="navigation" class="navigation" :aria-label="t.app.pagesNav">
         <span v-if="indicatorVisible" class="nav-indicator" :style="{ top: indicatorTop + 'px', height: indicatorHeight + 'px' }" aria-hidden="true" />
         <RouterLink
           v-for="(page, index) in pages"
@@ -173,20 +181,20 @@ onUnmounted(() => { cancelAnimationFrame(indicatorFrame); stopRealtime?.(); void
           class="nav-item"
           :class="{ 'nav-item-active': route.path === page.path }"
           :aria-current="route.path === page.path ? 'page' : undefined"
-          :title="expanded ? undefined : page.title"
+          :title="expanded ? undefined : t.pages[page.key].title"
         >
           <span class="nav-row">
             <span class="nav-icon"><component :is="icons[index]" :size="20" :stroke-width="2" aria-hidden="true" /></span>
-            <span class="nav-label">{{ page.title }}</span>
+            <span class="nav-label">{{ t.pages[page.key].title }}</span>
           </span>
         </RouterLink>
       </nav>
 
-      <div class="privacy-card" :title="expanded ? undefined : '数据仅存于本机 · 零网络请求'">
+      <div class="privacy-card" :title="expanded ? undefined : t.app.privacyTooltip">
         <span class="privacy-icon"><ShieldCheck :size="24" :stroke-width="2" aria-hidden="true" /></span>
         <span class="privacy-copy">
-          <strong>数据仅存于本机</strong>
-          <span>零网络请求</span>
+          <strong>{{ t.app.privacyTitle }}</strong>
+          <span>{{ t.app.privacySub }}</span>
         </span>
       </div>
     </aside>

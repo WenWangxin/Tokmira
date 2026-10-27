@@ -34,12 +34,12 @@ test('authorization, failures and switched-off sources', () => {
     ...base,
     claudeNeedsAuthorization: true,
     codexOfficialEnabled: false,
-    lastResult: { claude: '需要授权', codex: '未开启' },
+    lastResult: { claude: { state: 'needs_authorization', message: '' }, codex: { state: 'off', message: '' } },
   }))
   assert.deepEqual([rows.claudeOfficial.tone, rows.claudeOfficial.action], ['warning', 'authorize'])
   assert.deepEqual([rows.codexOfficial.status, rows.codexOfficial.action], ['未开启', 'settings'])
 
-  const failed = byKey(sourceRows({ ...base, lastResult: { claude: '无法连接 Anthropic', codex: '60 秒内已查询' } }))
+  const failed = byKey(sourceRows({ ...base, lastResult: { claude: { state: 'error', message: '无法连接 Anthropic' }, codex: { state: 'recent', message: '' } } }))
   assert.deepEqual([failed.claudeOfficial.status, failed.claudeOfficial.tone], ['无法连接 Anthropic', 'warning'])
   assert.equal(failed.codexOfficial.tone, 'ok')
   assert.equal(overallTone(Object.values(failed), ''), 'warning')

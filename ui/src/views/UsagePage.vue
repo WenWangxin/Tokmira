@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { clock, compactText, messages, m, monthDay } from '../i18n/index.ts'
+const t = messages
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Cpu, Folder, GitFork, List, Zap, Database, CircleAlert } from 'lucide-vue-next'
@@ -37,12 +39,12 @@ watch([tool, dimension], () => {
   pageSelection.usage.tool = tool.value
   pageSelection.usage.dimension = dimension.value
 })
-const dimensions = [
-  { key: 'sessions', name: '会话', icon: List },
-  { key: 'projects', name: '项目', icon: Folder },
-  { key: 'models', name: '模型', icon: Cpu },
-  { key: 'subagents', name: '子代理', icon: GitFork },
-] as const
+const dimensions = computed(() => [
+  { key: 'sessions', name: m().usage.dimSessions, icon: List },
+  { key: 'projects', name: m().usage.dimProjects, icon: Folder },
+  { key: 'models', name: m().usage.dimModels, icon: Cpu },
+  { key: 'subagents', name: m().usage.dimSubagents, icon: GitFork },
+] as const)
 
 async function load(quiet = false) {
   if (!quiet && !cachedWindows) {
@@ -136,36 +138,35 @@ const rows = computed<UsageRank[]>(() => detail.value?.[dimension.value] ?? [])
 const visibleRows = computed(() => rows.value.slice(0, 8))
 const topPrompts = computed(() => detail.value?.high_prompts.slice(0, 6) ?? [])
 const maxDelta = computed(() => Math.max(0, ...rows.value.map(row => row.delta)))
-const toTime = (value: string) => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-const toDay = (value: string) => { const date = new Date(value); return `${date.getMonth() + 1}/${date.getDate()}` }
+const toTime = (value: string) => clock(value)
+const toDay = (value: string) => monthDay(value)
 function windowLabel(window: UsageWindowRef) {
-  if (window.kind === 'Weekly') return '本周'
-  if (window.is_current) return '当前'
+  if (window.kind === 'Weekly') return m().usage.windowWeekly
+  if (window.is_current) return m().usage.windowCurrent
   const day = new Date(window.start).toDateString()
-  if (day === new Date().toDateString()) return '今天'
+  if (day === new Date().toDateString()) return m().usage.today
   const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
-  return day === yesterday.toDateString() ? '昨天' : toDay(window.start)
+  return day === yesterday.toDateString() ? m().usage.yesterday : toDay(window.start)
 }
 const windowTimes = (window: UsageWindowRef) => window.kind === 'Weekly'
   ? `${toDay(window.start)}–${toDay(window.end)}` : `${toTime(window.start)}–${toTime(window.end)}`
 const percent = (value: number) => `${value.toFixed(1)}%`
-const tokens = (value: number) => value >= 100_000_000 ? `${Number((value / 100_000_000).toFixed(1))} 亿`
-  : value >= 10_000 ? `${Number((value / 10_000).toFixed(1))} 万` : value.toLocaleString('zh-CN')
+const tokens = (value: number) => compactText(value)
 const originText = computed(() => {
   const origin = detail.value?.origin
-  if (origin === 'Official') return tool.value === 'Claude' ? '官方数据 · 官方查询' : '官方数据 · 本地接口'
-  if (origin === 'Statusline') return '官方数据 · 状态栏'
-  if (origin === 'Log') return '官方数据 · 日志'
-  if (origin === 'Manual') return '手动校准'
-  return '估算'
+  if (origin === 'Official') return tool.value === 'Claude' ? m().origin.claudeOfficial : m().origin.codexOfficial
+  if (origin === 'Statusline') return m().origin.statusline
+  if (origin === 'Log') return m().origin.log
+  if (origin === 'Manual') return m().origin.manual
+  return m().origin.estimated
 })
 const chartSegments = computed(() => {
   if (!detail.value) return []
   const sessions = detail.value.sessions
   const parts = sessions.slice(0, 4).map((item, index) => ({ name: item.name, value: item.delta, level: index }))
   const other = sessions.slice(4).reduce((sum, item) => sum + item.delta, 0)
-  if (other > 0) parts.push({ name: '其他会话', value: other, level: 4 })
-  if (detail.value.unattributed_total > 0) parts.push({ name: '未归属', value: detail.value.unattributed_total, level: 5 })
+  if (other > 0) parts.push({ name: m().usage.otherSessions, value: other, level: 4 })
+  if (detail.value.unattributed_total > 0) parts.push({ name: m().usage.unattributed, value: detail.value.unattributed_total, level: 5 })
   return parts
 })
 const chartWidth = (value: number) => `${Math.max(0, Math.min(100, value))}%`
@@ -176,8 +177,8 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
 <template>
   <div class="dashboard-page usage-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
     <header class="dashboard-header">
-      <div><h1>用量明细</h1><p>逐一追溯额度去向，精确到会话与单条提示</p></div>
-      <div v-selection-slide class="usage-tool-switch" aria-label="选择工具">
+      <div><h1>{{ t.pages.usage.title }}</h1><p>{{ t.pages.usage.subtitle }}</p></div>
+      <div v-selection-slide class="usage-tool-switch" :aria-label="t.usage.selectTool">
         <button v-for="item in (['Claude', 'Codex'] as const)" :key="item" :class="{ active: tool === item }" :disabled="!windows[item].length" :aria-pressed="tool === item" @click="selectTool(item)">
           <img v-if="item === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else />{{ item }}
         </button>
@@ -185,33 +186,33 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
     </header>
     <PageSkeleton v-if="pending && loading" kind="usage" />
     <div v-else-if="pending" class="page-await" />
-    <div v-else-if="error && !selected" class="center-state"><CircleAlert :size="28" /><strong>读取用量数据失败</strong><p>{{ error }}</p><button @click="load()">重试</button></div>
-    <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>暂无 {{ tool }} 额度数据</strong><p>开启官方额度查询或安装状态栏记录器后，即可按会话和提示追溯额度。</p><button @click="router.push('/settings')">前往设置</button></div>
+    <div v-else-if="error && !selected" class="center-state"><CircleAlert :size="28" /><strong>{{ t.usage.loadFailed }}</strong><p>{{ error }}</p><button @click="load()">{{ t.common.retry }}</button></div>
+    <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>{{ t.usage.noData(tool) }}</strong><p>{{ t.usage.noDataBody }}</p><button @click="router.push('/settings')">{{ t.usage.goSettings }}</button></div>
     <template v-else>
-      <nav class="usage-window-list" aria-label="额度窗口">
+      <nav class="usage-window-list" :aria-label="t.usage.windows">
         <button v-for="window in windows[tool]" :key="`${window.kind}-${window.window_id}`" :class="{ active: selected?.kind === window.kind && selected?.window_id === window.window_id }" :aria-current="selected?.window_id === window.window_id ? 'true' : undefined" @click="selectWindow(window)">
           <strong>{{ windowLabel(window) }}</strong><span>{{ windowTimes(window) }}</span>
         </button>
       </nav>
       <PageSkeleton v-if="detailPending && detailLoading" kind="usageDetail" />
       <div v-else-if="detailPending" class="page-await" />
-      <div v-else-if="error && !detail" class="center-state"><CircleAlert :size="28" /><strong>生成窗口明细失败</strong><p>{{ error }}</p><button @click="selectWindow(selected)">重试</button></div>
+      <div v-else-if="error && !detail" class="center-state"><CircleAlert :size="28" /><strong>{{ t.usage.detailFailed }}</strong><p>{{ error }}</p><button @click="selectWindow(selected)">{{ t.common.retry }}</button></div>
       <template v-else-if="detail">
-        <section class="card usage-overview content-reveal" aria-label="窗口概览">
-          <div class="usage-overview-top"><div class="usage-overview-main"><span>本窗口已用</span><strong>{{ percent(detail.used_percent) }}</strong><span class="origin-pill" :class="detail.origin === 'Manual' ? 'pill-warning' : detail.origin === 'Estimated' ? 'pill-neutral' : 'pill-success'">{{ originText }}</span></div><span class="usage-reset">{{ selected?.is_current ? `剩余 ${percent(detail.remaining_percent)}` : '已结束' }} · {{ toTime(detail.resets_at) }} 重置</span></div>
-          <div class="usage-bar" role="img" :aria-label="`已用 ${percent(detail.used_percent)}，已归属 ${percent(detail.attributed_total)}，未归属 ${percent(detail.unattributed_total)}`"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`" :class="`usage-segment usage-level-${part.level}`" :style="{ width: barsReady ? chartWidth(part.value) : '0%' }" /><span class="usage-remainder" :style="{ width: barsReady ? chartWidth(detail.remaining_percent) : '0%' }" /></div>
+        <section class="card usage-overview content-reveal" :aria-label="t.usage.overview">
+          <div class="usage-overview-top"><div class="usage-overview-main"><span>{{ t.usage.windowUsed }}</span><strong>{{ percent(detail.used_percent) }}</strong><span class="origin-pill" :class="detail.origin === 'Manual' ? 'pill-warning' : detail.origin === 'Estimated' ? 'pill-neutral' : 'pill-success'">{{ originText }}</span></div><span class="usage-reset">{{ selected?.is_current ? t.usage.remaining(percent(detail.remaining_percent)) : t.usage.ended }} · {{ t.usage.resetsAt(toTime(detail.resets_at)) }}</span></div>
+          <div class="usage-bar" role="img" :aria-label="t.usage.barLabel(percent(detail.used_percent), percent(detail.attributed_total), percent(detail.unattributed_total))"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`" :class="`usage-segment usage-level-${part.level}`" :style="{ width: barsReady ? chartWidth(part.value) : '0%' }" /><span class="usage-remainder" :style="{ width: barsReady ? chartWidth(detail.remaining_percent) : '0%' }" /></div>
           <div class="usage-legend"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`"><i :class="`usage-level-${part.level}`" />{{ part.name }} {{ percent(part.value) }}</span></div>
-          <p v-if="breakdown" class="usage-breakdown">官方本周占比：{{ breakdown }}</p>
-          <p class="usage-note">{{ breakdown ? '本机日志只覆盖 Claude Code；聊天和 Cowork 的部分以官方占比为准。' : '“未归属”指官方额度中无法与本机日志对应的部分，例如同一账号在其他设备上的使用。网页与桌面端聊天不在统计范围内。' }}</p>
+          <p v-if="breakdown" class="usage-breakdown">{{ t.usage.officialBreakdown(breakdown) }}</p>
+          <p class="usage-note">{{ breakdown ? t.usage.noteWithBreakdown : t.usage.noteUnattributed }}</p>
         </section>
         <div class="usage-grid content-reveal">
-          <section class="card usage-ranking" aria-label="用量排行"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><List :size="17" /></span><strong>用量排行</strong></div><div v-selection-slide class="segmented"><button v-for="item in dimensions" :key="item.key" :class="{ active: dimension === item.key }" :aria-pressed="dimension === item.key" @click="dimension = item.key"><component :is="item.icon" :size="16" />{{ item.name }}</button></div></div>
-            <template v-if="visibleRows.length"><div v-for="row in visibleRows" :key="row.key" class="usage-rank-row"><div class="usage-rank-name"><strong :title="row.name">{{ row.name }}</strong><small>{{ row.subtitle }}</small></div><div class="usage-rank-track"><span :style="{ width: barsReady ? `${maxDelta ? Math.max(0, row.delta / maxDelta * 100) : 0}%` : '0%' }" /></div><span class="usage-rank-tokens">{{ tokens(row.tokens) }}</span><strong class="usage-rank-delta">{{ percent(row.delta) }}</strong></div><p v-if="rows.length > 8" class="usage-more">还有 {{ rows.length - 8 }} 项</p></template>
-            <p v-else class="table-empty">本窗口内没有本机请求，增量全部计为未归属。</p>
+          <section class="card usage-ranking" :aria-label="t.usage.ranking"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><List :size="17" /></span><strong>{{ t.usage.ranking }}</strong></div><div v-selection-slide class="segmented"><button v-for="item in dimensions" :key="item.key" :class="{ active: dimension === item.key }" :aria-pressed="dimension === item.key" @click="dimension = item.key"><component :is="item.icon" :size="16" />{{ item.name }}</button></div></div>
+            <template v-if="visibleRows.length"><div v-for="row in visibleRows" :key="row.key" class="usage-rank-row"><div class="usage-rank-name"><strong :title="row.name">{{ row.name }}</strong><small>{{ row.subtitle }}</small></div><div class="usage-rank-track"><span :style="{ width: barsReady ? `${maxDelta ? Math.max(0, row.delta / maxDelta * 100) : 0}%` : '0%' }" /></div><span class="usage-rank-tokens">{{ tokens(row.tokens) }}</span><strong class="usage-rank-delta">{{ percent(row.delta) }}</strong></div><p v-if="rows.length > 8" class="usage-more">{{ t.usage.more(rows.length - 8) }}</p></template>
+            <p v-else class="table-empty">{{ t.usage.noLocalRequests }}</p>
           </section>
-          <section class="card usage-prompts" aria-label="高耗提示"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><Zap :size="17" /></span><strong>高耗提示</strong></div><small>不记录内容</small></div>
+          <section class="card usage-prompts" :aria-label="t.usage.highPrompts"><div class="card-heading"><div class="heading-title"><span class="metric-icon"><Zap :size="17" /></span><strong>{{ t.usage.highPrompts }}</strong></div><small>{{ t.usage.noContent }}</small></div>
             <template v-if="topPrompts.length"><button v-for="prompt in topPrompts" :key="`${prompt.session_id}-${prompt.at}`" class="usage-prompt-row" @click="router.push({ path: '/sessions', query: { tool, id: prompt.session_id } })"><span class="usage-prompt-info"><small>{{ toTime(prompt.at) }}</small><strong :title="prompt.title">{{ prompt.title }}</strong><span v-if="tagFor(prompt.session_id, prompt.at)" class="advice-tag usage-prompt-tag" :class="tagFor(prompt.session_id, prompt.at)?.severity === 'Error' ? 'pill-error' : 'pill-warning'">{{ tagFor(prompt.session_id, prompt.at)?.tag }}</span></span><strong class="usage-prompt-delta">+{{ percent(prompt.delta) }}</strong></button></template>
-            <p v-else class="table-empty">{{ detail.sessions.length ? '暂无可关联的提示记录。' : '本窗口内没有本机请求，增量全部计为未归属。' }}</p>
+            <p v-else class="table-empty">{{ detail.sessions.length ? t.usage.noPrompts : t.usage.noLocalRequests }}</p>
           </section>
         </div>
       </template>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { messages, m } from '../i18n/index.ts'
+const t = messages
 import { onMounted, onUnmounted, ref } from 'vue'
 
 withDefaults(defineProps<{
@@ -7,7 +9,7 @@ withDefaults(defineProps<{
   danger?: boolean
   busy?: boolean
 }>(), {
-  confirmLabel: '确认',
+  confirmLabel: m().common.confirm,
   danger: false,
   busy: false,
 })
@@ -32,7 +34,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
       <h2 id="confirm-dialog-title">{{ title }}</h2>
       <div class="confirm-body"><slot /></div>
       <div class="confirm-actions">
-        <button type="button" class="confirm-cancel" :disabled="busy" @click="emit('cancel')">取消</button>
+        <button type="button" class="confirm-cancel" :disabled="busy" @click="emit('cancel')">{{ t.common.cancel }}</button>
         <button type="button" class="confirm-ok" :class="{ danger }" :disabled="busy" @click="emit('confirm')">{{ confirmLabel }}</button>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { getSettings } from './api'
 import { applyTheme } from './settingsLogic'
+import { applyLanguage } from './i18n/index.ts'
 import App from './App.vue'
 import router from './router'
 import './styles/tokens.css'
@@ -17,9 +18,12 @@ import './styles/toast.css'
 
 async function boot() {
   try {
-    applyTheme((await getSettings()).theme)
+    const settings = await getSettings()
+    applyTheme(settings.theme)
+    applyLanguage(settings.language)
   } catch {
     // Keep the system theme when settings cannot be read at startup.
+    applyLanguage('system')
   }
   createApp(App).use(router).mount('#app')
 }

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { formatInteger, messages, m } from '../i18n/index.ts'
+const t = messages
 import { showToast } from '../toast'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -95,62 +97,60 @@ const usd = (value: number) => `$${value.toFixed(2)}`
 /** "额外消耗 4.1% 周额度" for avoidable waste, "消耗 …" for necessary overhead. */
 function impact(item: AdviceItem) {
   if (!item.avoidable && item.overhead_cost_usd === 0) {
-    return item.overhead_tokens ? `涉及 ${item.overhead_tokens.toLocaleString()} token` : item.sessions === 0 ? '额度与套餐参考' : '用量提醒'
+    return item.overhead_tokens ? m().advice.impactTokens(formatInteger(item.overhead_tokens)) : item.sessions === 0 ? m().advice.impactPlan : m().advice.impactUsage
   }
-  const verb = item.avoidable ? '额外消耗' : '消耗'
-  return item.consumed_weekly_pct !== null
-    ? `${verb} ${pct(item.consumed_weekly_pct)} 周额度`
-    : `${verb}约 ${usd(item.overhead_cost_usd)}`
+  if (item.consumed_weekly_pct !== null) return item.avoidable ? m().advice.impactExtraWeekly(pct(item.consumed_weekly_pct)) : m().advice.impactWeekly(pct(item.consumed_weekly_pct))
+  return item.avoidable ? m().advice.impactExtraCost(usd(item.overhead_cost_usd)) : m().advice.impactCost(usd(item.overhead_cost_usd))
 }
 </script>
 
 <template>
   <div class="dashboard-page advice-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
     <header class="dashboard-header">
-      <div><h1>省额度建议</h1><p>基于近 {{ period }} 天日志识别的额度浪费，附影响程度与改进方法</p></div>
+      <div><h1>{{ t.pages.advice.title }}</h1><p>{{ t.advice.subtitle(period) }}</p></div>
       <div class="advice-head-controls">
-        <div v-selection-slide class="usage-tool-switch" aria-label="选择工具">
+        <div v-selection-slide class="usage-tool-switch" :aria-label="t.advice.selectTool">
           <button v-for="item in (['Claude', 'Codex'] as const)" :key="item" :class="{ active: tool === item }" :disabled="!available(item)" :aria-pressed="tool === item" @click="tool = item">
             <img v-if="item === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else />{{ item }}
           </button>
         </div>
-        <div v-selection-slide class="segmented advice-period" aria-label="统计范围">
-          <button :class="{ active: period === 7 }" :aria-pressed="period === 7" @click="selectPeriod(7)">最近 7 天</button>
-          <button :class="{ active: period === 30 }" :aria-pressed="period === 30" @click="selectPeriod(30)">最近 30 天</button>
+        <div v-selection-slide class="segmented advice-period" :aria-label="t.advice.period">
+          <button :class="{ active: period === 7 }" :aria-pressed="period === 7" @click="selectPeriod(7)">{{ t.advice.last7 }}</button>
+          <button :class="{ active: period === 30 }" :aria-pressed="period === 30" @click="selectPeriod(30)">{{ t.advice.last30 }}</button>
         </div>
       </div>
     </header>
 
     <PageSkeleton v-if="pending && loading" kind="advice" />
     <div v-else-if="pending" class="page-await" />
-    <div v-else-if="error && !report" class="center-state"><CircleAlert :size="28" /><strong>生成建议失败</strong><p>{{ error }}</p><button @click="load()">重试</button></div>
-    <div v-else-if="!current" class="center-state"><Lightbulb :size="28" /><strong>近 {{ period }} 天没有 {{ tool }} 的本地用量</strong></div>
+    <div v-else-if="error && !report" class="center-state"><CircleAlert :size="28" /><strong>{{ t.advice.loadFailed }}</strong><p>{{ error }}</p><button @click="load()">{{ t.common.retry }}</button></div>
+    <div v-else-if="!current" class="center-state"><Lightbulb :size="28" /><strong>{{ t.advice.noUsage(period, tool) }}</strong></div>
     <template v-else>
-      <section class="advice-summary content-reveal" aria-label="建议汇总">
+      <section class="advice-summary content-reveal" :aria-label="t.advice.summary">
         <article class="card advice-stat">
           <span class="advice-stat-icon"><Coins :size="20" /></span>
           <div>
-            <small>预计节省</small>
-            <p v-if="current.summary.avoidable_cost_usd === 0 && !current.summary.avoidable_weekly_pct"><strong class="advice-saving">—</strong><span>暂无可量化结果</span></p>
-            <p v-else-if="current.summary.avoidable_weekly_pct !== null"><strong class="advice-saving"><AnimatedNumber :initial-animation="reveal" :value="current.summary.avoidable_weekly_pct.toFixed(1)" /></strong><span>% 周额度</span></p>
-            <p v-else><strong class="advice-saving"><AnimatedNumber :initial-animation="reveal" :value="usd(current.summary.avoidable_cost_usd)" /></strong><span>API 等价</span></p>
+            <small>{{ t.advice.expectedSaving }}</small>
+            <p v-if="current.summary.avoidable_cost_usd === 0 && !current.summary.avoidable_weekly_pct"><strong class="advice-saving">—</strong><span>{{ t.advice.notQuantified }}</span></p>
+            <p v-else-if="current.summary.avoidable_weekly_pct !== null"><strong class="advice-saving"><AnimatedNumber :initial-animation="reveal" :value="current.summary.avoidable_weekly_pct.toFixed(1)" /></strong><span>{{ t.advice.weeklyPctUnit }}</span></p>
+            <p v-else><strong class="advice-saving"><AnimatedNumber :initial-animation="reveal" :value="usd(current.summary.avoidable_cost_usd)" /></strong><span>{{ t.common.apiEquivalent }}</span></p>
           </div>
         </article>
         <article class="card advice-stat">
           <span class="advice-stat-icon"><Lightbulb :size="20" /></span>
-          <div><small>识别出</small><p><strong>{{ current.summary.count }}</strong><span>项可优化</span></p></div>
+          <div><small>{{ t.advice.identified }}</small><p><strong>{{ current.summary.count }}</strong><span>{{ t.advice.optimizable }}</span></p></div>
         </article>
         <article class="card advice-stat">
           <span class="advice-stat-icon"><List :size="20" /></span>
-          <div v-if="current.summary.sessions"><small>涉及</small><p><strong>{{ current.summary.sessions }}</strong><span>个会话</span></p></div>
-          <div v-else><small>依据</small><p><strong>额度</strong><span>状态</span></p></div>
+          <div v-if="current.summary.sessions"><small>{{ t.advice.involves }}</small><p><strong>{{ current.summary.sessions }}</strong><span>{{ t.advice.sessionsUnit(current.summary.sessions) }}</span></p></div>
+          <div v-else><small>{{ t.advice.basis }}</small><p><strong>{{ t.advice.basisQuota }}</strong><span>{{ t.advice.basisStatus }}</span></p></div>
         </article>
       </section>
 
       <div v-if="!current.items.length" class="center-state advice-none">
         <Lightbulb :size="28" />
-        <strong>近 {{ period }} 天没有发现明显的额度浪费</strong>
-        <p v-if="current.hidden">已隐藏 {{ current.hidden }} 条，可在设置中恢复</p>
+        <strong>{{ t.advice.noneFound(period) }}</strong>
+        <p v-if="current.hidden">{{ t.advice.hiddenRestore(current.hidden) }}</p>
       </div>
       <TransitionGroup name="advice-list" tag="div" class="advice-items content-reveal">
       <article v-for="item in current.items" :key="item.key" class="card advice-item">
@@ -166,14 +166,14 @@ function impact(item: AdviceItem) {
           <p class="advice-description">{{ item.description }}</p>
           <div class="advice-actions">
             <a v-if="item.link" class="advice-link" :href="item.link.url" target="_blank" rel="noopener noreferrer"><ExternalLink :size="18" />{{ item.link.label }}</a>
-            <button class="advice-dismiss" @click="dismiss(item)">不再提示</button>
-            <small v-if="item.link">外部链接 · 可在配置中修改</small>
+            <button class="advice-dismiss" @click="dismiss(item)">{{ t.advice.dismiss }}</button>
+            <small v-if="item.link">{{ t.advice.externalLink }}</small>
           </div>
         </div>
       </article>
       </TransitionGroup>
-      <p v-if="current.items.length && current.hidden" class="advice-hidden-note">已隐藏 {{ current.hidden }} 条建议，可在<button @click="router.push('/settings')">设置</button>中恢复</p>
-      <p v-if="!current.has_quota_data && current.items.some(item => item.overhead_cost_usd > 0)" class="advice-hidden-note">暂无 {{ tool }} 额度数据，影响程度按 API 等价费用估算。开启官方额度查询或状态栏记录器后可换算为周额度百分比。</p>
+      <p v-if="current.items.length && current.hidden" class="advice-hidden-note">{{ t.advice.hiddenNoteBefore(current.hidden) }}<button @click="router.push('/settings')">{{ t.advice.hiddenNoteLink }}</button>{{ t.advice.hiddenNoteAfter }}</p>
+      <p v-if="!current.has_quota_data && current.items.some(item => item.overhead_cost_usd > 0)" class="advice-hidden-note">{{ t.advice.noQuotaNote(tool) }}</p>
     </template>
   </div>
 </template>
