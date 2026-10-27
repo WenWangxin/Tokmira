@@ -10,6 +10,7 @@ use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IconMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Emitter, Manager};
+use token_audit_core::i18n::Lang;
 use token_audit_core::model::Tool;
 use token_audit_core::settings;
 
@@ -18,6 +19,26 @@ use crate::{login_item, tray_menu, AppState};
 const TOOLS: [Tool; 2] = [Tool::Claude, Tool::Codex];
 /// Enough rows for every tool's 5-hour, weekly and forecast lines.
 const ROWS: usize = 6;
+
+fn fixed_label(id: &str, lang: Lang) -> &'static str {
+    let (zh, en) = match id {
+        "authorization" => ("需要授权，点此打开应用", "Authorization needed · Open app"),
+        "updated" => ("更新于 --:--", "Updated --:--"),
+        "refresh" => ("立即刷新", "Refresh now"),
+        "dashboard" => ("打开仪表盘", "Open dashboard"),
+        "advice" => ("省额度建议", "Savings"),
+        "alerts" => ("省额度提醒", "Savings alerts"),
+        "autostart" => ("开机自动启动", "Open at login"),
+        "silent" => ("静默启动", "Start silently"),
+        "startup-menu" => ("启动方式", "Startup"),
+        "menubar-off" => ("只显示图标", "Icon only"),
+        "menubar-menu" => ("菜单栏显示", "Quota in menu bar"),
+        "settings" => ("设置…", "Settings…"),
+        "quit" => ("退出 token-audit", "Quit token-audit"),
+        _ => unreachable!("unknown fixed menu item: {id}"),
+    };
+    lang.pick(zh, en)
+}
 
 struct TrayState {
     sender: Sender<()>,
@@ -148,6 +169,7 @@ fn gauge() -> tauri::Result<Image<'static>> {
 }
 
 pub fn install(app: &tauri::App) -> tauri::Result<()> {
+    let lang = crate::desktop_lang();
     let headers = TOOLS
         .into_iter()
         .map(|tool| {
@@ -177,29 +199,79 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     let authorization = IconMenuItem::with_id(
         app,
         "authorization",
-        "需要授权，点此打开应用",
+        fixed_label("authorization", lang),
         true,
         Some(indent()),
         None::<&str>,
     )?;
-    let updated = MenuItem::with_id(app, "updated", "更新于 --:--", false, None::<&str>)?;
-    let refresh = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
-    let dashboard = MenuItem::with_id(app, "dashboard", "打开仪表盘", true, None::<&str>)?;
-    let advice = MenuItem::with_id(app, "advice", "省额度建议", true, None::<&str>)?;
-    let alerts = CheckMenuItem::with_id(app, "alerts", "省额度提醒", true, false, None::<&str>)?;
-    let autostart =
-        CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, false, None::<&str>)?;
-    let silent = CheckMenuItem::with_id(app, "silent", "静默启动", true, false, None::<&str>)?;
+    let updated = MenuItem::with_id(
+        app,
+        "updated",
+        fixed_label("updated", lang),
+        false,
+        None::<&str>,
+    )?;
+    let refresh = MenuItem::with_id(
+        app,
+        "refresh",
+        fixed_label("refresh", lang),
+        true,
+        None::<&str>,
+    )?;
+    let dashboard = MenuItem::with_id(
+        app,
+        "dashboard",
+        fixed_label("dashboard", lang),
+        true,
+        None::<&str>,
+    )?;
+    let advice = MenuItem::with_id(
+        app,
+        "advice",
+        fixed_label("advice", lang),
+        true,
+        None::<&str>,
+    )?;
+    let alerts = CheckMenuItem::with_id(
+        app,
+        "alerts",
+        fixed_label("alerts", lang),
+        true,
+        false,
+        None::<&str>,
+    )?;
+    let autostart = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        fixed_label("autostart", lang),
+        true,
+        false,
+        None::<&str>,
+    )?;
+    let silent = CheckMenuItem::with_id(
+        app,
+        "silent",
+        fixed_label("silent", lang),
+        true,
+        false,
+        None::<&str>,
+    )?;
     let startup_submenu = Submenu::with_id_and_items(
         app,
         "startup-menu",
-        "启动方式",
+        fixed_label("startup-menu", lang),
         true,
         &[&autostart, &silent],
     )?;
     #[cfg(target_os = "macos")]
-    let icon_only =
-        CheckMenuItem::with_id(app, "menubar-off", "只显示图标", true, false, None::<&str>)?;
+    let icon_only = CheckMenuItem::with_id(
+        app,
+        "menubar-off",
+        fixed_label("menubar-off", lang),
+        true,
+        false,
+        None::<&str>,
+    )?;
     #[cfg(target_os = "macos")]
     let shown_tools = TOOLS
         .into_iter()
@@ -217,7 +289,8 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
         .collect::<tauri::Result<Vec<_>>>()?;
     #[cfg(target_os = "macos")]
     let mode_submenu = {
-        let submenu = Submenu::with_id(app, "menubar-menu", "菜单栏显示", true)?;
+        let submenu =
+            Submenu::with_id(app, "menubar-menu", fixed_label("menubar-menu", lang), true)?;
         submenu.append(&icon_only)?;
         submenu.append(&PredefinedMenuItem::separator(app)?)?;
         for item in &shown_tools {
@@ -226,8 +299,14 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
         submenu
     };
     let update_item = MenuItem::with_id(app, "update", "", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出 token-audit", true, None::<&str>)?;
+    let settings = MenuItem::with_id(
+        app,
+        "settings",
+        fixed_label("settings", lang),
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", fixed_label("quit", lang), true, None::<&str>)?;
     let tray = TrayIconBuilder::with_id("main")
         .tooltip("token-audit")
         .show_menu_on_left_click(cfg!(target_os = "macos"))
@@ -355,6 +434,9 @@ fn update(app: &AppHandle) {
     let Ok(settings) = settings::read_settings(&state.data_dir) else {
         return;
     };
+    let lang = settings.language.resolve(sys_locale::get_locale);
+    let menu = app.state::<TrayState>();
+    set_fixed_text(&menu, lang);
     let Ok(overview) = crate::overview_sync(&state) else {
         return;
     };
@@ -387,6 +469,7 @@ fn update(app: &AppHandle) {
     .flatten()
     .max();
     let text = tray_menu::format_menu(
+        lang,
         claude,
         codex,
         claude_on,
@@ -396,7 +479,6 @@ fn update(app: &AppHandle) {
         Utc::now(),
         &settings.menu_bar_tools,
     );
-    let menu = app.state::<TrayState>();
     let mut rows = menu.rows.iter();
     let mut counts = Vec::new();
     for (header, section) in menu.headers.iter().zip(&text.sections) {
@@ -412,9 +494,12 @@ fn update(app: &AppHandle) {
     let _ = menu.updated.set_text(&text.updated);
     let update = crate::updates::available(app);
     if let Some(update) = &update {
-        let _ = menu
-            .update
-            .set_text(format!("新版本 {} 可以更新…", update.version));
+        let _ = menu.update.set_text(token_audit_core::tr!(
+            lang,
+            "新版本 {} 可以更新…",
+            "token-audit {} is available…",
+            update.version
+        ));
     }
     let wanted = Layout {
         rows: counts,
@@ -462,6 +547,30 @@ fn update(app: &AppHandle) {
     let _ = menu.tray.set_tooltip(Some(text.tooltip.as_str()));
 }
 
+fn set_fixed_text(menu: &TrayState, lang: Lang) {
+    let _ = menu
+        .authorization
+        .set_text(fixed_label("authorization", lang));
+    let _ = menu.refresh.set_text(fixed_label("refresh", lang));
+    let _ = menu.dashboard.set_text(fixed_label("dashboard", lang));
+    let _ = menu.advice.set_text(fixed_label("advice", lang));
+    let _ = menu.alerts.set_text(fixed_label("alerts", lang));
+    let _ = menu.autostart.set_text(fixed_label("autostart", lang));
+    let _ = menu.silent.set_text(fixed_label("silent", lang));
+    let _ = menu
+        .startup_submenu
+        .set_text(fixed_label("startup-menu", lang));
+    #[cfg(target_os = "macos")]
+    {
+        let _ = menu.icon_only.set_text(fixed_label("menubar-off", lang));
+        let _ = menu
+            .mode_submenu
+            .set_text(fixed_label("menubar-menu", lang));
+    }
+    let _ = menu.settings.set_text(fixed_label("settings", lang));
+    let _ = menu.quit.set_text(fixed_label("quit", lang));
+}
+
 pub fn show_main(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -488,15 +597,23 @@ pub fn hide_main(window: &tauri::Window, data_dir: &Path) {
     if settings::write_settings(data_dir, &current).is_err() {
         return;
     }
+    let lang = current.language.resolve(sys_locale::get_locale);
     let place = if cfg!(target_os = "macos") {
-        "菜单栏"
+        lang.pick("菜单栏", "menu bar")
     } else {
-        "任务栏右下角"
+        lang.pick("任务栏右下角", "notification area")
     };
+    let body = token_audit_core::tr!(
+        lang,
+        "关闭窗口后会继续检测并发送省额度提醒。可以从{}的图标重新打开或退出。",
+        "token-audit keeps checking and sending savings alerts after you close the window. Use the icon in the {} to reopen or quit.",
+        place
+    );
     crate::notifications::post_later(
         window.app_handle(),
         Duration::from_millis(1500),
-        "token-audit 仍在运行".to_owned(),
-        format!("关闭窗口后会继续检测并发送省额度提醒。可以从{place}的图标重新打开或退出。"),
+        lang.pick("token-audit 仍在运行", "token-audit is still running")
+            .to_owned(),
+        body,
     );
 }
