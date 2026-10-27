@@ -85,14 +85,17 @@ jobs:
         include:
           - os: macos-latest
             target: universal-apple-darwin
+            asset_name: macos-universal
             bundles: app,dmg
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            asset_name: windows-amd64
             bundles: nsis
             rust_targets: x86_64-pc-windows-msvc
           - os: windows-latest
             target: aarch64-pc-windows-msvc
+            asset_name: windows-arm64
             bundles: nsis
             rust_targets: aarch64-pc-windows-msvc
     steps:
@@ -142,6 +145,8 @@ jobs:
           tagName: ${{ needs.create-release.outputs.release_id && github.ref_name || '' }}
           releaseDraft: true
           releaseBody: ${{ needs.create-release.outputs.notes }}
+          # 例如 token-audit-1.0.0-windows-amd64-setup.exe、token-audit-1.0.0-macos-universal.dmg。
+          releaseAssetNamePattern: token-audit-[version]-${{ matrix.asset_name }}[setup][ext]
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
           retryAttempts: 2
