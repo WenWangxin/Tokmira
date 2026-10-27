@@ -154,8 +154,9 @@ jobs:
     needs: [create-release, bundle]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # 只读，但草稿 Release 对 contents: read 不可见（403）。
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Check latest.json covers every platform
         env:
