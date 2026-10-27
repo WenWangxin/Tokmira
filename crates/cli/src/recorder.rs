@@ -221,7 +221,7 @@ fn print_plan(plan: &core::RecorderPlan) {
             "{}：{} {}",
             change.file.display(),
             change.key_path,
-            change.action
+            change.action.label()
         );
         if let Some(before) = &change.before_command {
             println!("  原命令：{before}");
@@ -231,7 +231,7 @@ fn print_plan(plan: &core::RecorderPlan) {
         }
     }
     for note in &plan.notes {
-        println!("{note}");
+        println!("{}", note.label());
     }
 }
 fn run_recorder(action: &str, args: impl Iterator<Item = OsString>) -> Result<(), String> {

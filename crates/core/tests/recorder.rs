@@ -158,7 +158,9 @@ fn modified_statusline_is_left_alone_and_state_is_cleared() {
     temp.put_settings(r#"{"statusLine":{"type":"command","command":"printf user"}}"#);
     let result = uninstall(&temp.home(), &temp.data(), both()).expect("uninstall");
     assert!(result.changes.is_empty());
-    assert!(result.notes.iter().any(|note| note.contains("用户修改")));
+    assert!(result
+        .notes
+        .contains(&token_audit_core::recorder::RecorderNote::StatuslineModified));
     assert_eq!(temp.read_settings()["statusLine"]["command"], "printf user");
     assert!(!status(&temp.home(), &temp.data()).statusline_modified);
 }
@@ -287,7 +289,10 @@ fn changed_executable_path_updates_commands_and_preserves_original_statusline() 
     install(&temp.home(), &temp.data(), &a, both()).expect("install A");
     let updated = install(&temp.home(), &temp.data(), &b, both()).expect("install B");
     assert_eq!(updated.changes.len(), 5);
-    assert!(updated.changes.iter().all(|change| change.action == "更新"));
+    assert!(updated
+        .changes
+        .iter()
+        .all(|change| change.action == token_audit_core::recorder::RecorderAction::Update));
     let settings = temp.read_settings();
     assert!(settings["statusLine"]["command"]
         .as_str()

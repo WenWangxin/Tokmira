@@ -329,26 +329,77 @@ pub enum ClaudeQuotaError {
     Unsupported,
 }
 
+impl ClaudeQuotaError {
+    pub fn message(&self, lang: crate::i18n::Lang) -> String {
+        use crate::tr;
+        match self {
+            Self::NoCredential => lang
+                .pick(
+                    "未找到 Claude 登录凭据",
+                    "Claude login credentials not found",
+                )
+                .to_owned(),
+            Self::CredentialDenied { source } => tr!(
+                lang,
+                "读取{}凭据被拒绝",
+                "Access to {} credentials was denied",
+                source.label()
+            ),
+            Self::KeychainTimeout { .. } => lang
+                .pick(
+                    "等待钥匙串授权超时",
+                    "Timed out waiting for Keychain access",
+                )
+                .to_owned(),
+            Self::TokenExpired { source } => tr!(
+                lang,
+                "{}的登录令牌已过期",
+                "{} login token has expired",
+                source.label()
+            ),
+            Self::Unauthorized { error_type } => {
+                let base = lang.pick(
+                    "Anthropic 拒绝了登录令牌",
+                    "Anthropic rejected the login token",
+                );
+                error_type.as_ref().map_or_else(
+                    || base.to_owned(),
+                    |kind| tr!(lang, "{base}（{kind}）", "{base} ({kind})"),
+                )
+            }
+            Self::RateLimited { .. } => lang
+                .pick(
+                    "Anthropic 查询已被限流",
+                    "Anthropic quota query was rate limited",
+                )
+                .to_owned(),
+            Self::Http { status } => tr!(
+                lang,
+                "Anthropic 查询失败（HTTP {status}）",
+                "Anthropic quota query failed (HTTP {status})"
+            ),
+            Self::Network => lang
+                .pick("无法连接 Anthropic", "Could not connect to Anthropic")
+                .to_owned(),
+            Self::Parse => lang
+                .pick(
+                    "无法解析 Claude 额度数据或凭据",
+                    "Could not parse Claude quota data or credentials",
+                )
+                .to_owned(),
+            Self::Unsupported => lang
+                .pick(
+                    "此平台暂不支持该凭据来源",
+                    "This credential source is not supported on this platform",
+                )
+                .to_owned(),
+        }
+    }
+}
+
 impl std::fmt::Display for ClaudeQuotaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NoCredential => write!(f, "未找到 Claude 登录凭据"),
-            Self::CredentialDenied { source } => write!(f, "读取{}凭据被拒绝", source.label()),
-            Self::KeychainTimeout { .. } => write!(f, "等待钥匙串授权超时"),
-            Self::TokenExpired { source } => write!(f, "{}的登录令牌已过期", source.label()),
-            Self::Unauthorized { error_type } => {
-                write!(f, "Anthropic 拒绝了登录令牌")?;
-                if let Some(error_type) = error_type {
-                    write!(f, "（{error_type}）")?;
-                }
-                Ok(())
-            }
-            Self::RateLimited { .. } => write!(f, "Anthropic 查询已被限流"),
-            Self::Http { status } => write!(f, "Anthropic 查询失败（HTTP {status}）"),
-            Self::Network => write!(f, "无法连接 Anthropic"),
-            Self::Parse => write!(f, "无法解析 Claude 额度数据或凭据"),
-            Self::Unsupported => write!(f, "此平台暂不支持该凭据来源"),
-        }
+        f.write_str(&self.message(crate::i18n::Lang::Zh))
     }
 }
 
@@ -1300,12 +1351,26 @@ pub fn system_proxy() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{decrypt_desktop_cache, ClaudeQuotaError};
+    use crate::i18n::Lang;
     use aes::Aes128;
     use base64::Engine;
     use cbc::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
 
     const PASSWORD: &[u8] = b"fake-safe-storage-password";
     const BLOB: &str = include_str!("../tests/fixtures/claude_quota/desktop_blob.txt");
+
+    #[test]
+    fn quota_error_message_follows_language() {
+        assert_eq!(
+            ClaudeQuotaError::Network.message(Lang::Zh),
+            "无法连接 Anthropic"
+        );
+        assert_eq!(
+            ClaudeQuotaError::Network.message(Lang::En),
+            "Could not connect to Anthropic"
+        );
+        assert_eq!(ClaudeQuotaError::Network.to_string(), "无法连接 Anthropic");
+    }
 
     #[test]
     fn desktop_vector_selects_latest_valid_token() {

@@ -46,6 +46,8 @@ struct DefaultTable {
     currency: String,
     unit: String,
     note: String,
+    #[serde(default)]
+    note_en: String,
     sources: Vec<PricingSource>,
     models: BTreeMap<String, ModelPrices>,
     subscriptions: Subscriptions,
@@ -86,6 +88,7 @@ struct OverrideTable {
     currency: Option<String>,
     unit: Option<String>,
     note: Option<String>,
+    note_en: Option<String>,
     sources: Option<Vec<PricingSource>>,
     #[serde(default)]
     models: BTreeMap<String, ModelPrices>,
@@ -99,6 +102,7 @@ pub struct Pricing {
     pub currency: String,
     pub unit: String,
     pub note: String,
+    pub note_en: String,
     pub sources: Vec<PricingSource>,
     models: BTreeMap<String, ModelPrices>,
     subscriptions: Subscriptions,
@@ -123,6 +127,7 @@ impl Pricing {
             currency: table.currency,
             unit: table.unit,
             note: table.note,
+            note_en: table.note_en,
             sources: table.sources,
             models: table.models,
             subscriptions: table.subscriptions,
@@ -161,6 +166,9 @@ impl Pricing {
         }
         if let Some(note) = override_table.note {
             self.note = note;
+        }
+        if let Some(note) = override_table.note_en {
+            self.note_en = note;
         }
         if let Some(sources) = override_table.sources {
             self.sources = sources;

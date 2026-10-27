@@ -2,6 +2,7 @@ version = "2026-10-24"
 currency = "USD"
 unit = "per_million_tokens"
 note = "仅供估算，非实际账单；claude-haiku-5-5 仅按 10 万 token 以内价格计算，不计长上下文加价。"
+note_en = "Estimates only, not actual charges. claude-haiku-5-5 uses pricing for up to 100K tokens; long-context surcharges are excluded."
 
 [server_tools]
 # Anthropic 官方定价：联网搜索每 1000 次 $10；网页抓取不另计费。

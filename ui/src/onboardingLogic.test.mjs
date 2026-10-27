@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mockDetectedTools } from './mocks/onboarding.ts'
 import {
-  QUOTA_SOURCES,
+  quotaSources,
   notificationLine,
   trayPlace,
-  TOOL_SOURCES,
+  toolSources,
   detectedToolRows,
   initialOnboardingChoices,
   installOutcome,
@@ -18,8 +18,8 @@ import {
 } from './onboardingLogic.ts'
 
 test('quota sources come from the registry, one per switch', () => {
-  assert.deepEqual(QUOTA_SOURCES.map(item => item.key), ['statusline', 'claudeOfficial', 'codexOfficial'])
-  assert.equal(QUOTA_SOURCES[0].title, 'Claude Code 状态栏记录')
+  assert.deepEqual(quotaSources().map(item => item.key), ['statusline', 'claudeOfficial', 'codexOfficial'])
+  assert.equal(quotaSources()[0].title, 'Claude Code 状态栏记录')
 })
 
 test('tool rows follow the registry and fall back for unknown sources', () => {
@@ -29,7 +29,7 @@ test('tool rows follow the registry and fall back for unknown sources', () => {
     { source: 'GeminiCli', sessions: 2, requests: 10, plan: null },
     { source: 'Unknown', sessions: 1, requests: 1, plan: null },
   ])
-  assert.deepEqual(rows.map(row => row.source), [...TOOL_SOURCES.map(info => info.source), 'GeminiCli'])
+  assert.deepEqual(rows.map(row => row.source), [...toolSources().map(info => info.source), 'GeminiCli'])
   const claude = rows[0]
   assert.equal(claude.subtitle, '34 个会话')
   assert.equal(claude.hint, '额度需开启记录器或官方查询')
@@ -79,15 +79,14 @@ test('first run defaults; reopening keeps current switches', () => {
 
 test('install and quota sentences, and when the dashboard notice should warn', () => {
   assert.deepEqual(installOutcome('/tmp/backup.json', []), ['已备份到 /tmp/backup.json'])
-  assert.deepEqual(installOutcome(null, ['保留原命令']), ['保留原命令'])
+  assert.deepEqual(installOutcome(null, ['statusline_modified']), ['statusLine 已被用户修改，保留当前配置'])
   assert.deepEqual(installOutcome(null, []), ['没有修改配置文件'])
+  const result = { claude: { state: 'updated', message: '' }, codex: { state: 'off', message: '' } }
   assert.deepEqual(quotaOutcome(
-    { statusline: false, claudeOfficial: true, codexOfficial: false },
-    { claude: '已更新', codex: '未开启' },
-  ), ['Claude 官方额度：已更新'])
-  assert.equal(outcomeTone(['已备份到 /tmp/backup.json', 'Claude 官方额度：已更新']), 'success')
-  assert.equal(outcomeTone(['Codex 官方额度：未开启']), 'success')
-  assert.equal(outcomeTone(['Claude 官方额度：Anthropic 查询已限流']), 'warning')
+    { statusline: false, claudeOfficial: true, codexOfficial: false }, result,
+  ), [{ text: 'Claude 官方额度：已更新', outcome: result.claude }])
+  assert.equal(outcomeTone(quotaOutcome({ statusline: false, claudeOfficial: true, codexOfficial: true }, result)), 'success')
+  assert.equal(outcomeTone(quotaOutcome({ statusline: false, claudeOfficial: true, codexOfficial: false }, { ...result, claude: { state: 'error', message: '无法连接 Anthropic' } })), 'warning')
 })
 
 test('preview query forces the guide only in the browser preview', () => {
@@ -113,11 +112,12 @@ test('preview fixtures cover both tools and a missing Claude desktop log', () =>
 })
 
 test('setup summary is short on success and lists only failures', () => {
-  assert.deepEqual(onboardingSummary(['没有修改配置文件', 'Claude 官方额度：已更新', 'Codex 官方额度：已更新']), {
-    text: '设置完成，额度会自动更新',
-    tone: 'success',
+  const selection = { statusline: false, claudeOfficial: true, codexOfficial: true }
+  const result = { claude: { state: 'updated', message: '' }, codex: { state: 'updated', message: '' } }
+  assert.deepEqual(onboardingSummary(quotaOutcome(selection, result)), {
+    text: '设置完成，额度会自动更新', tone: 'success',
   })
-  const failed = onboardingSummary(['已备份到 /tmp/x', 'Claude 官方额度：读取Claude 桌面版凭据被拒绝', 'Codex 官方额度：已更新'])
+  const failed = onboardingSummary(quotaOutcome(selection, { ...result, claude: { state: 'error', message: '读取Claude 桌面版凭据被拒绝' } }))
   assert.equal(failed.tone, 'warning')
   assert.equal(failed.text, 'Claude 官方额度：读取Claude 桌面版凭据被拒绝')
 })

@@ -1,11 +1,11 @@
 /** "上次检查：今天 17:03"; dates in other days keep the month and day. */
 export function lastCheckedLine(iso: string | null, now: Date = new Date()): string {
-  if (!iso) return '尚未检查过'
+  if (!iso) return m().update.neverChecked
   const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return '尚未检查过'
-  const time = at.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (Number.isNaN(at.getTime())) return m().update.neverChecked
+  const time = clock(at)
   const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate()
-  return sameDay ? `上次检查：今天 ${time}` : `上次检查：${at.getMonth() + 1} 月 ${at.getDate()} 日 ${time}`
+  return sameDay ? m().update.checkedToday(time) : m().update.checkedOn(longMonthDay(at), time)
 }
 
 const megabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(1)
@@ -14,15 +14,16 @@ const megabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(1)
 export function progressLine(downloaded: number, total: number | null): string {
   if (total && total > 0) {
     const percent = Math.min(100, Math.floor((downloaded / total) * 100))
-    return `已下载 ${megabytes(downloaded)} / ${megabytes(total)} MB（${percent}%）`
+    return m().update.downloadedOf(megabytes(downloaded), megabytes(total), percent)
   }
-  return `已下载 ${megabytes(downloaded)} MB`
+  return m().update.downloaded(megabytes(downloaded))
 }
 
 export type UpdateStage = 'ready' | 'installing' | 'installed'
 
 export function updateActionLabel(stage: UpdateStage): string {
-  if (stage === 'installing') return '正在安装…'
-  if (stage === 'installed') return '重启以完成更新'
-  return '下载并安装'
+  if (stage === 'installing') return m().update.installing
+  if (stage === 'installed') return m().update.restart
+  return m().update.downloadInstall
 }
+import { clock, longMonthDay, m } from './i18n/index.ts'

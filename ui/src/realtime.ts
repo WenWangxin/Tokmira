@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import type { RefreshResult, QuotaState } from './api'
 
 /** Bumped when local usage changed; mounted pages watch it and refresh in place. */
 export const usageRevision = ref(0)
@@ -12,18 +13,18 @@ export const settingsRevision = ref(0)
 export const claudeNeedsAuthorization = ref(false)
 
 /** The latest official quota query result per tool, for the source status panel. */
-export const lastQuotaResult = ref<{ claude: string; codex: string } | null>(null)
+export const lastQuotaResult = ref<RefreshResult | null>(null)
 
 /** Records a quota refresh result and updates {@link claudeNeedsAuthorization}. */
-export function noteQuotaResult(result: { claude: string; codex: string }) {
-  claudeNeedsAuthorization.value = nextAuthorizationState(claudeNeedsAuthorization.value, result.claude)
+export function noteQuotaResult(result: RefreshResult) {
+  claudeNeedsAuthorization.value = nextAuthorizationState(claudeNeedsAuthorization.value, result.claude.state)
   lastQuotaResult.value = result
 }
 
 /** “需要授权” sets the flag, a successful query clears it, anything else keeps it. */
-export function nextAuthorizationState(current: boolean, claude: string): boolean {
-  if (claude === '需要授权') return true
-  if (claude === '已更新') return false
+export function nextAuthorizationState(current: boolean, claude: QuotaState): boolean {
+  if (claude === 'needs_authorization') return true
+  if (claude === 'updated') return false
   return current
 }
 

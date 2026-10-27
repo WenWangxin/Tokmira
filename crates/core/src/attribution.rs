@@ -423,11 +423,15 @@ pub fn attribute(
 }
 
 pub fn source_label(source: Source) -> &'static str {
+    source_label_lang(source, crate::i18n::Lang::Zh)
+}
+
+pub fn source_label_lang(source: Source, lang: crate::i18n::Lang) -> &'static str {
     match source {
-        Source::ClaudeCli => "Claude Code · 命令行",
-        Source::ClaudeDesktop => "Claude · 桌面版",
-        Source::CodexCli => "Codex · 命令行",
-        Source::CodexDesktop => "Codex · 桌面版",
-        Source::Unknown => "未知来源",
+        Source::ClaudeCli => lang.pick("Claude Code · 命令行", "Claude Code · CLI"),
+        Source::ClaudeDesktop => lang.pick("Claude · 桌面版", "Claude · Desktop"),
+        Source::CodexCli => lang.pick("Codex · 命令行", "Codex · CLI"),
+        Source::CodexDesktop => lang.pick("Codex · 桌面版", "Codex · Desktop"),
+        Source::Unknown => lang.pick("未知来源", "Unknown source"),
     }
 }

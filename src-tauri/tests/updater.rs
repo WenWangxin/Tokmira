@@ -142,7 +142,10 @@ fn a_package_that_does_not_match_its_signature_is_rejected() {
         .unwrap()
         .unwrap();
     let error = download(&found).unwrap_err();
-    assert_eq!(message(&error), "安装包签名校验失败，已停止安装");
+    assert_eq!(
+        message(&error, token_audit_core::i18n::Lang::Zh),
+        "安装包签名校验失败，已停止安装"
+    );
 }
 
 #[test]
@@ -158,7 +161,10 @@ fn a_signature_for_another_version_is_rejected() {
     .unwrap()
     .unwrap();
     assert_eq!(
-        message(&download(&found).unwrap_err()),
+        message(
+            &download(&found).unwrap_err(),
+            token_audit_core::i18n::Lang::Zh
+        ),
         "安装包签名校验失败，已停止安装"
     );
     let found = check(
@@ -179,7 +185,10 @@ fn a_malformed_manifest_is_reported() {
         tauri::async_runtime::block_on(updater(&format!("{base}/latest.json"), false).check())
             .err()
             .unwrap();
-    assert_eq!(message(&error), "更新清单格式不正确或缺少本机平台的安装包");
+    assert_eq!(
+        message(&error, token_audit_core::i18n::Lang::Zh),
+        "更新清单格式不正确或缺少本机平台的安装包"
+    );
 }
 
 #[test]
@@ -195,5 +204,8 @@ fn an_unreachable_server_is_a_network_error() {
     )
     .err()
     .unwrap();
-    assert_eq!(message(&error), "无法连接 GitHub，请检查网络后重试");
+    assert_eq!(
+        message(&error, token_audit_core::i18n::Lang::Zh),
+        "无法连接 GitHub，请检查网络后重试"
+    );
 }

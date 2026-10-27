@@ -225,16 +225,46 @@ pub enum CodexQuotaError {
     Parse,
 }
 
+impl CodexQuotaError {
+    pub fn message(&self, lang: crate::i18n::Lang) -> String {
+        use crate::tr;
+        match self {
+            Self::NotFound => lang
+                .pick("未找到 Codex 可执行文件", "Codex executable not found")
+                .to_owned(),
+            Self::Spawn => lang
+                .pick(
+                    "无法启动 Codex app-server",
+                    "Could not start Codex app-server",
+                )
+                .to_owned(),
+            Self::Timeout => lang
+                .pick("Codex app-server 响应超时", "Codex app-server timed out")
+                .to_owned(),
+            Self::Rpc { code, message } => tr!(
+                lang,
+                "Codex app-server 错误 {code}：{message}",
+                "Codex app-server error {code}: {message}"
+            ),
+            Self::Protocol => lang
+                .pick(
+                    "Codex app-server 通信格式异常",
+                    "Unexpected Codex app-server response format",
+                )
+                .to_owned(),
+            Self::Parse => lang
+                .pick(
+                    "Codex app-server 额度数据格式异常",
+                    "Unexpected Codex app-server quota data format",
+                )
+                .to_owned(),
+        }
+    }
+}
+
 impl std::fmt::Display for CodexQuotaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotFound => write!(f, "未找到 Codex 可执行文件"),
-            Self::Spawn => write!(f, "无法启动 Codex app-server"),
-            Self::Timeout => write!(f, "Codex app-server 响应超时"),
-            Self::Rpc { code, message } => write!(f, "Codex app-server 错误 {code}：{message}"),
-            Self::Protocol => write!(f, "Codex app-server 通信格式异常"),
-            Self::Parse => write!(f, "Codex app-server 额度数据格式异常"),
-        }
+        f.write_str(&self.message(crate::i18n::Lang::Zh))
     }
 }
 

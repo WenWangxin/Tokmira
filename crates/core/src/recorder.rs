@@ -2,6 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::i18n::Lang;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -18,18 +19,46 @@ pub enum RecorderError {
     InvalidExecutable,
 }
 
+impl RecorderError {
+    pub fn message(&self, lang: Lang) -> String {
+        use crate::tr;
+        match self {
+            Self::Io(error) => tr!(
+                lang,
+                "文件操作失败：{error}",
+                "File operation failed: {error}"
+            ),
+            Self::InvalidSettings => lang
+                .pick(
+                    "Claude Code 配置不是有效的 JSON 对象或相关字段格式不正确",
+                    "Claude Code settings are not a valid JSON object or contain malformed fields",
+                )
+                .to_owned(),
+            Self::SymlinkSettings => lang
+                .pick(
+                    "Claude Code 配置文件是符号链接，记录器不会改写",
+                    "Claude Code settings are a symlink; the recorder will not modify them",
+                )
+                .to_owned(),
+            Self::InvalidState => lang
+                .pick(
+                    "记录器状态文件格式不正确",
+                    "Recorder state file has an invalid format",
+                )
+                .to_owned(),
+            Self::InvalidExecutable => lang
+                .pick(
+                    "可执行文件路径必须是绝对路径",
+                    "Executable path must be absolute",
+                )
+                .to_owned(),
+        }
+    }
+}
+
 impl std::fmt::Display for RecorderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "文件操作失败：{error}"),
-            Self::InvalidSettings => write!(
-                f,
-                "Claude Code 配置不是有效的 JSON 对象或相关字段格式不正确"
-            ),
-            Self::SymlinkSettings => write!(f, "Claude Code 配置文件是符号链接，记录器不会改写"),
-            Self::InvalidState => write!(f, "记录器状态文件格式不正确"),
-            Self::InvalidExecutable => write!(f, "可执行文件路径必须是绝对路径"),
-        }
+        f.write_str(&self.message(Lang::Zh))
     }
 }
 impl std::error::Error for RecorderError {}
@@ -49,7 +78,7 @@ pub struct RecorderParts {
 pub struct PlannedChange {
     pub file: PathBuf,
     pub key_path: String,
-    pub action: &'static str,
+    pub action: RecorderAction,
     pub before_command: Option<String>,
     pub after_command: Option<String>,
 }
@@ -58,7 +87,45 @@ pub struct PlannedChange {
 pub struct RecorderPlan {
     pub changes: Vec<PlannedChange>,
     pub backup_path: Option<PathBuf>,
-    pub notes: Vec<String>,
+    pub notes: Vec<RecorderNote>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecorderAction {
+    Add,
+    Update,
+    Replace,
+    Restore,
+    Remove,
+}
+
+impl RecorderAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Add => "新增",
+            Self::Update => "更新",
+            Self::Replace => "替换",
+            Self::Restore => "恢复",
+            Self::Remove => "删除",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecorderNote {
+    StatuslineBackupMissing,
+    StatuslineModified,
+}
+
+impl RecorderNote {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::StatuslineBackupMissing => "原 statusLine 备份缺失，保留当前配置",
+            Self::StatuslineModified => "statusLine 已被用户修改，保留当前配置",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -256,7 +323,7 @@ fn change(
     plan: &mut RecorderPlan,
     file: &Path,
     key: String,
-    action: &'static str,
+    action: RecorderAction,
     before: Option<String>,
     after: Option<String>,
 ) {
@@ -342,11 +409,11 @@ fn prepare_install(
                 &file,
                 "statusLine".to_owned(),
                 if current_is_ours {
-                    "更新"
+                    RecorderAction::Update
                 } else if state.original_statusline_present {
-                    "替换"
+                    RecorderAction::Replace
                 } else {
-                    "新增"
+                    RecorderAction::Add
                 },
                 current_cmd,
                 Some(desired),
@@ -413,7 +480,7 @@ fn prepare_install(
                         &mut plan,
                         &file,
                         format!("hooks.{event}[{index}]"),
-                        "更新",
+                        RecorderAction::Update,
                         before,
                         Some(desired.clone()),
                     );
@@ -426,7 +493,7 @@ fn prepare_install(
                     &mut plan,
                     &file,
                     format!("hooks.{event}[{index}]"),
-                    "新增",
+                    RecorderAction::Add,
                     None,
                     Some(desired.clone()),
                 );
@@ -470,8 +537,7 @@ fn prepare_uninstall(
             {
                 let before = command(&current).map(str::to_owned);
                 if state.original_statusline_present && state.original_statusline.is_none() {
-                    plan.notes
-                        .push("原 statusLine 备份缺失，保留当前配置".to_owned());
+                    plan.notes.push(RecorderNote::StatuslineBackupMissing);
                 } else if state.original_statusline_present
                     && !state
                         .original_statusline
@@ -486,7 +552,7 @@ fn prepare_uninstall(
                             &mut plan,
                             &file,
                             "statusLine".to_owned(),
-                            "恢复",
+                            RecorderAction::Restore,
                             before,
                             after,
                         );
@@ -497,14 +563,13 @@ fn prepare_uninstall(
                         &mut plan,
                         &file,
                         "statusLine".to_owned(),
-                        "删除",
+                        RecorderAction::Remove,
                         before,
                         None,
                     );
                 }
             } else if state.statusline_command.is_some() {
-                plan.notes
-                    .push("statusLine 已被用户修改，保留当前配置".to_owned());
+                plan.notes.push(RecorderNote::StatuslineModified);
             }
         }
         state.statusline_command = None;
@@ -528,7 +593,7 @@ fn prepare_uninstall(
                                 &mut plan,
                                 &file,
                                 format!("hooks.{event}[{index}]"),
-                                "删除",
+                                RecorderAction::Remove,
                                 before,
                                 None,
                             );

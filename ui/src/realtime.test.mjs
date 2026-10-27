@@ -18,9 +18,9 @@ test('page refreshes are spaced at least a second apart', () => {
 })
 
 test('authorization prompt appears on a silent failure and clears after a successful query', () => {
-  assert.equal(nextAuthorizationState(false, '需要授权'), true)
-  assert.equal(nextAuthorizationState(true, '60 秒内已查询'), true)
-  assert.equal(nextAuthorizationState(true, '未开启'), true)
-  assert.equal(nextAuthorizationState(true, '已更新'), false)
-  assert.equal(nextAuthorizationState(false, '无法连接 Anthropic'), false)
+  assert.equal(nextAuthorizationState(false, 'needs_authorization'), true)
+  assert.equal(nextAuthorizationState(true, 'recent'), true)
+  assert.equal(nextAuthorizationState(true, 'off'), true)
+  assert.equal(nextAuthorizationState(true, 'updated'), false)
+  assert.equal(nextAuthorizationState(false, 'error'), false)
 })

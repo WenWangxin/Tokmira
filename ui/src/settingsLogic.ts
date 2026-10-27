@@ -1,5 +1,7 @@
 export type ThemeChoice = 'system' | 'light' | 'dark'
 export type QuotaMessageTone = 'ok' | 'neutral' | 'bad'
+import type { QuotaOutcome } from './api'
+import { m, monthDay } from './i18n/index.ts'
 
 /**
  * Deep-copy a preview payload.
@@ -9,24 +11,7 @@ export function clonePreview<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
-const ADVICE_TITLES: Record<string, string> = {
-  cache_rebuild: '缓存过期后的整段重建',
-  session_startup: '新会话的启动开销',
-  long_context: '上下文过长',
-  expensive_light_task: '轻量任务使用了高价模型',
-  many_subagents: '子代理使用过多',
-  model_switch: '中途换模型导致缓存重建',
-  context_spike: '一次塞入大量内容',
-  runaway_prompt: '一次提示跑了太多轮',
-  expensive_subagent: '子代理用了高价模型',
-  heavy_reasoning: '推理 token 占比过高',
-  fast_mode: '使用了快速模式',
-  high_effort_light_task: '轻量任务用了高推理强度',
-  frequent_compaction: '频繁压缩上下文',
-  web_search: '联网搜索次数较多',
-  quota_rebalance: '两个额度池可以分流',
-  plan_fit: '套餐是否合适',
-}
+
 
 /** `null` means the document should follow the system theme and drop `data-theme`. */
 export function themeDataset(theme: ThemeChoice): 'light' | 'dark' | null {
@@ -45,7 +30,7 @@ export function adviceLabel(key: string): string {
   const tool = separator === -1 ? key : key.slice(0, separator)
   const id = separator === -1 ? '' : key.slice(separator + 1)
   const toolName = tool === 'claude' ? 'Claude' : tool === 'codex' ? 'Codex' : tool
-  const title = ADVICE_TITLES[id] ?? (id || key)
+  const title = m().advice.titles[id] ?? (id || key)
   return `${toolName} · ${title}`
 }
 
@@ -65,12 +50,15 @@ export function parsePercent(text: string): number | null {
 }
 
 export function formatCalibration(tool: string, percent: number, recordedAt: Date): string {
-  const stamp = `${recordedAt.getMonth() + 1}/${recordedAt.getDate()} ${String(recordedAt.getHours()).padStart(2, '0')}:${String(recordedAt.getMinutes()).padStart(2, '0')}`
-  return `上次校准：${tool} ${formatPercent(percent)}% · ${stamp}`
+  const stamp = `${monthDay(recordedAt)} ${String(recordedAt.getHours()).padStart(2, '0')}:${String(recordedAt.getMinutes()).padStart(2, '0')}`
+  return m().settings.calibrationLine(tool, formatPercent(percent), stamp)
 }
 
-export function quotaMessageTone(message: string): QuotaMessageTone {
-  if (message === '已更新') return 'ok'
-  if (message === '未开启' || message === '60 秒内已查询' || message === '限流退避中' || message === '开发预览' || message === '需要授权') return 'neutral'
-  return 'bad'
+export function quotaMessageTone(outcome: QuotaOutcome): QuotaMessageTone {
+  if (outcome.state === 'updated') return 'ok'
+  return outcome.state === 'error' ? 'bad' : 'neutral'
+}
+
+export function quotaMessage(outcome: QuotaOutcome): string {
+  return outcome.state === 'error' ? outcome.message : m().quotaState[outcome.state]
 }

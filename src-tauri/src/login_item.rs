@@ -1,5 +1,6 @@
 //! Reads and changes the operating system's login item, without persisting a second state.
 
+use crate::desktop_lang;
 use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_autostart::ManagerExt;
@@ -59,7 +60,12 @@ pub fn get(app: &AppHandle) -> AutostartState {
 
 pub fn set(app: &AppHandle, enabled: bool) -> Result<AutostartState, String> {
     if !get(app).available {
-        return Err("开发版不能设置开机自动启动，请在打包后的应用里设置".to_owned());
+        return Err(desktop_lang()
+            .pick(
+                "开发版不能设置开机自动启动，请在打包后的应用里设置",
+                "Autostart is unavailable in development builds. Configure it in the packaged app.",
+            )
+            .to_owned());
     }
     #[cfg(target_os = "macos")]
     if native_available() {
@@ -72,7 +78,11 @@ pub fn set(app: &AppHandle, enabled: bool) -> Result<AutostartState, String> {
                 service.unregisterAndReturnError()
             }
         };
-        changed.map_err(|_| "设置开机自动启动失败".to_owned())?;
+        changed.map_err(|_| {
+            desktop_lang()
+                .pick("设置开机自动启动失败", "Could not change autostart")
+                .to_owned()
+        })?;
         return Ok(get(app));
     }
     let launcher = app.autolaunch();
@@ -81,7 +91,11 @@ pub fn set(app: &AppHandle, enabled: bool) -> Result<AutostartState, String> {
     } else {
         launcher.disable()
     };
-    changed.map_err(|_| "设置开机自动启动失败".to_owned())?;
+    changed.map_err(|_| {
+        desktop_lang()
+            .pick("设置开机自动启动失败", "Could not change autostart")
+            .to_owned()
+    })?;
     Ok(get(app))
 }
 
@@ -120,7 +134,11 @@ pub fn open_settings() -> Result<(), String> {
             .arg("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
             .spawn()
             .map(|_| ())
-            .map_err(|_| "无法打开登录项设置".to_owned())
+            .map_err(|_| {
+                desktop_lang()
+                    .pick("无法打开登录项设置", "Could not open Login Items settings")
+                    .to_owned()
+            })
     }
     #[cfg(windows)]
     {
@@ -128,8 +146,17 @@ pub fn open_settings() -> Result<(), String> {
             .arg("ms-settings:startupapps")
             .spawn()
             .map(|_| ())
-            .map_err(|_| "无法打开登录项设置".to_owned())
+            .map_err(|_| {
+                desktop_lang()
+                    .pick("无法打开登录项设置", "Could not open Startup Apps settings")
+                    .to_owned()
+            })
     }
     #[cfg(not(any(target_os = "macos", windows)))]
-    Err("当前系统不支持登录项设置".to_owned())
+    Err(desktop_lang()
+        .pick(
+            "当前系统不支持登录项设置",
+            "Login Items settings are not supported on this system",
+        )
+        .to_owned())
 }
