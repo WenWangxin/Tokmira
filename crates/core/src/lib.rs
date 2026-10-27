@@ -8,6 +8,7 @@ pub mod dashboard;
 pub mod detect;
 pub mod environment;
 pub mod forecast;
+pub mod i18n;
 pub mod model;
 pub mod pricing;
 pub mod quota_store;

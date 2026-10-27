@@ -7,6 +7,7 @@ export const mockSettings: AppSettings = {
   claude_credential: 'Auto',
   codex_app_server: false,
   theme: 'system',
+  language: 'system',
   calibration: {
     tool: 'Claude',
     five_hour_percent: 28,

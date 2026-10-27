@@ -13,6 +13,7 @@ export type Tool = 'Claude' | 'Codex'
 export type Source = 'ClaudeCli' | 'ClaudeDesktop' | 'CodexCli' | 'CodexDesktop' | 'Unknown'
 export type Origin = 'Official' | 'Statusline' | 'Log' | 'Manual' | 'Estimated'
 export type Theme = 'system' | 'light' | 'dark'
+export type Language = 'system' | 'zh' | 'en'
 export type MenuBarQuota = 'off' | 'claude' | 'codex' | 'both'
 export type CredentialPreference = 'Auto' | 'ClaudeDesktop' | 'ClaudeCode'
 export type Forecast = { WillHit: { at: string } } | 'Ample' | 'Unknown'
@@ -39,6 +40,7 @@ export interface AppSettings {
   claude_credential: CredentialPreference
   codex_app_server: boolean
   theme: Theme
+  language: Language
   calibration: Calibration | null
   dismissed_advice: string[]
   advice_notifications: boolean
@@ -259,7 +261,10 @@ export interface RecorderPlan {
   notes: string[]
 }
 export interface ScanSummary { events: number; prompts: number; malformed_lines: number }
-export interface RefreshResult { claude: string; codex: string }
+/** What happened to one official quota query; `error` carries the backend's message. */
+export type QuotaState = 'off' | 'updated' | 'needs_authorization' | 'backoff' | 'recent' | 'error' | 'preview'
+export interface QuotaOutcome { state: QuotaState; message: string }
+export interface RefreshResult { claude: QuotaOutcome; codex: QuotaOutcome }
 export interface DirectoryStatus { path: string; exists: boolean }
 export interface DetectedTool {
   source: Source

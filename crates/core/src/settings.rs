@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::claude_quota::CredentialPreference;
+use crate::i18n::Lang;
 use crate::model::Tool;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,6 +16,26 @@ pub enum Theme {
     System,
     Light,
     Dark,
+}
+
+/// Interface language; `System` follows the OS locale.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Language {
+    #[default]
+    System,
+    Zh,
+    En,
+}
+impl Language {
+    /// `system_locale` is asked only when the user follows the system.
+    pub fn resolve(self, system_locale: impl FnOnce() -> Option<String>) -> Lang {
+        match self {
+            Self::Zh => Lang::Zh,
+            Self::En => Lang::En,
+            Self::System => system_locale().map_or(Lang::Zh, |tag| Lang::from_locale(&tag)),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +63,7 @@ pub struct AppSettings {
     pub claude_credential: CredentialPreference,
     pub codex_app_server: bool,
     pub theme: Theme,
+    pub language: Language,
     pub calibration: Option<Calibration>,
     pub dismissed_advice: Vec<String>,
     /// System notification when a new advice problem shows up while the app runs.
@@ -64,6 +86,7 @@ impl Default for AppSettings {
             claude_credential: CredentialPreference::Auto,
             codex_app_server: false,
             theme: Theme::System,
+            language: Language::System,
             calibration: None,
             dismissed_advice: Vec::new(),
             advice_notifications: true,
