@@ -36,10 +36,17 @@ pub struct AlertTracker {
 }
 
 /// Most actionable first: a long context can still be fixed in the current session.
-const PRIORITY: [&str; 4] = [
+const PRIORITY: [&str; 11] = [
     "long_context",
     "cache_rebuild",
+    "model_switch",
+    "context_spike",
     "expensive_light_task",
+    "heavy_reasoning",
+    "high_effort_light_task",
+    "runaway_prompt",
+    "fast_mode",
+    "expensive_subagent",
     "many_subagents",
 ];
 
@@ -97,18 +104,29 @@ fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>) -> Vec<Candidate> {
                 continue;
             };
             let key = format!("{}:{}", tool_key(tool), rule.id);
-            if rule.id == "cache_rebuild" {
-                for hit in &rule.hits {
+            if matches!(rule.id, "cache_rebuild" | "model_switch" | "context_spike") {
+                for (index, hit) in rule.hits.iter().enumerate() {
                     let event = &hit.item.event;
                     found.push(Candidate {
                         id: format!(
-                            "{key}:{}:{}",
+                            "{key}:{}:{}:{}",
                             event.session_id,
-                            event.timestamp.to_rfc3339()
+                            event.timestamp.to_rfc3339(),
+                            event.request_id.as_deref().map_or_else(|| index.to_string(), str::to_owned)
                         ),
                         rank,
                         settled: true,
-                        alert: alert(tool, &key, rule, event, cache_rebuild_body(input, hit)),
+                        alert: alert(tool, &key, rule, event, match rule.id {
+                            "cache_rebuild" => cache_rebuild_body(input, hit),
+                            "model_switch" => format!(
+                                "切换模型后重写了 {} token。换模型可放在任务阶段之间，或开启新会话。",
+                                format_tokens(hit.overhead_tokens)
+                            ),
+                            _ => format!(
+                                "这次约有 {} token 可以少写入。日志先截取相关段落，大文件只读相关部分。",
+                                format_tokens(hit.overhead_tokens)
+                            ),
+                        }),
                     });
                 }
                 continue;
@@ -124,6 +142,32 @@ fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>) -> Vec<Candidate> {
                 let (settled, body) = match rule.id {
                     "long_context" => (true, long_context_body(&hits)),
                     "expensive_light_task" => light_task(input, tool, session, &hits, now),
+                    "runaway_prompt" | "heavy_reasoning" | "high_effort_light_task" => {
+                        let total: u64 = hits.iter().map(|hit| hit.overhead_tokens).sum();
+                        let next = match rule.id {
+                            "runaway_prompt" => "下次先明确完成条件；反复修同一错误时及时打断。",
+                            "heavy_reasoning" => "简单任务可调低推理强度。",
+                            _ => "下次可调低推理强度。",
+                        };
+                        (
+                            prompt_settled(input, tool, session, &hits, now),
+                            format!("本次涉及 {} token。{next}", format_tokens(total)),
+                        )
+                    }
+                    "fast_mode" => (
+                        true,
+                        format!(
+                            "快速模式涉及 {} token。不赶时间时可用 /fast 关闭。",
+                            format_tokens(hits.iter().map(|hit| hit.overhead_tokens).sum())
+                        ),
+                    ),
+                    "expensive_subagent" => (
+                        true,
+                        format!(
+                            "高价子代理涉及 {} token。简单子任务可选用较低价模型。",
+                            format_tokens(hits.iter().map(|hit| hit.overhead_tokens).sum())
+                        ),
+                    ),
                     _ => (true, subagents_body(&hits)),
                 };
                 found.push(Candidate {
@@ -136,6 +180,42 @@ fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>) -> Vec<Candidate> {
         }
     }
     found
+}
+
+fn prompt_settled(
+    input: &AdviceInput<'_>,
+    tool: Tool,
+    session: &str,
+    hits: &[&Hit<'_>],
+    now: DateTime<Utc>,
+) -> bool {
+    let latest_hit = hits.iter().map(|hit| hit.item.event.timestamp).max();
+    let latest_prompt = latest_hit.and_then(|at| {
+        input
+            .prompts
+            .iter()
+            .filter(|prompt| {
+                prompt.tool == tool && prompt.session_id == session && prompt.timestamp <= at
+            })
+            .map(|prompt| prompt.timestamp)
+            .max()
+    });
+    if latest_prompt.is_some_and(|start| {
+        input.prompts.iter().any(|prompt| {
+            prompt.tool == tool && prompt.session_id == session && prompt.timestamp > start
+        })
+    }) {
+        return true;
+    }
+    let latest_activity = input
+        .events
+        .iter()
+        .filter(|item| item.event.tool == tool && item.event.session_id == session)
+        .map(|item| item.event.timestamp)
+        .max();
+    latest_activity.is_some_and(|at| {
+        now - at >= Duration::minutes(input.config.alerts.light_task_settle_minutes)
+    })
 }
 
 fn alert(

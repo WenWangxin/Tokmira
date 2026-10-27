@@ -49,6 +49,12 @@ struct DefaultTable {
     sources: Vec<PricingSource>,
     models: BTreeMap<String, ModelPrices>,
     subscriptions: Subscriptions,
+    server_tools: ServerTools,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ServerTools {
+    pub web_search_per_1k: f64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -84,6 +90,7 @@ struct OverrideTable {
     #[serde(default)]
     models: BTreeMap<String, ModelPrices>,
     subscriptions: Option<Subscriptions>,
+    server_tools: Option<ServerTools>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +102,7 @@ pub struct Pricing {
     pub sources: Vec<PricingSource>,
     models: BTreeMap<String, ModelPrices>,
     subscriptions: Subscriptions,
+    pub server_tools: ServerTools,
 }
 
 impl Pricing {
@@ -105,6 +113,8 @@ impl Pricing {
         if table.models.is_empty()
             || table.models.values().any(|prices| !prices.valid())
             || !table.subscriptions.valid()
+            || !table.server_tools.web_search_per_1k.is_finite()
+            || table.server_tools.web_search_per_1k < 0.0
         {
             return Err("内置价格表价格无效");
         }
@@ -116,6 +126,7 @@ impl Pricing {
             sources: table.sources,
             models: table.models,
             subscriptions: table.subscriptions,
+            server_tools: table.server_tools,
         })
     }
 
@@ -139,6 +150,9 @@ impl Pricing {
                 .subscriptions
                 .as_ref()
                 .is_some_and(|subscriptions| !subscriptions.valid())
+            || override_table.server_tools.as_ref().is_some_and(|tools| {
+                !tools.web_search_per_1k.is_finite() || tools.web_search_per_1k < 0.0
+            })
         {
             return Err("覆盖价格表价格无效");
         }
@@ -155,6 +169,9 @@ impl Pricing {
         if let Some(subscriptions) = override_table.subscriptions {
             self.subscriptions.claude.extend(subscriptions.claude);
             self.subscriptions.chatgpt.extend(subscriptions.chatgpt);
+        }
+        if let Some(server_tools) = override_table.server_tools {
+            self.server_tools = server_tools;
         }
         Ok(self)
     }

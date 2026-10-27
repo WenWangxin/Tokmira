@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::codex::RateLimitSnapshot;
 use crate::model::{Source, UsageEvent};
-use crate::quota_store::ClaudeSnapshot;
+use crate::quota_store::{normalize_claude_plan, ClaudeSnapshot};
 
 /// One of the four log sources the guide can show.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -21,7 +21,7 @@ pub struct DetectedTool {
     /// Usage events, including subagent requests.
     pub requests: usize,
     pub last_used_at: Option<DateTime<Utc>>,
-    /// Claude: `subscription_type` on the newest saved official snapshot.
+    /// Claude: recognized Max tiers are normalized from the newest saved snapshot.
     /// Codex: `plan_type` on the newest log snapshot. Empty values are omitted.
     pub plan: Option<String>,
 }
@@ -65,12 +65,15 @@ pub fn detect_tools(
             bucket.last_used_at = Some(event.timestamp);
         }
     }
-    let claude_plan = meaningful_plan(
-        claude_snapshots
-            .iter()
-            .max_by_key(|snapshot| snapshot.at)
-            .and_then(|snapshot| snapshot.subscription_type.as_deref()),
-    );
+    let claude_plan = claude_snapshots
+        .iter()
+        .max_by_key(|snapshot| snapshot.at)
+        .and_then(|snapshot| {
+            normalize_claude_plan(
+                snapshot.subscription_type.as_deref(),
+                snapshot.rate_limit_tier.as_deref(),
+            )
+        });
     let codex_plan = meaningful_plan(
         codex_log
             .iter()
@@ -131,6 +134,9 @@ mod tests {
             model: "model".to_owned(),
             project: None,
             is_subagent: subagent,
+            fast: false,
+            effort: None,
+            web_search_requests: 0,
             tokens: TokenCounts::default(),
         }
     }
@@ -139,6 +145,7 @@ mod tests {
         ClaudeSnapshot {
             at: at(timestamp),
             subscription_type: plan.map(str::to_owned),
+            rate_limit_tier: None,
             five_hour: None,
             seven_day: None,
             weekly_breakdown: None,

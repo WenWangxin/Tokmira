@@ -70,6 +70,9 @@ fn windows_and_detail_use_only_the_selected_range() {
             model: "synthetic-model".to_owned(),
             project: Some(row.project),
             is_subagent: false,
+            fast: false,
+            effort: None,
+            web_search_requests: 0,
             tokens: TokenCounts {
                 input: row.tokens,
                 ..Default::default()
@@ -85,6 +88,7 @@ fn windows_and_detail_use_only_the_selected_range() {
     let snapshots = vec![ClaudeSnapshot {
         at: now,
         subscription_type: None,
+        rate_limit_tier: None,
         five_hour: None,
         seven_day: None,
         weekly_breakdown: Some(WeeklyBreakdown {

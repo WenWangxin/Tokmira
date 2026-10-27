@@ -4,11 +4,15 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Local, Utc};
 use serde_json::json;
-use token_audit_core::advice::{build_advice, AdviceConfig, AdviceInput};
+use token_audit_core::advice::{
+    build_advice, percentile, prompt_request_distribution, quota_advice_states, warm_middle_writes,
+    AdviceConfig, AdviceInput,
+};
 use token_audit_core::attribution::{attribute, WindowKind};
 use token_audit_core::claude::scan_claude;
 use token_audit_core::codex::scan_codex;
 use token_audit_core::dashboard::{build_overview, OverviewInput, QuotaDisplay};
+use token_audit_core::environment::scan_environment;
 use token_audit_core::model::Tool;
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{read_claude, read_codex};
@@ -27,6 +31,7 @@ struct Args {
     window: Option<String>,
     days: u32,
     id: Option<String>,
+    distribution: bool,
 }
 fn print_share(summary: &ShareSummary) {
     println!(
@@ -93,11 +98,13 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
     let mut window = None;
     let mut days = None;
     let mut id = None;
+    let mut distribution = false;
     let mut args = args.peekable();
     while let Some(flag) = args.next() {
         let flag = flag.to_str().ok_or("参数名不是有效文本")?;
         match flag {
             "--json" if !json => json = true,
+            "--distribution" if command == "advice" && !distribution => distribution = true,
             "--home" if home.is_none() => {
                 home = Some(PathBuf::from(args.next().ok_or("--home 缺少目录")?))
             }
@@ -136,6 +143,9 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
             _ => return Err(format!("未知或重复的参数：{flag}")),
         }
     }
+    if distribution && json {
+        return Err("--distribution 与 --json 只能选一个".into());
+    }
     Ok(Args {
         home: home.or_else(dirs::home_dir).ok_or("无法确定用户主目录")?,
         data_dir: data_dir
@@ -146,6 +156,7 @@ fn parse(args: impl Iterator<Item = OsString>, command: &str) -> Result<Args, St
         window,
         days: days.unwrap_or(7),
         id,
+        distribution,
     })
 }
 
@@ -165,6 +176,8 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
         settings.calibration.as_ref(),
     );
     let pricing = Pricing::bundled().map_err(str::to_owned)?;
+    let mut compactions = claude.compactions;
+    compactions.extend(codex.compactions);
     let mut events = claude.events;
     events.extend(codex.events);
     let mut prompts = claude.prompts;
@@ -184,6 +197,51 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
         titles: &titles,
         pricing: &pricing,
     };
+    if command == "advice" && args.distribution {
+        let since = Utc::now() - chrono::Duration::days(i64::from(args.days));
+        let advice_config = AdviceConfig::bundled().map_err(str::to_owned)?;
+        for tool in [Tool::Claude, Tool::Codex] {
+            let values = prompt_request_distribution(&events, &prompts, tool, since, Utc::now());
+            println!(
+                "{:?}：{} 条提示，p50 {:.1}，p90 {:.1}，p95 {:.1}，p99 {:.1}，最多 {} 次请求",
+                tool,
+                values.prompts,
+                values.p50,
+                values.p90,
+                values.p95,
+                values.p99,
+                values.maximum
+            );
+            let mut writes: Vec<f64> = warm_middle_writes(
+                &events,
+                &compactions,
+                tool,
+                since,
+                Utc::now(),
+                advice_config.cache_rebuild.max_read_share,
+            )
+            .into_iter()
+            .map(|value| value as f64)
+            .collect();
+            writes.sort_by(f64::total_cmp);
+            println!(
+                "{:?}：热缓存中途写入 {} 次，p90 {:.0}，p95 {:.0}，最多 {:.0} token",
+                tool,
+                writes.len(),
+                percentile(&writes, 0.9).unwrap_or(0.0),
+                percentile(&writes, 0.95).unwrap_or(0.0),
+                writes.last().copied().unwrap_or(0.0)
+            );
+            println!(
+                "{:?}：其中 ≥2 万 {} 次、≥3 万 {} 次、≥5 万 {} 次",
+                tool,
+                writes.iter().filter(|value| **value >= 20_000.0).count(),
+                writes.iter().filter(|value| **value >= 30_000.0).count(),
+                writes.iter().filter(|value| **value >= 50_000.0).count()
+            );
+        }
+        return Ok(());
+    }
     if command == "share" {
         let summary = share_summary(
             &OverviewInput {
@@ -255,6 +313,9 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
                 pricing: &pricing,
                 config: &config,
                 dismissed: &settings.dismissed_advice,
+                compactions: &compactions,
+                environment: None,
+                quotas: &[],
             },
             30,
             Utc::now(),
@@ -287,6 +348,21 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
         return Ok(());
     } else if command == "advice" {
         let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+        let projects: Vec<PathBuf> = events
+            .iter()
+            .filter_map(|event| event.project.as_ref().map(PathBuf::from))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let environment = scan_environment(&args.home, &projects);
+        let quotas = quota_advice_states(
+            &points,
+            &claude_snapshots,
+            &codex_snapshots,
+            &events,
+            Utc::now(),
+            config.plan_fit.max_end_gap_hours,
+        );
         let report = build_advice(
             &AdviceInput {
                 events: &attribution.events,
@@ -294,6 +370,9 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
                 pricing: &pricing,
                 config: &config,
                 dismissed: &settings.dismissed_advice,
+                compactions: &compactions,
+                environment: Some(&environment),
+                quotas: &quotas,
             },
             args.days,
             Utc::now(),

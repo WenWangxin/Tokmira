@@ -2,7 +2,7 @@
 import { showToast } from '../toast'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { CircleAlert, Clock, Coins, Cpu, ExternalLink, GitFork, Layers, Lightbulb, List, Zap } from 'lucide-vue-next'
+import { ArrowLeftRight, Brain, CircleAlert, Clock, Coins, Cpu, ExternalLink, FileStack, Gauge, GitFork, Layers, Lightbulb, List, Network, Search, Sparkles, TrendingUp, WandSparkles, Zap } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import AnimatedNumber from '../components/AnimatedNumber.vue'
@@ -32,6 +32,17 @@ const icons: Record<string, unknown> = {
   long_context: Layers,
   expensive_light_task: Cpu,
   many_subagents: GitFork,
+  model_switch: ArrowLeftRight,
+  context_spike: FileStack,
+  runaway_prompt: TrendingUp,
+  expensive_subagent: Cpu,
+  heavy_reasoning: Brain,
+  fast_mode: Gauge,
+  high_effort_light_task: Sparkles,
+  frequent_compaction: Layers,
+  web_search: Search,
+  quota_rebalance: Network,
+  plan_fit: WandSparkles,
 }
 
 async function load(keep = false) {
@@ -83,6 +94,9 @@ const usd = (value: number) => `$${value.toFixed(2)}`
 
 /** "额外消耗 4.1% 周额度" for avoidable waste, "消耗 …" for necessary overhead. */
 function impact(item: AdviceItem) {
+  if (!item.avoidable && item.overhead_cost_usd === 0) {
+    return item.overhead_tokens ? `涉及 ${item.overhead_tokens.toLocaleString()} token` : item.sessions === 0 ? '额度与套餐参考' : '用量提醒'
+  }
   const verb = item.avoidable ? '额外消耗' : '消耗'
   return item.consumed_weekly_pct !== null
     ? `${verb} ${pct(item.consumed_weekly_pct)} 周额度`
@@ -117,7 +131,8 @@ function impact(item: AdviceItem) {
           <span class="advice-stat-icon"><Coins :size="20" /></span>
           <div>
             <small>预计节省</small>
-            <p v-if="current.summary.avoidable_weekly_pct !== null"><strong class="advice-saving"><AnimatedNumber :initial-animation="reveal" :value="current.summary.avoidable_weekly_pct.toFixed(1)" /></strong><span>% 周额度</span></p>
+            <p v-if="current.summary.avoidable_cost_usd === 0 && !current.summary.avoidable_weekly_pct"><strong class="advice-saving">—</strong><span>暂无可量化结果</span></p>
+            <p v-else-if="current.summary.avoidable_weekly_pct !== null"><strong class="advice-saving"><AnimatedNumber :initial-animation="reveal" :value="current.summary.avoidable_weekly_pct.toFixed(1)" /></strong><span>% 周额度</span></p>
             <p v-else><strong class="advice-saving"><AnimatedNumber :initial-animation="reveal" :value="usd(current.summary.avoidable_cost_usd)" /></strong><span>API 等价</span></p>
           </div>
         </article>
@@ -127,7 +142,8 @@ function impact(item: AdviceItem) {
         </article>
         <article class="card advice-stat">
           <span class="advice-stat-icon"><List :size="20" /></span>
-          <div><small>涉及</small><p><strong>{{ current.summary.sessions }}</strong><span>个会话</span></p></div>
+          <div v-if="current.summary.sessions"><small>涉及</small><p><strong>{{ current.summary.sessions }}</strong><span>个会话</span></p></div>
+          <div v-else><small>依据</small><p><strong>额度</strong><span>状态</span></p></div>
         </article>
       </section>
 
@@ -157,7 +173,7 @@ function impact(item: AdviceItem) {
       </article>
       </TransitionGroup>
       <p v-if="current.items.length && current.hidden" class="advice-hidden-note">已隐藏 {{ current.hidden }} 条建议，可在<button @click="router.push('/settings')">设置</button>中恢复</p>
-      <p v-if="!current.has_quota_data && current.items.length" class="advice-hidden-note">暂无 {{ tool }} 额度数据，影响程度按 API 等价费用估算。开启官方额度查询或状态栏记录器后可换算为周额度百分比。</p>
+      <p v-if="!current.has_quota_data && current.items.some(item => item.overhead_cost_usd > 0)" class="advice-hidden-note">暂无 {{ tool }} 额度数据，影响程度按 API 等价费用估算。开启官方额度查询或状态栏记录器后可换算为周额度百分比。</p>
     </template>
   </div>
 </template>

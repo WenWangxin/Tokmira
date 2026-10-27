@@ -45,6 +45,21 @@ export function mockAdvice(periodDays: number, variant: string | null): AdviceRe
       description: '每个新会话都需要先把系统提示和工具定义写入缓存。频繁新开会话会反复支付这部分开销；连续的小任务可以在同一会话里完成。',
       overhead_tokens: 945000, overhead_cost_usd: 4.72, consumed_weekly_pct: pct(3.4), avoidable_cost_usd: 0, avoidable_weekly_pct: pct(0),
     }),
+    ...[
+      ['model_switch', '中途换模型导致缓存重建', '换模型放在任务阶段之间，或开启新会话。'],
+      ['context_spike', '一次塞入大量内容', '大文件只读相关部分，大 diff 分批看。'],
+      ['runaway_prompt', '一次提示跑了太多轮', '先明确完成条件，再执行。'],
+      ['expensive_subagent', '子代理用了高价模型', '简单子任务可选用 Sonnet。'],
+      ['fast_mode', '使用了快速模式', '不赶时间时用 /fast 关闭。'],
+      ['high_effort_light_task', '轻量任务用了高推理强度', '轻量任务可调低推理强度。'],
+      ['frequent_compaction', '频繁压缩上下文', '阶段完成后可以开启新会话。'],
+      ['web_search', '联网搜索次数较多', '文档问题优先查本地。'],
+      ['quota_rebalance', '两个额度池可以分流', '适合的任务可以分流到另一工具。'],
+      ['plan_fit', '套餐是否合适', '根据最近四个完整周评估。'],
+    ].map(([id, title, description]) => item('Claude', id, {
+      title, description, avoidable: false, sessions: id === 'plan_fit' || id === 'quota_rebalance' ? 0 : 2,
+      facts: id === 'plan_fit' ? ['最近 4 个完整周：35%、42%、39%、31%', '降档后月费减少约 $80'] : ['仅供开发预览'],
+    })),
   ]
   const codex = empty ? [] : [
     item('Codex', 'long_context', {
@@ -52,6 +67,11 @@ export function mockAdvice(periodDays: number, variant: string | null): AdviceRe
       facts: ['80 次请求', '平均上下文 33.1 万', '最长 48.0 万'],
       description: '上下文越长，每次请求都要重新读取越多缓存。任务阶段完成后可执行 /compact，或开启新会话。',
       overhead_tokens: 1400000, overhead_cost_usd: 0.28, consumed_weekly_pct: pct(2.4), avoidable_cost_usd: 0.28, avoidable_weekly_pct: pct(2.4),
+    }),
+    item('Codex', 'heavy_reasoning', {
+      title: '推理 token 占比过高', facts: ['命中 3 次提示', '推理 1.2 万 token'],
+      description: '简单任务可通过 /model 调低推理强度。', overhead_tokens: 12000,
+      overhead_cost_usd: 0.09, avoidable_cost_usd: 0.09,
     }),
   ]
   const summary = (items: AdviceItem[]) => ({

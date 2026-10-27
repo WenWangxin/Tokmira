@@ -12,8 +12,8 @@ use crate::usage::directory_name;
 
 /// One tool's API-equivalent cost for the local calendar month.
 ///
-/// `plan` is the raw snapshot label. `subscription_usd` is set only when that
-/// label maps to a known monthly price.
+/// `plan` is the dashboard label after known Max tiers are normalized.
+/// `subscription_usd` is set only when that label maps to a known monthly price.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ShareToolCost {
     pub tool: Tool,
@@ -292,6 +292,9 @@ mod tests {
             model: model.to_owned(),
             project: project.map(str::to_owned),
             is_subagent: false,
+            fast: false,
+            effort: None,
+            web_search_requests: 0,
             tokens: counts,
         }
     }
@@ -300,6 +303,7 @@ mod tests {
         ClaudeSnapshot {
             at: at("2026-10-01T00:00:00Z"),
             subscription_type: Some(plan.to_owned()),
+            rate_limit_tier: None,
             five_hour: None,
             seven_day: None,
             weekly_breakdown: None,

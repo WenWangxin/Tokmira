@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::model::{PromptEvent, Source, TokenCounts, Tool, UsageEvent};
+use crate::model::{CompactEvent, PromptEvent, Source, TokenCounts, Tool, UsageEvent};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct CodexScanStats {
@@ -33,11 +33,14 @@ pub struct CodexScanStats {
     pub rate_limit_snapshots: u64,
     /// Matching paths that could not be opened or fully read.
     pub unreadable_files: u64,
+    pub reasoning_included_samples: u64,
+    pub reasoning_separate_samples: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CodexScan {
     pub events: Vec<UsageEvent>,
+    pub compactions: Vec<CompactEvent>,
     pub prompts: Vec<PromptEvent>,
     pub titles: BTreeMap<String, String>,
     pub rate_limits: Vec<RateLimitSnapshot>,
@@ -140,6 +143,7 @@ struct RawLine {
     #[serde(rename = "type")]
     kind: Option<String>,
     payload: Option<RawPayload>,
+    latest_token_usage_record: Option<RawUsage>,
 }
 
 #[derive(Deserialize)]
@@ -154,9 +158,11 @@ struct RawPayload {
     source: Option<SubagentSource>,
     cwd: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     usage: Option<RawUsage>,
     info: Option<RawInfo>,
     rate_limits: Option<RawRateLimits>,
+    latest_token_usage_record: Option<RawUsage>,
 }
 
 #[derive(Default)]
@@ -235,6 +241,22 @@ struct RawUsage {
     total_tokens: u64,
 }
 
+fn record_reasoning_relation(stats: &mut CodexScanStats, usage: &RawUsage) {
+    if usage.reasoning_output_tokens == 0 || usage.total_tokens == 0 {
+        return;
+    }
+    if usage.total_tokens == usage.input_tokens.saturating_add(usage.output_tokens) {
+        stats.reasoning_included_samples += 1;
+    } else if usage.total_tokens
+        == usage
+            .input_tokens
+            .saturating_add(usage.output_tokens)
+            .saturating_add(usage.reasoning_output_tokens)
+    {
+        stats.reasoning_separate_samples += 1;
+    }
+}
+
 #[derive(Deserialize)]
 struct RawInfo {
     total_token_usage: Option<RawUsage>,
@@ -274,6 +296,7 @@ struct FileContext {
     is_subagent: bool,
     project: Option<String>,
     model: String,
+    effort: Option<String>,
 }
 
 impl Default for FileContext {
@@ -284,6 +307,7 @@ impl Default for FileContext {
             is_subagent: false,
             project: None,
             model: String::new(),
+            effort: None,
         }
     }
 }
@@ -356,6 +380,9 @@ fn event(
         model: context.model.clone(),
         project: context.project.clone(),
         is_subagent: context.is_subagent,
+        fast: false,
+        effort: context.effort.clone(),
+        web_search_requests: 0,
         tokens,
     })
 }
@@ -409,6 +436,25 @@ fn scan_reader(
             }
         };
         let parsed_timestamp = timestamp(&raw);
+        if raw.kind.as_deref() == Some("compacted") {
+            if let Some(timestamp) = parsed_timestamp {
+                let latest = raw.latest_token_usage_record.as_ref().or_else(|| {
+                    raw.payload
+                        .as_ref()
+                        .and_then(|payload| payload.latest_token_usage_record.as_ref())
+                });
+                scan.compactions.push(CompactEvent {
+                    tool: Tool::Codex,
+                    session_id: context.session_id.clone(),
+                    timestamp,
+                    trigger: None,
+                    pre_tokens: latest.map(|usage| usage.input_tokens),
+                    post_tokens: None,
+                });
+            }
+            scan.stats.non_usage_lines += 1;
+            continue;
+        }
         let Some(payload) = raw.payload else {
             scan.stats.non_usage_lines += 1;
             continue;
@@ -428,6 +474,7 @@ fn scan_reader(
                 if let Some(model) = payload.model {
                     context.model = model;
                 }
+                context.effort = payload.effort;
                 if let Some(cwd) = payload.cwd {
                     context.project = Some(cwd);
                 }
@@ -458,6 +505,7 @@ fn scan_reader(
                     continue;
                 };
                 if let Some(usage) = payload.usage {
+                    record_reasoning_relation(&mut scan.stats, &usage);
                     let request_id = payload.response_id.filter(|id| !id.is_empty());
                     match event(timestamp, &context, usage, payload.session_id, request_id) {
                         Some(event) => records.push(event),
@@ -501,7 +549,10 @@ fn scan_reader(
                 };
                 let candidate = info
                     .and_then(|info| info.last_token_usage)
-                    .and_then(|usage| event(timestamp, &context, usage, None, None));
+                    .and_then(|usage| {
+                        record_reasoning_relation(&mut scan.stats, &usage);
+                        event(timestamp, &context, usage, None, None)
+                    });
                 fallback.push((candidate, duplicate));
             }
             _ => scan.stats.non_usage_lines += 1,
@@ -589,6 +640,8 @@ fn add_stats(total: &mut CodexScanStats, file: &CodexScanStats) {
     total.files_with_records += file.files_with_records;
     total.files_token_count_only += file.files_token_count_only;
     total.rate_limit_snapshots += file.rate_limit_snapshots;
+    total.reasoning_included_samples += file.reasoning_included_samples;
+    total.reasoning_separate_samples += file.reasoning_separate_samples;
 }
 
 /// Combines files in path order; a response ID already kept by an earlier file is
@@ -612,6 +665,8 @@ fn merge<'a>(home: &Path, files: impl Iterator<Item = &'a CodexFile>) -> CodexSc
             scan.events.push(event.clone());
         }
         scan.prompts.extend(file.scan.prompts.iter().cloned());
+        scan.compactions
+            .extend(file.scan.compactions.iter().cloned());
         scan.rate_limits
             .extend(file.scan.rate_limits.iter().cloned());
     }
@@ -621,6 +676,7 @@ fn merge<'a>(home: &Path, files: impl Iterator<Item = &'a CodexFile>) -> CodexSc
     scan.prompts
         .dedup_by(|a, b| a.session_id == b.session_id && a.timestamp == b.timestamp);
     scan.rate_limits.sort_by_key(|snapshot| snapshot.timestamp);
+    scan.compactions.sort_by_key(|event| event.timestamp);
     scan.titles = read_session_index(&home.join(".codex/session_index.jsonl"));
     scan
 }

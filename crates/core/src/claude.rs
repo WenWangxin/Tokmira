@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::model::{PromptEvent, Source, TokenCounts, Tool, UsageEvent};
+use crate::model::{CompactEvent, PromptEvent, Source, TokenCounts, Tool, UsageEvent};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct ClaudeScanStats {
@@ -25,6 +25,7 @@ pub struct ClaudeScanStats {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClaudeScan {
     pub events: Vec<UsageEvent>,
+    pub compactions: Vec<CompactEvent>,
     pub prompts: Vec<PromptEvent>,
     pub titles: BTreeMap<String, String>,
     pub stats: ClaudeScanStats,
@@ -92,7 +93,27 @@ struct RawLine {
     #[serde(rename = "isSidechain")]
     is_sidechain: Option<bool>,
     entrypoint: Option<String>,
+    effort: Option<String>,
     message: Option<RawMessage>,
+}
+
+#[derive(Deserialize)]
+struct CompactLine {
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
+    timestamp: Option<String>,
+    subtype: Option<String>,
+    #[serde(rename = "compactMetadata")]
+    metadata: Option<CompactMetadata>,
+}
+
+#[derive(Deserialize)]
+struct CompactMetadata {
+    trigger: Option<String>,
+    #[serde(rename = "preTokens")]
+    pre_tokens: Option<u64>,
+    #[serde(rename = "postTokens")]
+    post_tokens: Option<u64>,
 }
 
 struct RawMessage {
@@ -275,6 +296,14 @@ struct RawUsage {
     #[serde(default)]
     cache_creation_input_tokens: u64,
     cache_creation: Option<RawCacheCreation>,
+    speed: Option<String>,
+    server_tool_use: Option<ServerToolUse>,
+}
+
+#[derive(Deserialize)]
+struct ServerToolUse {
+    #[serde(default)]
+    web_search_requests: u32,
 }
 
 #[derive(Deserialize)]
@@ -374,6 +403,11 @@ fn parse_line(line: &[u8]) -> ParsedLine {
             model,
             project: raw.cwd,
             is_subagent: raw.is_sidechain == Some(true),
+            fast: usage.speed.as_deref() == Some("fast"),
+            effort: raw.effort,
+            web_search_requests: usage
+                .server_tool_use
+                .map_or(0, |tools| tools.web_search_requests),
             tokens,
         }),
         dedup_key,
@@ -385,6 +419,7 @@ fn parse_line(line: &[u8]) -> ParsedLine {
 #[derive(Clone, Default)]
 struct ClaudeFile {
     events: Vec<(UsageEvent, Option<DedupKey>)>,
+    compactions: Vec<CompactEvent>,
     prompts: Vec<PromptEvent>,
     custom_titles: BTreeMap<String, String>,
     ai_titles: BTreeMap<String, String>,
@@ -457,6 +492,33 @@ fn read_file(path: &Path, file: &mut ClaudeFile) -> Result<(), Error> {
                 }
             }
         }
+        if metadata_kind.as_deref() == Some("system") {
+            if let Ok(raw) = serde_json::from_slice::<CompactLine>(&line) {
+                if raw.subtype.as_deref() == Some("compact_boundary") {
+                    if let (Some(session_id), Some(at)) = (
+                        raw.session_id,
+                        raw.timestamp
+                            .as_deref()
+                            .and_then(|value| DateTime::parse_from_rfc3339(value).ok()),
+                    ) {
+                        file.compactions.push(CompactEvent {
+                            tool: Tool::Claude,
+                            session_id,
+                            timestamp: at.with_timezone(&Utc),
+                            trigger: raw
+                                .metadata
+                                .as_ref()
+                                .and_then(|metadata| metadata.trigger.clone()),
+                            pre_tokens: raw
+                                .metadata
+                                .as_ref()
+                                .and_then(|metadata| metadata.pre_tokens),
+                            post_tokens: raw.metadata.and_then(|metadata| metadata.post_tokens),
+                        });
+                    }
+                }
+            }
+        }
         match parse_line(&line) {
             ParsedLine::NonUsage => file.non_usage_lines += 1,
             ParsedLine::Malformed => file.malformed_lines += 1,
@@ -502,6 +564,7 @@ fn merge<'a>(files: impl Iterator<Item = &'a ClaudeFile>) -> ClaudeScan {
             }
         }
         scan.prompts.extend(file.prompts.iter().cloned());
+        scan.compactions.extend(file.compactions.iter().cloned());
         custom_titles.extend(
             file.custom_titles
                 .iter()
@@ -511,6 +574,7 @@ fn merge<'a>(files: impl Iterator<Item = &'a ClaudeFile>) -> ClaudeScan {
     }
     scan.events.sort_by_key(|event| event.timestamp);
     scan.prompts.sort_by_key(|prompt| prompt.timestamp);
+    scan.compactions.sort_by_key(|event| event.timestamp);
     ai_titles.extend(custom_titles);
     scan.titles = ai_titles;
     scan

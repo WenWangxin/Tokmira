@@ -22,6 +22,7 @@ use token_audit_core::claude_quota::{
 use zeroize::Zeroizing;
 
 const CODE: &str = include_str!("fixtures/claude_quota/code.json");
+const CODE_MAX: &str = include_str!("fixtures/claude_quota/code_max.json");
 const USAGE: &str = include_str!("fixtures/claude_quota/usage.json");
 const USAGE_BREAKDOWN: &str = include_str!("fixtures/claude_quota/usage_breakdown.json");
 
@@ -245,6 +246,31 @@ fn code_credential_and_usage_are_filtered() {
     assert!(!json.contains("fake@example.test"));
     assert!(!json.contains("fake-refresh-token"));
     assert_eq!(transport.calls(), 1);
+}
+
+#[test]
+fn max_tier_is_selected_from_credential_metadata() {
+    let home = TempHome::new();
+    home.write_code(CODE_MAX);
+    let store = FakeStore {
+        desktop: None,
+        code: Some(CODE_MAX.to_owned()),
+        denied: false,
+    };
+    let result = query_claude_quota(
+        &store,
+        home.path(),
+        &FakeTransport::usage(),
+        &options(CredentialPreference::ClaudeCode),
+    )
+    .expect("quota");
+    assert_eq!(result.subscription_type.as_deref(), Some("max"));
+    assert_eq!(
+        result.rate_limit_tier.as_deref(),
+        Some("default_claude_max_5x")
+    );
+    let snapshot = token_audit_core::quota_store::ClaudeSnapshot::from(&result);
+    assert_eq!(snapshot.rate_limit_tier, result.rate_limit_tier);
 }
 
 #[test]

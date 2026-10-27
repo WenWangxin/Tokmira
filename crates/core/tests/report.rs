@@ -23,6 +23,9 @@ fn event(
         model: model.into(),
         project: context.0.map(str::to_owned),
         is_subagent: context.1,
+        fast: false,
+        effort: None,
+        web_search_requests: 0,
         tokens,
     }
 }

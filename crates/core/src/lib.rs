@@ -6,6 +6,7 @@ pub mod codex;
 pub mod codex_app_server;
 pub mod dashboard;
 pub mod detect;
+pub mod environment;
 pub mod forecast;
 pub mod model;
 pub mod pricing;

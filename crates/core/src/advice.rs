@@ -13,15 +13,21 @@
 //! a single tag: Error wins, then the earlier rule.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::Path;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::attribution::EventAttribution;
-use crate::model::{PromptEvent, TokenCounts, Tool, UsageEvent};
+use crate::environment::EnvironmentSnapshot;
+use crate::forecast::{forecast, Forecast, WindowKind};
+use crate::model::{CompactEvent, PromptEvent, TokenCounts, Tool, UsageEvent};
 use crate::pricing::{ModelPrices, Pricing};
+use crate::quota_store::{normalize_claude_plan, ClaudeSnapshot, CodexSnapshot};
+use crate::timeline::QuotaPoint;
 
 mod alerts;
+mod rules_m12;
 pub use alerts::{AdviceAlert, AlertTracker};
 
 #[derive(Clone, Debug, Deserialize)]
@@ -57,6 +63,68 @@ pub struct SubagentConfig {
     pub min_requests: u64,
 }
 #[derive(Clone, Debug, Deserialize)]
+pub struct ModelSwitchConfig {
+    pub ignore_models: Vec<String>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct ContextSpikeConfig {
+    pub min_spike_tokens: u64,
+    pub target_tokens: u64,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct RunawayPromptConfig {
+    pub max_requests_per_prompt: u64,
+    pub codex_max_requests_per_prompt: u64,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct ExpensiveSubagentConfig {
+    pub min_requests: u64,
+    pub claude_alternative: String,
+    pub codex_alternative: String,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct HeavyReasoningConfig {
+    pub min_reasoning_tokens: u64,
+    pub min_reasoning_share: f64,
+    pub keep_share: f64,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct FastModeConfig {
+    pub claude_price_multiplier: f64,
+    pub claude_models: Vec<String>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct HighEffortLightTaskConfig {
+    pub claude_high_efforts: Vec<String>,
+    pub codex_high_efforts: Vec<String>,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct FrequentCompactionConfig {
+    pub min_compactions: u64,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct WebSearchConfig {
+    pub min_searches: u64,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct StartupConfig {
+    pub bytes_per_token: u64,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct QuotaRebalanceConfig {
+    pub busy_weekly_pct: f64,
+    pub idle_weekly_pct: f64,
+}
+#[derive(Clone, Debug, Deserialize)]
+pub struct PlanFitConfig {
+    pub headroom: f64,
+    pub min_weeks: usize,
+    pub min_capped_weeks: usize,
+    pub max_end_gap_hours: i64,
+    pub claude_capacity: BTreeMap<String, f64>,
+    pub chatgpt_capacity: BTreeMap<String, f64>,
+}
+#[derive(Clone, Debug, Deserialize)]
 pub struct AlertConfig {
     pub cooldown_minutes: i64,
     pub light_task_settle_minutes: i64,
@@ -75,6 +143,18 @@ pub struct AdviceConfig {
     pub long_context: LongContextConfig,
     pub light_task: LightTaskConfig,
     pub subagents: SubagentConfig,
+    pub model_switch: ModelSwitchConfig,
+    pub context_spike: ContextSpikeConfig,
+    pub runaway_prompt: RunawayPromptConfig,
+    pub expensive_subagent: ExpensiveSubagentConfig,
+    pub heavy_reasoning: HeavyReasoningConfig,
+    pub fast_mode: FastModeConfig,
+    pub high_effort_light_task: HighEffortLightTaskConfig,
+    pub frequent_compaction: FrequentCompactionConfig,
+    pub web_search: WebSearchConfig,
+    pub session_startup: StartupConfig,
+    pub quota_rebalance: QuotaRebalanceConfig,
+    pub plan_fit: PlanFitConfig,
     pub alerts: AlertConfig,
     #[serde(default)]
     pub links: BTreeMap<String, AdviceLink>,
@@ -207,6 +287,132 @@ pub struct AdviceInput<'a> {
     pub pricing: &'a Pricing,
     pub config: &'a AdviceConfig,
     pub dismissed: &'a [String],
+    pub compactions: &'a [CompactEvent],
+    pub environment: Option<&'a EnvironmentSnapshot>,
+    pub quotas: &'a [QuotaAdviceState],
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct QuotaAdviceState {
+    pub tool: Option<Tool>,
+    pub weekly_pct: Option<f64>,
+    pub resets_at: Option<DateTime<Utc>>,
+    pub predicted_hit_at: Option<DateTime<Utc>>,
+    pub used_recently: bool,
+    pub plan: Option<String>,
+    pub completed_weekly_max: Vec<f64>,
+}
+
+pub fn quota_advice_states(
+    points: &[QuotaPoint],
+    claude: &[ClaudeSnapshot],
+    codex: &[CodexSnapshot],
+    events: &[UsageEvent],
+    now: DateTime<Utc>,
+    max_end_gap_hours: i64,
+) -> Vec<QuotaAdviceState> {
+    [Tool::Claude, Tool::Codex]
+        .into_iter()
+        .map(|tool| {
+            let current = points
+                .iter()
+                .filter(|point| point.tool == tool && point.at <= now)
+                .filter_map(|point| point.weekly.as_ref().map(|window| (point.at, window)))
+                .filter(|(_, window)| window.resets_at.is_some_and(|reset| reset > now))
+                .max_by_key(|(at, _)| *at)
+                .map(|(_, window)| window);
+            let mut weeks = BTreeMap::<i64, (f64, DateTime<Utc>, DateTime<Utc>)>::new();
+            match tool {
+                Tool::Claude => {
+                    for snapshot in claude.iter().filter(|snapshot| snapshot.at <= now) {
+                        if let Some(window) = &snapshot.seven_day {
+                            if let Some(reset) = window.resets_at.filter(|reset| *reset <= now) {
+                                if snapshot.at > reset {
+                                    continue;
+                                }
+                                let entry = weeks
+                                    .entry(reset.timestamp().div_euclid(60))
+                                    .or_insert((0.0, snapshot.at, reset));
+                                entry.0 = entry.0.max(window.used_percent);
+                                if snapshot.at > entry.1 {
+                                    entry.1 = snapshot.at;
+                                    entry.2 = reset;
+                                }
+                            }
+                        }
+                    }
+                }
+                Tool::Codex => {
+                    for snapshot in codex.iter().filter(|snapshot| {
+                        snapshot.at <= now
+                            && matches!(snapshot.limit_id.as_deref(), None | Some("codex"))
+                    }) {
+                        if let Some(window) = &snapshot.secondary {
+                            if let Some(reset) = window.resets_at.filter(|reset| *reset <= now) {
+                                if snapshot.at > reset {
+                                    continue;
+                                }
+                                let entry = weeks
+                                    .entry(reset.timestamp().div_euclid(60))
+                                    .or_insert((0.0, snapshot.at, reset));
+                                entry.0 = entry.0.max(window.used_percent);
+                                if snapshot.at > entry.1 {
+                                    entry.1 = snapshot.at;
+                                    entry.2 = reset;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let plan = match tool {
+                Tool::Claude => claude
+                    .iter()
+                    .filter(|snapshot| {
+                        snapshot.at <= now && snapshot.at >= now - Duration::days(30)
+                    })
+                    .max_by_key(|snapshot| snapshot.at)
+                    .and_then(|snapshot| {
+                        normalize_claude_plan(
+                            snapshot.subscription_type.as_deref(),
+                            snapshot.rate_limit_tier.as_deref(),
+                        )
+                    }),
+                Tool::Codex => codex
+                    .iter()
+                    .filter(|snapshot| {
+                        snapshot.at <= now
+                            && snapshot.at >= now - Duration::days(30)
+                            && matches!(snapshot.limit_id.as_deref(), None | Some("codex"))
+                    })
+                    .max_by_key(|snapshot| snapshot.at)
+                    .and_then(|snapshot| snapshot.plan_type.clone()),
+            };
+            QuotaAdviceState {
+                tool: Some(tool),
+                weekly_pct: current.map(|window| window.used_percent),
+                resets_at: current.and_then(|window| window.resets_at),
+                predicted_hit_at: match forecast(points, tool, WindowKind::Weekly, now) {
+                    Forecast::WillHit { at } => Some(at),
+                    _ => None,
+                },
+                used_recently: events.iter().any(|event| {
+                    event.tool == tool
+                        && event.timestamp >= now - Duration::days(30)
+                        && event.timestamp <= now
+                }),
+                plan,
+                completed_weekly_max: weeks
+                    .into_iter()
+                    .rev()
+                    .filter(|(_, (_, latest, reset))| {
+                        *reset - *latest <= Duration::hours(max_end_gap_hours.max(0))
+                    })
+                    .map(|(_, (max, _, _))| max)
+                    .collect(),
+            }
+        })
+        .collect()
 }
 
 /// One event's contribution to a rule.
@@ -215,6 +421,7 @@ struct Hit<'a> {
     overhead_tokens: u64,
     overhead_cost: f64,
     avoidable_cost: f64,
+    actual_cost: Option<f64>,
 }
 
 struct RuleOutput<'a> {
@@ -286,6 +493,111 @@ pub fn percentile(sorted: &[f64], q: f64) -> Option<f64> {
     Some(sorted[lower] + (sorted[upper] - sorted[lower]) * fraction)
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct PromptRequestDistribution {
+    pub prompts: usize,
+    pub p50: f64,
+    pub p90: f64,
+    pub p95: f64,
+    pub p99: f64,
+    pub maximum: usize,
+}
+
+/// Counts usage requests attributed to each prompt using timestamps only.
+pub fn prompt_request_distribution(
+    events: &[UsageEvent],
+    prompts: &[PromptEvent],
+    tool: Tool,
+    since: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> PromptRequestDistribution {
+    let mut starts: BTreeMap<&str, Vec<DateTime<Utc>>> = BTreeMap::new();
+    for prompt in prompts.iter().filter(|prompt| {
+        prompt.tool == tool && prompt.timestamp >= since && prompt.timestamp <= now
+    }) {
+        starts
+            .entry(&prompt.session_id)
+            .or_default()
+            .push(prompt.timestamp);
+    }
+    let mut counts: BTreeMap<(&str, DateTime<Utc>), usize> = BTreeMap::new();
+    for (session, times) in &mut starts {
+        times.sort();
+        times.dedup();
+        for at in times.iter() {
+            counts.insert((session, *at), 0);
+        }
+    }
+    for event in events
+        .iter()
+        .filter(|event| event.tool == tool && event.timestamp >= since && event.timestamp <= now)
+    {
+        let Some(times) = starts.get(event.session_id.as_str()) else {
+            continue;
+        };
+        if let Some(index) = times
+            .partition_point(|at| *at <= event.timestamp)
+            .checked_sub(1)
+        {
+            *counts
+                .entry((event.session_id.as_str(), times[index]))
+                .or_default() += 1;
+        }
+    }
+    let mut values: Vec<f64> = counts.values().map(|count| *count as f64).collect();
+    values.sort_by(f64::total_cmp);
+    PromptRequestDistribution {
+        prompts: values.len(),
+        p50: percentile(&values, 0.5).unwrap_or(0.0),
+        p90: percentile(&values, 0.9).unwrap_or(0.0),
+        p95: percentile(&values, 0.95).unwrap_or(0.0),
+        p99: percentile(&values, 0.99).unwrap_or(0.0),
+        maximum: values.last().copied().unwrap_or(0.0) as usize,
+    }
+}
+
+/// Candidate new writes in a warm, unchanged-model main session, before the size gate.
+pub fn warm_middle_writes(
+    events: &[UsageEvent],
+    compactions: &[CompactEvent],
+    tool: Tool,
+    since: DateTime<Utc>,
+    now: DateTime<Utc>,
+    max_read_share: f64,
+) -> Vec<u64> {
+    let mut by_session: BTreeMap<&str, Vec<&UsageEvent>> = BTreeMap::new();
+    for event in events
+        .iter()
+        .filter(|event| event.tool == tool && !event.is_subagent && event.timestamp <= now)
+    {
+        by_session.entry(&event.session_id).or_default().push(event);
+    }
+    let mut writes = Vec::new();
+    for requests in by_session.values_mut() {
+        requests.sort_by_key(|event| event.timestamp);
+        for pair in requests.windows(2) {
+            let (previous, current) = (pair[0], pair[1]);
+            if current.timestamp < since
+                || previous.model != current.model
+                || compactions.iter().any(|compact| {
+                    compact.tool == tool
+                        && compact.session_id == current.session_id
+                        && compact.timestamp > previous.timestamp
+                        && compact.timestamp <= current.timestamp
+                })
+            {
+                continue;
+            }
+            let read = current.tokens.cache_read;
+            let written = rebuild_tokens(current);
+            if (read as f64) >= (1.0 - max_read_share) * (read + written) as f64 {
+                writes.push(written);
+            }
+        }
+    }
+    writes
+}
+
 fn event_cost(pricing: &Pricing, event: &UsageEvent) -> f64 {
     pricing.cost_usd(&event.model, &event.tokens).unwrap_or(0.0)
 }
@@ -352,6 +664,7 @@ fn cache_rebuild<'a>(
                 overhead_tokens: rebuilt,
                 overhead_cost: extra,
                 avoidable_cost: extra,
+                actual_cost: None,
             });
         }
     }
@@ -414,20 +727,94 @@ fn session_startup<'a>(
             overhead_tokens: tokens,
             overhead_cost: cost,
             avoidable_cost: 0.0,
+            actual_cost: None,
         });
     }
     if hits.is_empty() {
         return None;
     }
     let average = hits.iter().map(|hit| hit.overhead_tokens).sum::<u64>() / hits.len() as u64;
+    let mut starts: Vec<f64> = hits.iter().map(|hit| hit.overhead_tokens as f64).collect();
+    starts.sort_by(f64::total_cmp);
+    let baseline = percentile(&starts, 0.1).unwrap_or(0.0) as u64;
+    let mut facts = vec![
+        format!("{} 个新会话", hits.len()),
+        format!("单次约 {} token", format_tokens(average)),
+        format!(
+            "比最低一批（p10）多约 {} token",
+            format_tokens(average.saturating_sub(baseline))
+        ),
+    ];
+    if let Some(environment) = input.environment {
+        let tool = hits[0].item.event.tool;
+        let (names, project_names, global_bytes, project_bytes) = match tool {
+            Tool::Claude => (
+                &environment.claude_global_mcp_names,
+                Some(&environment.claude_project_mcp_names),
+                environment.claude_instruction_bytes,
+                &environment.claude_project_instruction_bytes,
+            ),
+            Tool::Codex => (
+                &environment.codex_global_mcp_names,
+                None,
+                environment.codex_instruction_bytes,
+                &environment.codex_project_instruction_bytes,
+            ),
+        };
+        let shown = names.iter().take(5).cloned().collect::<Vec<_>>().join("、");
+        facts.push(format!(
+            "本机配置的全局 MCP 服务器 {} 个{}",
+            names.len(),
+            if shown.is_empty() {
+                String::new()
+            } else {
+                format!("：{shown}")
+            }
+        ));
+        if let Some(project_names) = project_names {
+            let names: BTreeSet<&str> = hits
+                .iter()
+                .filter_map(|hit| hit.item.event.project.as_deref())
+                .filter_map(|path| project_names.get(Path::new(path)))
+                .flat_map(|names| names.iter().map(String::as_str))
+                .collect();
+            if !names.is_empty() {
+                facts.push(format!("项目级 MCP 服务器 {} 个", names.len()));
+            }
+        }
+        if tool == Tool::Claude && environment.claude_plugins > 0 {
+            facts.push(format!("启用 {} 个插件", environment.claude_plugins));
+        }
+        let average_project_bytes = hits
+            .iter()
+            .map(|hit| {
+                hit.item
+                    .event
+                    .project
+                    .as_deref()
+                    .and_then(|path| project_bytes.get(Path::new(path)))
+                    .copied()
+                    .unwrap_or(0)
+            })
+            .sum::<u64>()
+            / hits.len() as u64;
+        facts.push(format!(
+            "说明文件约 {} token",
+            format_tokens(
+                global_bytes.saturating_add(average_project_bytes)
+                    / input.config.session_startup.bytes_per_token.max(1)
+            )
+        ));
+    }
     Some(RuleOutput {
         id: "session_startup",
         title: "新会话的启动开销".to_owned(),
-        facts: vec![
-            format!("{} 个新会话", hits.len()),
-            format!("单次约 {} token", format_tokens(average)),
-        ],
-        description: "每个新会话都需要先把系统提示和工具定义写入缓存。频繁新开会话会反复支付这部分开销；连续的小任务可以在同一会话里完成。".to_owned(),
+        facts,
+        description: if input.environment.is_some() {
+            "每个新会话都会加载配置、工具定义和说明文件。这里只统计本机配置文件；桌面端或账号同步的插件与工具不在其中。可检查不常用的 MCP 服务器和插件，连续的小任务可以在同一会话完成。".to_owned()
+        } else {
+            "每个新会话都需要先把系统提示和工具定义写入缓存。频繁新开会话会反复支付这部分开销；连续的小任务可以在同一会话里完成。".to_owned()
+        },
         occurrences: hits.len() as u64,
         hits,
         avoidable: false,
@@ -463,6 +850,7 @@ fn long_context<'a>(
             overhead_tokens: excess,
             overhead_cost: cost,
             avoidable_cost: cost,
+            actual_cost: None,
         });
     }
     if hits.is_empty() {
@@ -578,6 +966,7 @@ fn expensive_light_task<'a>(
                 overhead_tokens: item.event.tokens.total_without_reasoning(),
                 overhead_cost: (cost - cheaper).max(0.0),
                 avoidable_cost: (cost - cheaper).max(0.0),
+                actual_cost: None,
             });
         }
     }
@@ -659,6 +1048,7 @@ fn many_subagents<'a>(
                 overhead_tokens: item.event.tokens.total_without_reasoning(),
                 overhead_cost: cost,
                 avoidable_cost: 0.0,
+                actual_cost: None,
             });
         }
     }
@@ -690,7 +1080,9 @@ fn many_subagents<'a>(
 fn weekly_share(hits: &[Hit<'_>], pricing: &Pricing, part: impl Fn(&Hit<'_>) -> f64) -> f64 {
     hits.iter()
         .map(|hit| {
-            let cost = event_cost(pricing, &hit.item.event);
+            let cost = hit
+                .actual_cost
+                .unwrap_or_else(|| event_cost(pricing, &hit.item.event));
             if cost <= 0.0 {
                 0.0
             } else {
@@ -702,11 +1094,21 @@ fn weekly_share(hits: &[Hit<'_>], pricing: &Pricing, part: impl Fn(&Hit<'_>) -> 
 
 fn finish(tool: Tool, rule: &RuleOutput<'_>, has_quota: bool, input: &AdviceInput<'_>) -> Advice {
     let pricing = input.pricing;
-    let overhead_cost: f64 = rule.hits.iter().map(|hit| hit.overhead_cost).sum();
-    let avoidable_cost: f64 = rule.hits.iter().map(|hit| hit.avoidable_cost).sum();
-    let consumed = has_quota.then(|| weekly_share(&rule.hits, pricing, |hit| hit.overhead_cost));
+    let overhead_cost: f64 = if rule.hits.is_empty() {
+        0.0
+    } else {
+        rule.hits.iter().map(|hit| hit.overhead_cost).sum()
+    };
+    let avoidable_cost: f64 = if rule.hits.is_empty() {
+        0.0
+    } else {
+        rule.hits.iter().map(|hit| hit.avoidable_cost).sum()
+    };
+    let attributed = rule.hits.iter().any(|hit| hit.item.weekly_delta != 0.0);
+    let show_pct = has_quota && !rule.hits.is_empty() && (attributed || overhead_cost <= 0.0);
+    let consumed = show_pct.then(|| weekly_share(&rule.hits, pricing, |hit| hit.overhead_cost));
     let avoidable_pct =
-        has_quota.then(|| weekly_share(&rule.hits, pricing, |hit| hit.avoidable_cost));
+        show_pct.then(|| weekly_share(&rule.hits, pricing, |hit| hit.avoidable_cost));
     // Unavoidable overhead is informational, so only avoidable waste can be an Error.
     let severity_config = &input.config.severity;
     let severity = match (rule.avoidable, avoidable_pct) {
@@ -738,7 +1140,7 @@ fn finish(tool: Tool, rule: &RuleOutput<'_>, has_quota: bool, input: &AdviceInpu
         avoidable_weekly_pct: if rule.avoidable {
             avoidable_pct
         } else {
-            has_quota.then_some(0.0)
+            show_pct.then_some(0.0)
         },
         link: input.config.link(rule.id),
         session_ids,
@@ -866,7 +1268,8 @@ fn tool_rules<'a>(
         .copied()
         .filter(|item| item.event.timestamp >= since && item.event.timestamp <= now)
         .collect();
-    if period.is_empty() {
+    let quota_rules = rules_m12::quota_rules(tool, input);
+    if period.is_empty() && quota_rules.is_empty() {
         return None;
     }
     // Session order uses all history so "first request" means the true first request.
@@ -881,7 +1284,7 @@ fn tool_rules<'a>(
         .filter(|item| !item.event.is_subagent)
         .collect();
     let sessions = sessions_in_order(&main_all);
-    let rules = [
+    let mut rules: Vec<RuleOutput<'a>> = [
         cache_rebuild(tool, &sessions, since, input),
         session_startup(&sessions, since, input),
         long_context(&main_period, input),
@@ -891,6 +1294,16 @@ fn tool_rules<'a>(
     .into_iter()
     .flatten()
     .collect();
+    rules.extend(rules_m12::usage_rules(
+        tool,
+        &sessions,
+        &period,
+        input.prompts,
+        since,
+        now,
+        input,
+    ));
+    rules.extend(quota_rules);
     Some(ToolRules { period, rules })
 }
 
@@ -966,14 +1379,16 @@ pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc
             .iter()
             .flat_map(|advice| advice.session_ids.iter())
             .collect();
+        let attributed_savings: Vec<f64> = items
+            .iter()
+            .filter_map(|advice| advice.avoidable_weekly_pct)
+            .collect();
         let summary = ToolAdviceSummary {
-            avoidable_weekly_pct: has_quota.then(|| {
-                items
-                    .iter()
-                    .filter_map(|advice| advice.avoidable_weekly_pct)
-                    .sum()
-            }),
-            avoidable_cost_usd: items.iter().map(|advice| advice.avoidable_cost_usd).sum(),
+            avoidable_weekly_pct: (has_quota && !attributed_savings.is_empty())
+                .then(|| attributed_savings.into_iter().sum()),
+            avoidable_cost_usd: items
+                .iter()
+                .fold(0.0, |sum, advice| sum + advice.avoidable_cost_usd),
             count: items.len(),
             sessions: sessions_touched.len(),
         };

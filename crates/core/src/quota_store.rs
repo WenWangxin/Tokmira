@@ -20,9 +20,33 @@ pub struct StoredWindow {
 pub struct ClaudeSnapshot {
     pub at: DateTime<Utc>,
     pub subscription_type: Option<String>,
+    #[serde(default)]
+    pub rate_limit_tier: Option<String>,
     pub five_hour: Option<StoredWindow>,
     pub seven_day: Option<StoredWindow>,
     pub weekly_breakdown: Option<WeeklyBreakdown>,
+}
+
+/// Normalize the subscription label using only plan metadata from a credential.
+pub fn normalize_claude_plan(
+    subscription_type: Option<&str>,
+    rate_limit_tier: Option<&str>,
+) -> Option<String> {
+    let plan = subscription_type?.trim();
+    if plan.is_empty() {
+        return None;
+    }
+    if !plan.eq_ignore_ascii_case("max") {
+        return Some(plan.to_owned());
+    }
+    let tier = rate_limit_tier?.to_ascii_lowercase();
+    if tier.contains("max_20x") {
+        Some("max_20x".to_owned())
+    } else if tier.contains("max_5x") {
+        Some("max_5x".to_owned())
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -135,6 +159,7 @@ impl From<&ClaudeQuota> for ClaudeSnapshot {
         Self {
             at: quota.fetched_at,
             subscription_type: quota.subscription_type.clone(),
+            rate_limit_tier: quota.rate_limit_tier.clone(),
             five_hour: window("five_hour", 300),
             seven_day: window("seven_day", 10080),
             weekly_breakdown: quota.weekly_breakdown.clone(),

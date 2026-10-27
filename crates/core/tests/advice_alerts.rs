@@ -1,7 +1,9 @@
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use token_audit_core::advice::{AdviceAlert, AdviceConfig, AdviceInput, AlertTracker};
+use token_audit_core::advice::{
+    AdviceAlert, AdviceConfig, AdviceInput, AlertTracker, QuotaAdviceState,
+};
 use token_audit_core::attribution::EventAttribution;
-use token_audit_core::model::{PromptEvent, Source, TokenCounts, Tool, UsageEvent};
+use token_audit_core::model::{CompactEvent, PromptEvent, Source, TokenCounts, Tool, UsageEvent};
 use token_audit_core::pricing::Pricing;
 
 fn start() -> DateTime<Utc> {
@@ -25,6 +27,9 @@ fn event(session: &str, minutes: i64, model: &str, tokens: TokenCounts) -> Event
             model: model.to_owned(),
             project: Some("/fake/project".to_owned()),
             is_subagent: false,
+            fast: false,
+            effort: None,
+            web_search_requests: 0,
             tokens,
         },
         five_hour_delta: 0.0,
@@ -54,6 +59,8 @@ struct Logs {
     events: Vec<EventAttribution>,
     prompts: Vec<PromptEvent>,
     dismissed: Vec<String>,
+    compactions: Vec<CompactEvent>,
+    quotas: Vec<QuotaAdviceState>,
 }
 
 impl Logs {
@@ -62,6 +69,8 @@ impl Logs {
             events: Vec::new(),
             prompts: Vec::new(),
             dismissed: Vec::new(),
+            compactions: Vec::new(),
+            quotas: Vec::new(),
         }
     }
 
@@ -74,9 +83,177 @@ impl Logs {
             pricing: &pricing,
             config: &config,
             dismissed: &self.dismissed,
+            compactions: &self.compactions,
+            environment: None,
+            quotas: &self.quotas,
         };
         tracker.check(&input, at(minutes))
     }
+}
+
+fn m12_alert(logs: &Logs, minute: i64) -> Option<AdviceAlert> {
+    let mut tracker = AlertTracker::default();
+    Logs::new().check(&mut tracker, 0);
+    logs.check(&mut tracker, minute)
+}
+
+#[test]
+fn m12_per_request_alerts_hit_and_miss() {
+    let mut switch = Logs::new();
+    switch
+        .events
+        .push(event("s", 1, "claude-opus-5-5", tokens(0, 30_000, 100)));
+    switch
+        .events
+        .push(event("s", 2, "claude-sonnet-5-5", tokens(100, 30_000, 100)));
+    assert_eq!(
+        m12_alert(&switch, 3).expect("switch").key,
+        "claude:model_switch"
+    );
+    switch.events[1].event.model = "claude-haiku-5-5".into();
+    assert!(m12_alert(&switch, 3).is_none());
+
+    let mut spike = Logs::new();
+    spike
+        .events
+        .push(event("s", 1, "claude-sonnet-5-5", tokens(0, 40_000, 100)));
+    spike.events.push(event(
+        "s",
+        2,
+        "claude-sonnet-5-5",
+        tokens(200_000, 50_000, 100),
+    ));
+    assert_eq!(
+        m12_alert(&spike, 3).expect("spike").key,
+        "claude:context_spike"
+    );
+    spike.events[1].event.tokens.cache_write_5m = 19_999;
+    assert!(m12_alert(&spike, 3).is_none());
+}
+
+#[test]
+fn m12_session_alerts_hit_and_miss() {
+    let mut runaway = Logs::new();
+    runaway.prompts.push(prompt("s", 1));
+    for minute in 2..42 {
+        runaway
+            .events
+            .push(event("s", minute, "claude-sonnet-5-5", tokens(10, 0, 100)));
+    }
+    assert_eq!(
+        m12_alert(&runaway, 45).expect("runaway").key,
+        "claude:runaway_prompt"
+    );
+    runaway.events.pop();
+    assert!(m12_alert(&runaway, 45).is_none());
+
+    let mut subagent = Logs::new();
+    for minute in 1..=5 {
+        let mut item = event("s", minute, "claude-opus-5-5", tokens(0, 1_000, 100));
+        item.event.is_subagent = true;
+        subagent.events.push(item);
+    }
+    assert_eq!(
+        m12_alert(&subagent, 6).expect("subagent").key,
+        "claude:expensive_subagent"
+    );
+    subagent.events.pop();
+    assert!(m12_alert(&subagent, 6).is_none());
+
+    let mut fast = Logs::new();
+    let mut item = event("s", 1, "claude-sonnet-5-5", tokens(0, 1_000, 100));
+    item.event.fast = true;
+    fast.events.push(item);
+    assert_eq!(m12_alert(&fast, 2).expect("fast").key, "claude:fast_mode");
+    fast.events[0].event.fast = false;
+    assert!(m12_alert(&fast, 2).is_none());
+
+    let mut effort = Logs::new();
+    effort.prompts.push(prompt("s", 1));
+    let mut item = event("s", 2, "claude-sonnet-5-5", tokens(0, 1_000, 100));
+    item.event.effort = Some("xhigh".into());
+    effort.events.push(item);
+    assert_eq!(
+        m12_alert(&effort, 5).expect("effort").key,
+        "claude:high_effort_light_task"
+    );
+    effort.events[0].event.effort = Some("high".into());
+    assert!(m12_alert(&effort, 5).is_none());
+
+    let mut reasoning = Logs::new();
+    reasoning.prompts.push(PromptEvent {
+        tool: Tool::Codex,
+        session_id: "s".into(),
+        timestamp: at(1),
+    });
+    let mut item = event(
+        "s",
+        2,
+        "gpt-6-astra",
+        TokenCounts {
+            input: 100,
+            output: 3_100,
+            reasoning: 3_000,
+            ..TokenCounts::default()
+        },
+    );
+    item.event.tool = Tool::Codex;
+    item.event.source = Source::CodexCli;
+    reasoning.events.push(item);
+    assert_eq!(
+        m12_alert(&reasoning, 5).expect("reasoning").key,
+        "codex:heavy_reasoning"
+    );
+    reasoning.events[0].event.tokens.reasoning = 1_000;
+    assert!(m12_alert(&reasoning, 5).is_none());
+}
+
+#[test]
+fn m12_informational_rules_never_alert_even_when_hit() {
+    let mut logs = Logs::new();
+    let mut item = event("s", 1, "claude-sonnet-5-5", tokens(0, 30_000, 100));
+    item.event.web_search_requests = 20;
+    logs.events.push(item);
+    logs.compactions = vec![
+        CompactEvent {
+            tool: Tool::Claude,
+            session_id: "s".into(),
+            timestamp: at(2),
+            trigger: Some("auto".into()),
+            pre_tokens: Some(90_000),
+            post_tokens: Some(10_000),
+        },
+        CompactEvent {
+            tool: Tool::Claude,
+            session_id: "s".into(),
+            timestamp: at(3),
+            trigger: Some("manual".into()),
+            pre_tokens: Some(90_000),
+            post_tokens: Some(10_000),
+        },
+    ];
+    logs.quotas = vec![
+        QuotaAdviceState {
+            tool: Some(Tool::Claude),
+            weekly_pct: Some(74.0),
+            resets_at: Some(at(100)),
+            predicted_hit_at: Some(at(50)),
+            used_recently: true,
+            plan: Some("max_5x".into()),
+            completed_weekly_max: vec![10.0; 4],
+        },
+        QuotaAdviceState {
+            tool: Some(Tool::Codex),
+            weekly_pct: Some(20.0),
+            used_recently: true,
+            ..QuotaAdviceState::default()
+        },
+    ];
+    assert!(m12_alert(&logs, 5).is_none());
+    logs.events[0].event.web_search_requests = 0;
+    logs.compactions.clear();
+    logs.quotas.clear();
+    assert!(m12_alert(&logs, 5).is_none());
 }
 
 /// A session that already has a long context before the app starts.

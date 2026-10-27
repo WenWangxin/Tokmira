@@ -15,7 +15,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri::{Emitter, State};
 use token_audit_core::advice::{
-    build_advice, AdviceAlert, AdviceConfig, AdviceInput, AdviceReport, AlertTracker,
+    build_advice, quota_advice_states, AdviceAlert, AdviceConfig, AdviceInput, AdviceReport,
+    AlertTracker,
 };
 use token_audit_core::attribution::{attribute, Attribution, WindowKind};
 use token_audit_core::claude::{ClaudeScan, ClaudeScanner};
@@ -29,7 +30,8 @@ use token_audit_core::codex_app_server::{
 };
 use token_audit_core::dashboard::{build_overview, Overview, OverviewInput};
 use token_audit_core::detect::{self, DetectedTool};
-use token_audit_core::model::{PromptEvent, Tool};
+use token_audit_core::environment::scan_environment;
+use token_audit_core::model::{CompactEvent, PromptEvent, Tool};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{self, CodexDaily};
 use token_audit_core::recorder::{self, RecorderParts, RecorderPlan, RecorderStatus};
@@ -419,8 +421,10 @@ async fn get_attribution(state: State<'_, AppState>) -> Result<Attribution, Stri
 
 /// Everything a page command needs, computed once from the cached scan.
 struct UsageContext<'a> {
+    home: &'a std::path::Path,
     input: &'a OverviewInput<'a>,
     prompts: &'a [PromptEvent],
+    compactions: &'a [CompactEvent],
     settings: &'a AppSettings,
     now: DateTime<Utc>,
 }
@@ -491,8 +495,11 @@ fn with_usage<R>(
         settings.calibration.as_ref(),
     );
     let pricing = Pricing::bundled().map_err(str::to_owned)?;
+    let mut compactions = scans.claude.compactions;
+    compactions.extend(scans.codex.compactions);
     let mut events = scans.claude.events;
     events.extend(scans.codex.events);
+    let now = Utc::now();
     let mut prompts = scans.claude.prompts;
     prompts.extend(scans.codex.prompts);
     let mut titles: BTreeMap<_, _> = scans.claude.titles;
@@ -517,10 +524,12 @@ fn with_usage<R>(
         recorder: recorder::status(home, data_dir),
     };
     build(&UsageContext {
+        home,
         input: &input,
         prompts: &prompts,
+        compactions: &compactions,
         settings: &settings,
-        now: Utc::now(),
+        now,
     })
 }
 
@@ -666,6 +675,23 @@ fn session_input<'a>(context: &'a UsageContext<'a>) -> SessionInput<'a> {
 
 fn advice_report(context: &UsageContext<'_>, period_days: u32) -> Result<AdviceReport, String> {
     let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+    let projects: Vec<PathBuf> = context
+        .input
+        .events
+        .iter()
+        .filter_map(|event| event.project.as_ref().map(PathBuf::from))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let environment = scan_environment(context.home, &projects);
+    let quotas = quota_advice_states(
+        context.input.points,
+        context.input.claude_snapshots,
+        context.input.codex_snapshots,
+        context.input.events,
+        context.now,
+        config.plan_fit.max_end_gap_hours,
+    );
     Ok(build_advice(
         &AdviceInput {
             events: &context.input.attribution.events,
@@ -673,6 +699,9 @@ fn advice_report(context: &UsageContext<'_>, period_days: u32) -> Result<AdviceR
             pricing: context.input.pricing,
             config: &config,
             dismissed: &context.settings.dismissed_advice,
+            compactions: context.compactions,
+            environment: Some(&environment),
+            quotas: &quotas,
         },
         period_days,
         context.now,
@@ -707,7 +736,22 @@ async fn get_session_detail(
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
         with_usage(&home, &data_dir, &cached, |context| {
-            let tags = advice_report(context, 30)?.event_tags;
+            let config = AdviceConfig::bundled().map_err(str::to_owned)?;
+            let tags = build_advice(
+                &AdviceInput {
+                    events: &context.input.attribution.events,
+                    prompts: context.prompts,
+                    pricing: context.input.pricing,
+                    config: &config,
+                    dismissed: &context.settings.dismissed_advice,
+                    compactions: context.compactions,
+                    environment: None,
+                    quotas: &[],
+                },
+                30,
+                context.now,
+            )
+            .event_tags;
             session_detail(
                 &session_input(context),
                 context.prompts,
@@ -793,6 +837,9 @@ fn spawn_alerts(
                     pricing: context.input.pricing,
                     config: &config,
                     dismissed: &context.settings.dismissed_advice,
+                    compactions: context.compactions,
+                    environment: None,
+                    quotas: &[],
                 };
                 if seed {
                     tracker.seed(&input, context.now);

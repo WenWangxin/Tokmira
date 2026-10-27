@@ -8,7 +8,7 @@ use crate::codex::RateLimitSnapshot;
 use crate::forecast::{forecast, Forecast, WindowKind};
 use crate::model::{Source, TokenCounts, Tool, UsageEvent};
 use crate::pricing::Pricing;
-use crate::quota_store::{ClaudeSnapshot, CodexSnapshot};
+use crate::quota_store::{normalize_claude_plan, ClaudeSnapshot, CodexSnapshot};
 use crate::recorder::RecorderStatus;
 use crate::timeline::{window_id, Origin, QuotaPoint};
 
@@ -557,7 +557,12 @@ pub fn build_overview<Tz: TimeZone>(
                     .claude_snapshots
                     .iter()
                     .max_by_key(|s| s.at)
-                    .and_then(|s| s.subscription_type.clone()),
+                    .and_then(|s| {
+                        normalize_claude_plan(
+                            s.subscription_type.as_deref(),
+                            s.rate_limit_tier.as_deref(),
+                        )
+                    }),
                 Tool::Codex => input
                     .codex_snapshots
                     .iter()

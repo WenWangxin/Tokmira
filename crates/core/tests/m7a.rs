@@ -62,6 +62,9 @@ fn event(minute: u32, input: u64, model: &str) -> UsageEvent {
         model: model.into(),
         project: Some("fixture".into()),
         is_subagent: false,
+        fast: false,
+        effort: None,
+        web_search_requests: 0,
         tokens: TokenCounts {
             input,
             ..TokenCounts::default()
@@ -134,6 +137,7 @@ fn timeline_deduplicates_only_when_both_windows_match_and_rounds_reset() {
     let snapshot = |minute, five, weekly| ClaudeSnapshot {
         at: at(1, minute),
         subscription_type: None,
+        rate_limit_tier: None,
         five_hour: Some(StoredWindow {
             used_percent: five,
             resets_at: Some(reset),
@@ -447,6 +451,7 @@ fn settings_and_quota_store_round_trip_and_skip_bad_lines() {
     let snapshot = ClaudeSnapshot {
         at: at(1, 0),
         subscription_type: Some("pro".into()),
+        rate_limit_tier: None,
         five_hour: Some(StoredWindow {
             used_percent: 8.0,
             resets_at: Some(at(5, 0)),
@@ -589,6 +594,7 @@ fn subscription_multiple_counts_only_tools_with_recognized_plans() {
     let claude_snapshots = vec![ClaudeSnapshot {
         at: at(1, 3),
         subscription_type: Some("pro".into()),
+        rate_limit_tier: None,
         five_hour: None,
         seven_day: None,
         weekly_breakdown: None,
@@ -758,6 +764,7 @@ fn overview_prices_known_plans_and_marks_weekly_prompt() {
     let claude_snapshots = vec![ClaudeSnapshot {
         at: at(1, 0),
         subscription_type: Some("pro".into()),
+        rate_limit_tier: None,
         five_hour: None,
         seven_day: None,
         weekly_breakdown: None,
@@ -789,4 +796,42 @@ fn overview_prices_known_plans_and_marks_weekly_prompt() {
     assert_eq!(overview.trends[0].week_high_prompts.len(), 1);
     assert_eq!(overview.trends[0].today_high_prompts.len(), 1);
     assert_eq!(overview.recent_high_prompts[0].total_tokens, 100);
+    let mut max_snapshots = claude_snapshots;
+    max_snapshots[0].subscription_type = Some("max".into());
+    max_snapshots[0].rate_limit_tier = Some("default_claude_max_5x".into());
+    let max_overview = build_overview(
+        &OverviewInput {
+            events: &events,
+            titles: &titles,
+            points: &points,
+            attribution: &attribution,
+            claude_snapshots: &max_snapshots,
+            codex_snapshots: &[],
+            codex_log: &[],
+            pricing: &pricing,
+            recorder: RecorderStatus::default(),
+        },
+        at(2, 0),
+        Utc,
+    );
+    assert_eq!(max_overview.tools[0].plan.as_deref(), Some("max_5x"));
+    assert_eq!(max_overview.tools[0].subscription_usd, Some(100.0));
+    max_snapshots[0].rate_limit_tier = None;
+    let unknown_overview = build_overview(
+        &OverviewInput {
+            events: &events,
+            titles: &titles,
+            points: &points,
+            attribution: &attribution,
+            claude_snapshots: &max_snapshots,
+            codex_snapshots: &[],
+            codex_log: &[],
+            pricing: &pricing,
+            recorder: RecorderStatus::default(),
+        },
+        at(2, 0),
+        Utc,
+    );
+    assert_eq!(unknown_overview.tools[0].plan, None);
+    assert_eq!(unknown_overview.tools[0].subscription_usd, None);
 }

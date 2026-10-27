@@ -56,7 +56,20 @@ pub struct UsageEvent {
     pub model: String,
     pub project: Option<String>,
     pub is_subagent: bool,
+    pub fast: bool,
+    pub effort: Option<String>,
+    pub web_search_requests: u32,
     pub tokens: TokenCounts,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CompactEvent {
+    pub tool: Tool,
+    pub session_id: String,
+    pub timestamp: DateTime<Utc>,
+    pub trigger: Option<String>,
+    pub pre_tokens: Option<u64>,
+    pub post_tokens: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

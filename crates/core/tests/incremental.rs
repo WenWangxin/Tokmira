@@ -93,10 +93,17 @@ fn claude_incremental_matches_full_scan() {
     // output, must replace the earlier event in place across files.
     append(&second, &claude_line("req-stream", "msg-stream", 99, 30));
     append(&second, &claude_line("req-new", "msg-new", 5, 31));
+    for line in include_str!("fixtures/m12/claude.jsonl").lines() {
+        append(&second, line);
+    }
     append(&second, "{not json");
     let incremental = scanner.scan(home.path()).expect("scan");
     assert!(scanner.changed());
     assert_eq!(incremental, scan_claude(home.path()).expect("full"));
+    assert!(incremental.events.iter().any(|event| event.fast
+        && event.effort.as_deref() == Some("xhigh")
+        && event.web_search_requests == 3));
+    assert_eq!(incremental.compactions.len(), 1);
 
     // A new transcript, including a subagent one.
     let added = projects.join("demo-c/session/subagents/agent.jsonl");
@@ -163,11 +170,25 @@ fn codex_incremental_matches_full_scan() {
     // A later file repeating a response ID from an earlier one is deduplicated.
     let repeat = r#"{"timestamp":"2026-10-15T12:00:00Z","type":"token_usage_record","payload":{"session_id":"fake-z","response_id":"resp-first","usage":{"input_tokens":5,"cached_input_tokens":0,"output_tokens":1,"total_tokens":6}}}"#;
     append(&z, repeat);
-    append(&z, "{broken");
-    assert_eq!(
-        scanner.scan(home.path()).expect("scan"),
-        scan_codex(home.path()).expect("full")
+    for line in include_str!("fixtures/m12/codex.jsonl").lines() {
+        append(&z, line);
+    }
+    append(
+        &z,
+        r#"{"timestamp":"2026-10-20T10:06:00Z","type":"turn_context","payload":{"model":"gpt-6-astra","effort":"xhigh"}}"#,
     );
+    append(
+        &z,
+        r#"{"timestamp":"2026-10-20T10:07:00Z","type":"token_usage_record","payload":{"response_id":"m12-record","usage":{"input_tokens":100,"output_tokens":50,"reasoning_output_tokens":40}}}"#,
+    );
+    append(&z, "{broken");
+    let incremental = scanner.scan(home.path()).expect("scan");
+    assert_eq!(incremental, scan_codex(home.path()).expect("full"));
+    assert!(incremental
+        .events
+        .iter()
+        .any(|event| event.effort.as_deref() == Some("xhigh")));
+    assert_eq!(incremental.compactions.len(), 1);
     assert!(scanner.changed());
 
     // New rollout in archived sessions.

@@ -3,6 +3,10 @@ currency = "USD"
 unit = "per_million_tokens"
 note = "仅供估算，非实际账单；claude-haiku-5-5 仅按 10 万 token 以内价格计算，不计长上下文加价。"
 
+[server_tools]
+# Anthropic 官方定价：联网搜索每 1000 次 $10；网页抓取不另计费。
+web_search_per_1k = 10
+
 # Monthly USD list prices for web subscriptions. Annual, regional, tax and app-store prices differ.
 # Sources: https://support.claude.com/en/articles/11049762-choose-a-claude-plan
 #          https://openai.com/chatgpt/pricing

@@ -583,6 +583,7 @@ pub struct ClaudeQuota {
     pub source: CredentialSource,
     pub fallback_reason: Option<String>,
     pub subscription_type: Option<String>,
+    pub rate_limit_tier: Option<String>,
     pub windows: Vec<ClaudeQuotaWindow>,
     pub weekly_breakdown: Option<WeeklyBreakdown>,
     pub extra_usage: Option<ExtraUsage>,
@@ -610,6 +611,8 @@ struct CodeOAuth {
     expires_at: Option<f64>,
     #[serde(rename = "subscriptionType")]
     subscription_type: Option<String>,
+    #[serde(rename = "rateLimitTier")]
+    rate_limit_tier: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -625,6 +628,7 @@ struct Credential {
     token: Zeroizing<String>,
     expires_at: i64,
     subscription_type: Option<String>,
+    rate_limit_tier: Option<String>,
 }
 
 fn expiration_seconds(timestamp: f64) -> Option<i64> {
@@ -699,6 +703,7 @@ fn code_credential(store: &dyn SecretStore, home: &Path) -> Result<Credential, C
         token,
         expires_at,
         subscription_type: oauth.subscription_type,
+        rate_limit_tier: oauth.rate_limit_tier,
     })
 }
 
@@ -717,8 +722,8 @@ fn decode_security_hex(bytes: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
     Some(decoded)
 }
 
-// This visitor only materializes access tokens and expiry times. Other fields,
-// including refreshToken, are consumed as IgnoredAny and never enter a model.
+// This visitor only materializes access tokens, expiry times, and plan metadata.
+// Other fields, including refreshToken, are consumed as IgnoredAny.
 #[cfg(any(target_os = "macos", test))]
 struct CredentialNode(Option<Credential>);
 
@@ -733,6 +738,7 @@ impl<'de> Deserialize<'de> for CredentialNode {
             }
             fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
                 let (mut token, mut access_token, mut expiry, mut best) = (None, None, None, None);
+                let (mut subscription_type, mut rate_limit_tier) = (None, None);
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "token" => token = map.next_value::<Option<SecretString>>()?.map(|v| v.0),
@@ -740,6 +746,10 @@ impl<'de> Deserialize<'de> for CredentialNode {
                             access_token = map.next_value::<Option<SecretString>>()?.map(|v| v.0)
                         }
                         "expiresAt" => expiry = map.next_value::<Option<f64>>()?,
+                        "subscriptionType" => {
+                            subscription_type = map.next_value::<Option<String>>()?
+                        }
+                        "rateLimitTier" => rate_limit_tier = map.next_value::<Option<String>>()?,
                         "refreshToken" => {
                             let _: IgnoredAny = map.next_value()?;
                         }
@@ -764,8 +774,17 @@ impl<'de> Deserialize<'de> for CredentialNode {
                         best = Some(Credential {
                             token,
                             expires_at,
-                            subscription_type: None,
+                            subscription_type: subscription_type.clone(),
+                            rate_limit_tier: rate_limit_tier.clone(),
                         });
+                    }
+                }
+                if let Some(best) = best.as_mut() {
+                    if best.subscription_type.is_none() {
+                        best.subscription_type = subscription_type;
+                    }
+                    if best.rate_limit_tier.is_none() {
+                        best.rate_limit_tier = rate_limit_tier;
                     }
                 }
                 Ok(CredentialNode(best))
@@ -1166,6 +1185,7 @@ pub fn query_claude_quota<S: SecretStore + Clone + Send + Sync + 'static>(
                 source,
                 fallback_reason: fallback,
                 subscription_type: credential.subscription_type,
+                rate_limit_tier: credential.rate_limit_tier,
                 windows: payload.windows,
                 weekly_breakdown: payload.weekly_breakdown,
                 extra_usage: payload.extra_usage,

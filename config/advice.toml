@@ -1,6 +1,6 @@
 # 省额度建议（消耗诊断）的阈值与外部链接。
 # 阈值依据 2026-10 在真实日志上的测量（见 docs/dev-plan.md 的 M7d），用户可用覆盖文件调整。
-version = "2026-10-24"
+version = "2026-10-27"
 
 [severity]
 # 可避免部分达到这么多周额度百分点，标为“多耗”（Error），否则为“提醒”（Warning）
@@ -41,6 +41,66 @@ codex_alternative = "gpt-6-sol"
 min_cost_share = 0.3
 min_requests = 10
 
+[model_switch]
+ignore_models = ["haiku"]
+
+[context_spike]
+# 30 天实测热缓存中途写入最大：Claude 48219、Codex 22069；2 万命中 11 次。
+min_spike_tokens = 20000
+target_tokens = 10000
+
+[runaway_prompt]
+max_requests_per_prompt = 40
+# 30 天实测 Codex 每提示 p95 为 88.5 次，向上取整；Claude p95 为 33 次，采用 40 次下限。
+codex_max_requests_per_prompt = 89
+
+[expensive_subagent]
+min_requests = 5
+claude_alternative = "claude-sonnet-5-5"
+codex_alternative = "gpt-6-sol"
+
+[heavy_reasoning]
+min_reasoning_tokens = 2000
+min_reasoning_share = 0.8
+keep_share = 0.3
+
+[fast_mode]
+# Anthropic 官方定价：Opus 5.5 快速模式 $8/$40 对标准 $4/$20，Opus 5 / 4.8 为 $10/$50 对 $5/$25。
+claude_price_multiplier = 2
+claude_models = ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"]
+
+[high_effort_light_task]
+claude_high_efforts = ["xhigh", "max"]
+codex_high_efforts = ["xhigh"]
+
+[frequent_compaction]
+min_compactions = 2
+
+[web_search]
+min_searches = 20
+
+[session_startup]
+bytes_per_token = 3
+
+[quota_rebalance]
+busy_weekly_pct = 70
+idle_weekly_pct = 30
+
+[plan_fit]
+headroom = 0.7
+min_weeks = 4
+min_capped_weeks = 2
+max_end_gap_hours = 24
+
+[plan_fit.claude_capacity]
+pro = 1
+max_5x = 5
+max_20x = 20
+
+[plan_fit.chatgpt_capacity]
+plus = 1
+# pro 容量未知，暂不填写。
+
 [alerts]
 # 后台提醒：两条系统通知之间至少间隔这么多分钟，期间新出现的问题只记下不通知
 cooldown_minutes = 5
@@ -67,5 +127,39 @@ label = ""
 url = ""
 
 [links.many_subagents]
+label = ""
+url = ""
+
+[links.model_switch]
+label = ""
+url = ""
+[links.context_spike]
+label = ""
+url = ""
+[links.runaway_prompt]
+label = ""
+url = ""
+[links.expensive_subagent]
+label = ""
+url = ""
+[links.heavy_reasoning]
+label = ""
+url = ""
+[links.fast_mode]
+label = ""
+url = ""
+[links.high_effort_light_task]
+label = ""
+url = ""
+[links.frequent_compaction]
+label = ""
+url = ""
+[links.web_search]
+label = ""
+url = ""
+[links.quota_rebalance]
+label = ""
+url = ""
+[links.plan_fit]
 label = ""
 url = ""
