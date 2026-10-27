@@ -21,6 +21,9 @@ use crate::attribution::EventAttribution;
 use crate::model::{PromptEvent, TokenCounts, Tool, UsageEvent};
 use crate::pricing::{ModelPrices, Pricing};
 
+mod alerts;
+pub use alerts::{AdviceAlert, AlertTracker};
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct SeverityConfig {
     pub error_weekly_pct: f64,
@@ -53,6 +56,12 @@ pub struct SubagentConfig {
     pub min_cost_share: f64,
     pub min_requests: u64,
 }
+#[derive(Clone, Debug, Deserialize)]
+pub struct AlertConfig {
+    pub cooldown_minutes: i64,
+    pub light_task_settle_minutes: i64,
+    pub lookback_hours: i64,
+}
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdviceLink {
     pub label: String,
@@ -66,6 +75,7 @@ pub struct AdviceConfig {
     pub long_context: LongContextConfig,
     pub light_task: LightTaskConfig,
     pub subagents: SubagentConfig,
+    pub alerts: AlertConfig,
     #[serde(default)]
     pub links: BTreeMap<String, AdviceLink>,
 }
@@ -833,6 +843,57 @@ fn prompt_tags_for(
 }
 
 /// Builds the advice report for the last `period_days` days.
+/// A tool's requests in the period and the rules they hit.
+struct ToolRules<'a> {
+    period: Vec<&'a EventAttribution>,
+    rules: Vec<RuleOutput<'a>>,
+}
+
+fn tool_rules<'a>(
+    tool: Tool,
+    input: &AdviceInput<'a>,
+    since: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Option<ToolRules<'a>> {
+    let mut all: Vec<&EventAttribution> = input
+        .events
+        .iter()
+        .filter(|item| item.event.tool == tool)
+        .collect();
+    all.sort_by_key(|item| item.event.timestamp);
+    let period: Vec<&EventAttribution> = all
+        .iter()
+        .copied()
+        .filter(|item| item.event.timestamp >= since && item.event.timestamp <= now)
+        .collect();
+    if period.is_empty() {
+        return None;
+    }
+    // Session order uses all history so "first request" means the true first request.
+    let main_all: Vec<&EventAttribution> = all
+        .iter()
+        .copied()
+        .filter(|item| !item.event.is_subagent)
+        .collect();
+    let main_period: Vec<&EventAttribution> = period
+        .iter()
+        .copied()
+        .filter(|item| !item.event.is_subagent)
+        .collect();
+    let sessions = sessions_in_order(&main_all);
+    let rules = [
+        cache_rebuild(tool, &sessions, since, input),
+        session_startup(&sessions, since, input),
+        long_context(&main_period, input),
+        expensive_light_task(tool, &main_period, input.prompts, since, input),
+        many_subagents(&period, input),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    Some(ToolRules { period, rules })
+}
+
 pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc>) -> AdviceReport {
     let since = now - Duration::days(i64::from(period_days));
     let mut tools = Vec::new();
@@ -845,33 +906,10 @@ pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc
         .map(|(index, event)| (std::ptr::from_ref(event), index))
         .collect();
     for tool in [Tool::Claude, Tool::Codex] {
-        let mut all: Vec<&EventAttribution> = input
-            .events
-            .iter()
-            .filter(|item| item.event.tool == tool)
-            .collect();
-        all.sort_by_key(|item| item.event.timestamp);
-        let period: Vec<&EventAttribution> = all
-            .iter()
-            .copied()
-            .filter(|item| item.event.timestamp >= since && item.event.timestamp <= now)
-            .collect();
-        if period.is_empty() {
+        let Some(ToolRules { period, rules }) = tool_rules(tool, input, since, now) else {
             continue;
-        }
+        };
         let has_quota = period.iter().any(|item| item.weekly_delta > 0.0);
-        // Session order uses all history so "first request" means the true first request.
-        let main_all: Vec<&EventAttribution> = all
-            .iter()
-            .copied()
-            .filter(|item| !item.event.is_subagent)
-            .collect();
-        let main_period: Vec<&EventAttribution> = period
-            .iter()
-            .copied()
-            .filter(|item| !item.event.is_subagent)
-            .collect();
-        let sessions = sessions_in_order(&main_all);
         let mut prompt_times: BTreeMap<&str, Vec<DateTime<Utc>>> = BTreeMap::new();
         for prompt in input.prompts.iter().filter(|prompt| prompt.tool == tool) {
             prompt_times
@@ -891,16 +929,6 @@ pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc
                     .or_default() += event_cost(input.pricing, &item.event);
             }
         }
-        let rules: Vec<RuleOutput<'_>> = [
-            cache_rebuild(tool, &sessions, since, input),
-            session_startup(&sessions, since, input),
-            long_context(&main_period, input),
-            expensive_light_task(tool, &main_period, input.prompts, since, input),
-            many_subagents(&period, input),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
         let mut chosen_tags = HashMap::new();
         let mut items = Vec::new();
         let mut hidden = 0;

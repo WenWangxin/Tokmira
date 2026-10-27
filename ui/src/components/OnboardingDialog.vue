@@ -1,38 +1,36 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { CircleCheck, Database, Info, ShieldCheck, Zap } from 'lucide-vue-next'
+import { BellRing, Bot, CircleCheck, Database, Info, LoaderCircle, ShieldCheck, Zap } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from './CodexLogo.vue'
 import Toggle from './Toggle.vue'
 import {
   detectTools,
+  getAutostart,
   getSettings,
+  notificationStatus,
+  requestNotifications,
+  setAutostart,
   recorderInstall,
   recorderPlan,
   recorderStatus,
   refreshQuotas,
   updateSettings,
   type DetectedTool,
+  type NotificationStatus,
 } from '../api'
 import {
-  claudeQuotaHint,
+  QUOTA_SOURCES,
+  detectedToolRows,
   initialOnboardingChoices,
   installOutcome,
-  onboardingChangeLines,
-  outcomeTone,
-  precisionPill,
+  notificationLine,
+  onboardingSummary,
   quotaOutcome,
-  toolSubtitle,
+  trayPlace,
   type OnboardingSelection,
 } from '../onboardingLogic'
 import { finishOnboarding } from '../onboardingState'
-
-const SOURCES = [
-  { source: 'ClaudeCli', name: 'Claude Code · 命令行' },
-  { source: 'ClaudeDesktop', name: 'Claude · 桌面版' },
-  { source: 'CodexCli', name: 'Codex · 命令行' },
-  { source: 'CodexDesktop', name: 'Codex · 桌面版' },
-] as const
 
 const CHECKS = [
   '默认不发起任何网络请求',
@@ -40,16 +38,27 @@ const CHECKS = [
   '核心算法开源，结果可独立复现',
 ]
 
+const STEPS = 4
+const REMINDER_STEP = 3
 const step = ref(1)
 const tools = ref<DetectedTool[] | null>(null)
 const detecting = ref(true)
 const detectError = ref('')
 const choicesReady = ref(false)
-const selection = ref<OnboardingSelection>({ statusline: true, claudeOfficial: false, codexOfficial: false })
+const selection = ref<OnboardingSelection>({ statusline: true, claudeOfficial: true, codexOfficial: true })
+// Background reminders: applied on 完成 and on 暂不开启 alike, which only skips quota sources.
+const reminders = ref({ notifications: true, autostart: true })
+const autostartAvailable = ref(true)
+const notifications = ref<NotificationStatus>('unknown')
+const notificationBusy = ref(false)
+let askedForNotifications = false
+const place = trayPlace(navigator.userAgent)
 const planError = ref('')
 const feedback = ref<string[]>([])
 const actionError = ref('')
 const busy = ref(false)
+// Set only while “完成” installs and queries, so the button can show it is working.
+const finishing = ref(false)
 const closing = ref(false)
 const panel = ref<HTMLElement | null>(null)
 const scroll = ref<HTMLElement | null>(null)
@@ -62,21 +71,14 @@ let heightPanel: HTMLElement | null = null
 let heightListener: ((event: TransitionEvent) => void) | null = null
 let enterDone: (() => void) | null = null
 
-const rows = computed(() => SOURCES.map(item => {
-  const found = tools.value?.find(tool => tool.source === item.source)
-  return {
-    ...item,
-    sessions: found?.sessions ?? 0,
-    requests: found?.requests ?? 0,
-    plan: found?.plan ?? null,
-  }
-}))
-const changeLines = computed(() => onboardingChangeLines(selection.value))
-const primaryLabel = computed(() => (step.value === 1 ? '开始' : step.value === 2 ? '下一步' : '完成'))
+const rows = computed(() => detectedToolRows(tools.value ?? []))
+const notifyLine = computed(() => notificationLine(notifications.value))
+const primaryLabel = computed(() => (step.value === 1 ? '开始' : step.value < STEPS ? '下一步' : '完成'))
 const nextDisabled = computed(() => busy.value || transitioning.value || (step.value === 2 && detecting.value && !tools.value))
 const stepTitle = computed(() => {
   if (step.value === 1) return '你的数据，只留在这台电脑上'
   if (step.value === 2) return '已检测到以下工具'
+  if (step.value === REMINDER_STEP) return '开启后台提醒'
   return '选择额度来源'
 })
 
@@ -99,12 +101,16 @@ async function loadTools() {
 
 async function loadChoices() {
   try {
-    const [settings, recorder] = await Promise.all([getSettings(), recorderStatus()])
+    const [settings, recorder, autostart] = await Promise.all([getSettings(), recorderStatus(), getAutostart()])
     selection.value = initialOnboardingChoices(
       settings.onboarding_completed,
       settings,
       recorder.statusline_installed || recorder.statusline_modified,
     )
+    autostartAvailable.value = autostart.available
+    reminders.value = settings.onboarding_completed
+      ? { notifications: settings.advice_notifications, autostart: autostart.enabled }
+      : { notifications: true, autostart: autostart.available }
   } catch {
     // Keep the first-run defaults. Saving later surfaces the read error.
   } finally {
@@ -122,8 +128,55 @@ async function refreshPlan() {
   }
 }
 
+async function loadNotifications() {
+  try {
+    notifications.value = await notificationStatus()
+  } catch {
+    notifications.value = 'unknown'
+  }
+}
+
+/** Shows the system prompt; macOS asks only once, later answers live in System Settings. */
+async function askForNotifications() {
+  if (notificationBusy.value) return
+  notificationBusy.value = true
+  try {
+    notifications.value = await requestNotifications()
+  } catch {
+    notifications.value = 'unknown'
+  } finally {
+    notificationBusy.value = false
+  }
+}
+
+// Ask as soon as the reminder step opens, so the system prompt sits next to its explanation.
+watch([step, notifications, () => reminders.value.notifications], () => {
+  if (step.value !== REMINDER_STEP || askedForNotifications || !reminders.value.notifications) return
+  if (notifications.value !== 'not_determined') return
+  askedForNotifications = true
+  void askForNotifications()
+})
+
+/** Coming back from System Settings: show what the user changed there. */
+function onWindowFocus() {
+  if (step.value === REMINDER_STEP) void loadNotifications()
+}
+
+/** Saves the reminder choices; a failed login item is reported, not fatal. */
+async function applyReminders(current: Awaited<ReturnType<typeof getSettings>>) {
+  const saved = await updateSettings({ ...current, advice_notifications: reminders.value.notifications, silent_start: reminders.value.autostart && autostartAvailable.value ? true : current.silent_start })
+  if (!autostartAvailable.value) return saved
+  try {
+    const autostart = await getAutostart()
+    if (autostart.enabled !== reminders.value.autostart) await setAutostart(reminders.value.autostart)
+  } catch (cause) {
+    feedback.value = [...feedback.value, `开机自动启动：${errorText(cause)}`]
+  }
+  return saved
+}
+
 watch([step, () => selection.value.statusline, choicesReady], () => {
-  if (!choicesReady.value || step.value !== 3 || !selection.value.statusline) {
+  if (!choicesReady.value || step.value !== STEPS || !selection.value.statusline) {
     planGeneration += 1
     planError.value = ''
     return
@@ -210,7 +263,7 @@ function changeStep(delta: 1 | -1) {
 async function next() {
   if (closing.value) return
   if (nextDisabled.value) return
-  if (step.value < 3) {
+  if (step.value < STEPS) {
     changeStep(1)
     return
   }
@@ -226,14 +279,15 @@ async function skip() {
 async function finish(skipChanges: boolean) {
   if (closing.value || busy.value) return
   busy.value = true
+  finishing.value = !skipChanges
   actionError.value = ''
   if (!skipChanges) feedback.value = []
   try {
-    const current = await getSettings()
+    const current = await applyReminders(await getSettings())
     if (!skipChanges) {
       if (selection.value.statusline) {
         const installed = await recorderInstall({ statusline: true, hooks: false })
-        feedback.value = installOutcome(installed.backup_path, installed.notes)
+        feedback.value = [...feedback.value, ...installOutcome(installed.backup_path, installed.notes)]
       }
       const saved = await updateSettings({
         ...current,
@@ -245,18 +299,20 @@ async function finish(skipChanges: boolean) {
         feedback.value = [...feedback.value, ...quotaOutcome(selection.value, refreshed)]
       }
       await updateSettings({ ...saved, onboarding_completed: true })
-      const message = feedback.value.join('；')
+      const summary = onboardingSummary(feedback.value)
       await nextTick()
-      finishOnboarding(message, outcomeTone(feedback.value))
+      finishOnboarding(summary.text, summary.tone)
       closing.value = true
       return
     }
     await updateSettings({ ...current, onboarding_completed: true })
-    finishOnboarding('', 'success')
+    const summary = feedback.value.length ? onboardingSummary(feedback.value) : { text: '', tone: 'success' as const }
+    finishOnboarding(summary.text, summary.tone)
     closing.value = true
   } catch (cause) {
     actionError.value = errorText(cause)
     busy.value = false
+    finishing.value = false
   }
 }
 
@@ -265,16 +321,24 @@ function toggle(key: keyof OnboardingSelection) {
   selection.value = { ...selection.value, [key]: !selection.value[key] }
 }
 
+function toggleReminder(key: 'notifications' | 'autostart') {
+  if (closing.value || busy.value) return
+  reminders.value = { ...reminders.value, [key]: !reminders.value[key] }
+}
+
 onMounted(() => {
   document.addEventListener('keydown', onKey, true)
+  window.addEventListener('focus', onWindowFocus)
   focusPrimary()
   void loadTools()
   void loadChoices()
+  void loadNotifications()
 })
 onUnmounted(() => {
   planGeneration += 1
   finishHeightTransition()
   document.removeEventListener('keydown', onKey, true)
+  window.removeEventListener('focus', onWindowFocus)
 })
 </script>
 
@@ -296,7 +360,7 @@ onUnmounted(() => {
             <template v-if="step === 1">
               <span class="onboarding-badge success"><ShieldCheck :size="22" :stroke-width="2" aria-hidden="true" /></span>
               <h2 id="onboarding-title">{{ stepTitle }}</h2>
-              <p id="onboarding-lead" class="onboarding-lead">token-audit 读取 Claude Code 与 Codex 存放在本机的日志，帮你看清额度余量、消耗去向与节省空间。</p>
+              <p id="onboarding-lead" class="onboarding-lead">token-audit 读取 AI 编程工具存放在本机的日志，帮你看清额度余量、消耗去向与节省空间。</p>
               <ul class="onboarding-checks">
                 <li v-for="item in CHECKS" :key="item"><CircleCheck :size="18" aria-hidden="true" />{{ item }}</li>
               </ul>
@@ -309,50 +373,62 @@ onUnmounted(() => {
               <p v-else-if="detectError && !tools" class="onboarding-error">{{ detectError }} <button type="button" class="onboarding-text" @click="loadTools">重试</button></p>
               <ul v-else class="onboarding-tools">
                 <li v-for="row in rows" :key="row.source" class="onboarding-tool">
-                  <span class="onboarding-logo"><img v-if="row.source.startsWith('Claude')" :src="ClaudeLogo" alt="" /><CodexLogo v-else /></span>
+                  <span class="onboarding-logo"><img v-if="row.logo === 'claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else-if="row.logo === 'codex'" /><Bot v-else :size="18" aria-hidden="true" /></span>
                   <span class="onboarding-tool-main">
                     <strong>{{ row.name }}</strong>
-                    <p>{{ toolSubtitle(row.source, row.sessions, row.plan) }}</p>
-                    <p v-if="claudeQuotaHint(row.source, row.sessions)" class="onboarding-hint">{{ claudeQuotaHint(row.source, row.sessions) }}</p>
+                    <p>{{ row.subtitle }}</p>
+                    <p v-if="row.hint" class="onboarding-hint">{{ row.hint }}</p>
                   </span>
-                  <span class="origin-pill settings-pill" :class="precisionPill(row.source, row.sessions).tone === 'success' ? 'pill-success' : 'pill-neutral'"><i />{{ precisionPill(row.source, row.sessions).text }}</span>
+                  <span class="origin-pill settings-pill" :class="row.pill.tone === 'success' ? 'pill-success' : 'pill-neutral'"><i />{{ row.pill.text }}</span>
                 </li>
               </ul>
-              <p class="onboarding-footnote"><Info :size="15" aria-hidden="true" />网页与桌面端聊天不在统计范围内。</p>
+              <p class="onboarding-footnote"><Info :size="15" aria-hidden="true" />网页版和桌面端的聊天不计入统计。</p>
+            </template>
+
+            <template v-else-if="step === REMINDER_STEP">
+              <span class="onboarding-badge primary"><BellRing :size="22" :stroke-width="2" aria-hidden="true" /></span>
+              <h2 id="onboarding-title">{{ stepTitle }}</h2>
+              <p class="onboarding-lead">关闭窗口后留在{{ place }}，发现费额度的用法就提醒你。</p>
+              <div class="onboarding-choices">
+                <div class="onboarding-choice">
+                  <div class="onboarding-choice-main">
+                    <strong>省额度提醒</strong>
+                    <p>同一问题只提醒一次。</p>
+                  </div>
+                  <Toggle :checked="reminders.notifications" :disabled="busy" label="省额度提醒" @toggle="toggleReminder('notifications')" />
+                </div>
+                <div class="onboarding-choice">
+                  <div class="onboarding-choice-main">
+                    <strong>开机自动启动</strong>
+                    <p>登录后在{{ place }}静默运行。</p>
+                    <p v-if="!autostartAvailable" class="onboarding-hint">开发版不可用，请在打包后的应用里开启</p>
+                  </div>
+                  <Toggle :checked="reminders.autostart && autostartAvailable" :disabled="busy || !autostartAvailable" label="开机自动启动" @toggle="toggleReminder('autostart')" />
+                </div>
+              </div>
+              <section class="onboarding-plan onboarding-notify" aria-live="polite">
+                <h3>系统通知</h3>
+                <div class="onboarding-notify-row">
+                  <span class="onboarding-notify-status" :class="`notify-${notifyLine.tone}`"><i aria-hidden="true" />{{ notifyLine.text }}</span>
+                </div>
+              </section>
             </template>
 
             <template v-else>
               <span class="onboarding-badge warning"><Zap :size="22" :stroke-width="2" aria-hidden="true" /></span>
               <h2 id="onboarding-title">{{ stepTitle }}</h2>
-              <p class="onboarding-lead">不开启任何来源也能使用：额度显示为“暂无数据”，用量与费用统计不受影响。</p>
+              <p class="onboarding-lead">建议全部开启，额度最准确。也可以不开启，额度会显示为“暂无数据”，用量统计不受影响。</p>
               <div class="onboarding-choices">
-                <div class="onboarding-choice">
+                <div v-for="item in QUOTA_SOURCES" :key="item.key" class="onboarding-choice">
                   <div class="onboarding-choice-main">
-                    <strong>Claude Code 状态栏记录（推荐，零联网）</strong>
-                    <p>记录 Claude Code 传给状态栏的官方额度，零联网，仅在命令行版中生效。将写入 ~/.claude/settings.json 的 statusLine，原有状态栏保持显示。</p>
+                    <strong>{{ item.title }}</strong>
+                    <p>{{ item.description }}</p>
+                    <p v-if="item.hint && selection[item.key]" class="onboarding-hint">{{ item.hint }}</p>
                   </div>
-                  <Toggle :checked="selection.statusline" :disabled="busy" label="Claude Code 状态栏记录" @toggle="toggle('statusline')" />
-                </div>
-                <div class="onboarding-choice">
-                  <div class="onboarding-choice-main">
-                    <strong>Claude 官方额度查询（需联网）</strong>
-                    <p>读取本机 Claude 登录令牌，仅发送到 api.anthropic.com 查询额度；令牌只在内存中使用，不保存、不自行刷新。接口未公开，可能随时失效。</p>
-                  </div>
-                  <Toggle :checked="selection.claudeOfficial" :disabled="busy" label="Claude 官方额度查询" @toggle="toggle('claudeOfficial')" />
-                </div>
-                <div class="onboarding-choice">
-                  <div class="onboarding-choice-main">
-                    <strong>Codex 官方额度（本地接口，需联网）</strong>
-                    <p>启动本机的 codex app-server 读取 5 小时和每周额度，由 Codex 用你已登录的账号向 OpenAI 查询；token-audit 不读取你的令牌。</p>
-                  </div>
-                  <Toggle :checked="selection.codexOfficial" :disabled="busy" label="Codex 官方额度" @toggle="toggle('codexOfficial')" />
+                  <Toggle :checked="selection[item.key]" :disabled="busy" :label="item.title" @toggle="toggle(item.key)" />
                 </div>
               </div>
-              <section class="onboarding-plan" aria-live="polite">
-                <h3>将修改以下配置</h3>
-                <ul>
-                  <li v-for="(line, index) in changeLines" :key="`${index}-${line}`" :class="{ path: line.includes('settings.json') }">{{ line }}</li>
-                </ul>
+              <section v-if="feedback.length || planError || actionError" class="onboarding-plan" aria-live="polite">
                 <p v-for="(line, index) in feedback" :key="`done-${index}`" class="onboarding-outcome">{{ line }}</p>
                 <p v-if="planError" class="onboarding-error">{{ planError }}</p>
                 <p v-if="actionError" class="onboarding-error">{{ actionError }}</p>
@@ -363,13 +439,16 @@ onUnmounted(() => {
       </div>
 
       <footer ref="footer" class="onboarding-footer">
-        <div class="onboarding-steps" :aria-label="`第 ${step} 步，共 3 步`">
-          <span v-for="index in 3" :key="index" :aria-current="index === step ? 'step' : undefined" />
+        <div class="onboarding-steps" :aria-label="`第 ${step} 步，共 ${STEPS} 步`">
+          <span v-for="index in STEPS" :key="index" :aria-current="index === step ? 'step' : undefined" />
         </div>
         <div class="onboarding-actions">
           <button v-if="step > 1" type="button" class="onboarding-text" :disabled="busy || transitioning" @click="changeStep(-1)">上一步</button>
-          <button v-if="step === 3" type="button" class="onboarding-text" :disabled="busy || transitioning" @click="skip">暂不开启</button>
-          <button type="button" class="onboarding-primary" :disabled="nextDisabled" @click="next">{{ primaryLabel }}</button>
+          <button v-if="step === STEPS" type="button" class="onboarding-text" :disabled="busy || transitioning" @click="skip">暂不开启</button>
+          <button type="button" class="onboarding-primary" :class="{ 'onboarding-primary-wide': step === STEPS }" :disabled="nextDisabled" :aria-busy="finishing" @click="next">
+            <template v-if="finishing"><LoaderCircle class="onboarding-spinner" :size="16" aria-hidden="true" />正在开启…</template>
+            <template v-else>{{ primaryLabel }}</template>
+          </button>
         </div>
       </footer>
     </div>

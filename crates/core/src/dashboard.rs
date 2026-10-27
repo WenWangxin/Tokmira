@@ -115,6 +115,34 @@ pub struct Summary {
     pub high_prompts: usize,
 }
 #[derive(Clone, Debug, Serialize)]
+pub struct QuotaSourceTimes {
+    pub claude_official: Option<DateTime<Utc>>,
+    pub codex_official: Option<DateTime<Utc>>,
+    pub codex_log: Option<DateTime<Utc>>,
+}
+
+impl QuotaSourceTimes {
+    fn from_input(input: &OverviewInput<'_>) -> Self {
+        let codex_limit = |id: Option<&str>| matches!(id, None | Some("codex"));
+        Self {
+            claude_official: input.claude_snapshots.iter().map(|s| s.at).max(),
+            codex_official: input
+                .codex_snapshots
+                .iter()
+                .filter(|s| codex_limit(s.limit_id.as_deref()))
+                .map(|s| s.at)
+                .max(),
+            codex_log: input
+                .codex_log
+                .iter()
+                .filter(|s| codex_limit(s.limit_id.as_deref()))
+                .map(|s| s.timestamp)
+                .max(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct Overview {
     pub generated_at: DateTime<Utc>,
     pub tools: Vec<ToolOverview>,
@@ -133,6 +161,8 @@ pub struct Overview {
     pub subscription_value_multiple: Option<f64>,
     pub daily_cost: Vec<DayCost>,
     pub recorder: RecorderStatus,
+    /// When each quota source last delivered data, for the source status panel.
+    pub quota_sources: QuotaSourceTimes,
     pub trends: Vec<ToolTrend>,
     pub recent_sessions: Vec<SessionOverview>,
     pub recent_high_prompts: Vec<HighPromptOverview>,
@@ -652,6 +682,7 @@ pub fn build_overview<Tz: TimeZone>(
         subscription_value_multiple,
         daily_cost,
         recorder: input.recorder.clone(),
+        quota_sources: QuotaSourceTimes::from_input(input),
         trends,
         recent_sessions,
         recent_high_prompts,

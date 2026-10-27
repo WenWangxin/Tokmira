@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ChartColumn, LayoutDashboard, Lightbulb, List, PanelLeftClose, PanelLeftOpen, Settings2, ShieldCheck } from 'lucide-vue-next'
+import { ChartColumn, Gauge, LayoutDashboard, Lightbulb, List, PanelLeftClose, PanelLeftOpen, Settings2, ShieldCheck } from 'lucide-vue-next'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import { getSettings } from './api'
+import { listen } from '@tauri-apps/api/event'
+import { getSettings, refreshQuotas, type AdviceAlert } from './api'
 import OnboardingDialog from './components/OnboardingDialog.vue'
+import ToastHost from './components/ToastHost.vue'
+import { showToast } from './toast'
 import { previewOnboardingForced } from './onboardingLogic'
 import { onboardingOpen, openOnboarding } from './onboardingState'
+import { settingsRevision, startRealtime } from './realtime'
 import { pages } from './router'
 
 const icons = [LayoutDashboard, ChartColumn, Lightbulb, List, Settings2]
@@ -118,7 +122,25 @@ onMounted(async () => {
   if (router.currentRoute.value.path !== '/') await router.replace('/')
   openOnboarding()
 })
-onUnmounted(() => cancelAnimationFrame(indicatorFrame))
+// Live updates exist only in the desktop app; the browser preview has no backend events.
+const stopRealtime = '__TAURI_INTERNALS__' in window
+  ? startRealtime({
+      listen: handler => listen('usage-changed', handler),
+      refreshQuotas: () => refreshQuotas(true),
+      visible: () => document.visibilityState === 'visible',
+    })
+  : undefined
+// Background reminders arrive here instead of the system while the window has focus.
+const stopAlerts = '__TAURI_INTERNALS__' in window
+  ? listen<AdviceAlert>('advice-alert', event => { showToast(`${event.payload.title}：${event.payload.body}`, 'warning', 10_000) })
+  : undefined
+const stopNavigate = '__TAURI_INTERNALS__' in window
+  ? listen<string>('navigate', event => { void router.push(event.payload) })
+  : undefined
+const stopSettings = '__TAURI_INTERNALS__' in window
+  ? listen('settings-changed', () => { settingsRevision.value += 1 })
+  : undefined
+onUnmounted(() => { cancelAnimationFrame(indicatorFrame); stopRealtime?.(); void stopAlerts?.then(stop => stop()); void stopNavigate?.then(stop => stop()); void stopSettings?.then(stop => stop()) })
 </script>
 
 <template>
@@ -127,7 +149,8 @@ onUnmounted(() => cancelAnimationFrame(indicatorFrame))
     <aside class="sidebar" aria-label="主导航">
       <div v-if="macOverlay" class="sidebar-titlebar" data-tauri-drag-region />
       <div class="brand" data-tauri-drag-region>
-        <img class="brand-icon" src="/brand.svg" alt="" width="28" height="28" />
+        <!-- Figma Logo (20:28): 17px gauge with a 2px stroke, so 2 * 24 / 17 in Lucide's 24-unit box. -->
+        <span class="brand-icon" aria-hidden="true"><Gauge :size="17" :stroke-width="2 * 24 / 17" /></span>
         <div class="brand-copy">
           <strong class="brand-name">token-audit</strong>
           <span class="brand-subtitle">本地用量洞察</span>
@@ -172,6 +195,7 @@ onUnmounted(() => cancelAnimationFrame(indicatorFrame))
       </RouterView>
     </main>
   </div>
+  <ToastHost />
   <Transition name="onboarding-dialog" appear :duration="onboardingDuration">
     <OnboardingDialog v-if="onboardingOpen" />
   </Transition>

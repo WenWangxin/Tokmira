@@ -45,5 +45,3 @@
 @media (max-width: 1100px) { .advice-head-controls { flex-wrap: wrap; } .advice-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } .advice-stat { gap: 8px; padding: 14px; } }
 @media (max-width: 1100px) { .advice-page { width: calc(100% + 8px); margin: -14px -4px 0; } }
 .advice-items { position: relative; display: grid; gap: 16px; }
-
-.advice-error-note { margin: 0; color: var(--error); font-size: 12px; }

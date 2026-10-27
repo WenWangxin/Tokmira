@@ -149,13 +149,14 @@
 .onboarding-plan h3 { margin: 0; color: var(--on-surface-muted); font-size: 12px; font-weight: 500; }
 .onboarding-plan ul { display: grid; gap: 4px; margin: 8px 0 0; padding: 0; list-style: none; }
 .onboarding-plan li { color: var(--on-surface-variant); font-size: 12px; line-height: 1.6; }
-.onboarding-plan li.path {
-  color: var(--on-surface);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-}
 .onboarding-outcome { margin: 8px 0 0; color: var(--on-surface); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .onboarding-error { margin: 8px 0 0; color: var(--error); font-size: 12px; line-height: 1.55; }
+.onboarding-plan > :first-child { margin-top: 0; }
+.onboarding-notify-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; margin-top: 8px; }
+.onboarding-notify-status { display: inline-flex; gap: 8px; align-items: center; color: var(--on-surface); font-size: 13px; }
+.onboarding-notify-status i { width: 8px; height: 8px; border-radius: 99px; background: var(--outline); }
+.onboarding-notify-status.notify-success i { background: var(--success); }
+.onboarding-notify-status.notify-warning i { background: var(--warning); }
 .onboarding-status { margin: 16px 0 0; color: var(--on-surface-muted); font-size: 13px; }
 
 .onboarding-footer {
@@ -182,6 +183,11 @@
   color: var(--on-primary);
   font-size: 13px;
 }
+/* Step 3 reserves room for “正在开启…” so the button does not jump when it starts working. */
+.onboarding-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.onboarding-primary-wide { min-width: 140px; }
+.onboarding-mask .onboarding-primary[aria-busy='true'] { opacity: 1; cursor: progress; }
+.onboarding-spinner { flex: none; animation: spin var(--motion-spin) linear infinite; }
 
 @media (prefers-reduced-motion: reduce) {
   .onboarding-dialog-enter-active,

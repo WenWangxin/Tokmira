@@ -563,26 +563,57 @@ fn collect_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> io::Result<()> {
     Ok(())
 }
 
-/// Scans Codex rollouts recursively, using sorted paths and stable timestamp order.
-/// A missing sessions directory is empty; individual file failures are counted.
-pub fn scan_codex(home: &Path) -> Result<CodexScan, io::Error> {
-    let mut paths = Vec::new();
-    for directory in ["sessions", "archived_sessions"] {
-        let path = home.join(".codex").join(directory);
-        match fs::metadata(&path) {
-            Ok(_) => collect_paths(&path, &mut paths)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
+/// One rollout scanned on its own, with response IDs deduplicated inside the file.
+/// Merging repeats the cross-file part, so the result matches one sequential pass.
+#[derive(Clone, Default)]
+struct CodexFile {
+    scan: CodexScan,
+    unreadable: bool,
+}
+
+fn parse_file(path: &Path) -> CodexFile {
+    let mut file = CodexFile::default();
+    if scan_file(path, &mut file.scan, &mut HashSet::new()).is_err() {
+        file.unreadable = true;
     }
-    paths.sort();
+    file
+}
+
+fn add_stats(total: &mut CodexScanStats, file: &CodexScanStats) {
+    total.total_lines += file.total_lines;
+    total.malformed_lines += file.malformed_lines;
+    total.non_usage_lines += file.non_usage_lines;
+    total.usage_records += file.usage_records;
+    total.token_count_usage_lines += file.token_count_usage_lines;
+    total.deduplicated_lines += file.deduplicated_lines;
+    total.files_with_records += file.files_with_records;
+    total.files_token_count_only += file.files_token_count_only;
+    total.rate_limit_snapshots += file.rate_limit_snapshots;
+}
+
+/// Combines files in path order; a response ID already kept by an earlier file is
+/// dropped and counted, exactly as a single pass over all files would.
+fn merge<'a>(home: &Path, files: impl Iterator<Item = &'a CodexFile>) -> CodexScan {
     let mut scan = CodexScan::default();
-    let mut seen_responses = HashSet::new();
-    for path in paths {
+    let mut seen_responses: HashSet<&str> = HashSet::new();
+    for file in files {
         scan.stats.files += 1;
-        if scan_file(&path, &mut scan, &mut seen_responses).is_err() {
+        if file.unreadable {
             scan.stats.unreadable_files += 1;
         }
+        add_stats(&mut scan.stats, &file.scan.stats);
+        for event in &file.scan.events {
+            if let Some(id) = &event.request_id {
+                if !seen_responses.insert(id) {
+                    scan.stats.deduplicated_lines += 1;
+                    continue;
+                }
+            }
+            scan.events.push(event.clone());
+        }
+        scan.prompts.extend(file.scan.prompts.iter().cloned());
+        scan.rate_limits
+            .extend(file.scan.rate_limits.iter().cloned());
     }
     scan.events.sort_by_key(|event| event.timestamp);
     scan.prompts
@@ -591,7 +622,58 @@ pub fn scan_codex(home: &Path) -> Result<CodexScan, io::Error> {
         .dedup_by(|a, b| a.session_id == b.session_id && a.timestamp == b.timestamp);
     scan.rate_limits.sort_by_key(|snapshot| snapshot.timestamp);
     scan.titles = read_session_index(&home.join(".codex/session_index.jsonl"));
-    Ok(scan)
+    scan
+}
+
+/// Keeps each rollout's scan between calls and rescans only new or changed files.
+/// Every scan returns the same result a fresh [`scan_codex`] would.
+#[derive(Default)]
+pub struct CodexScanner {
+    files: BTreeMap<PathBuf, (crate::claude::Fingerprint, CodexFile)>,
+    changed: bool,
+}
+
+impl CodexScanner {
+    /// Whether the last [`scan`](Self::scan) parsed or dropped any rollout.
+    #[must_use]
+    pub fn changed(&self) -> bool {
+        self.changed
+    }
+
+    /// Scans Codex rollouts recursively, using sorted paths and stable timestamp order.
+    /// A missing sessions directory is empty; individual file failures are counted.
+    pub fn scan(&mut self, home: &Path) -> Result<CodexScan, io::Error> {
+        let mut paths = Vec::new();
+        for directory in ["sessions", "archived_sessions"] {
+            let path = home.join(".codex").join(directory);
+            match fs::metadata(&path) {
+                Ok(_) => collect_paths(&path, &mut paths)?,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let mut previous = std::mem::take(&mut self.files);
+        let mut changed = false;
+        for path in paths {
+            let current = crate::claude::fingerprint(&path);
+            let file = match previous.remove(&path) {
+                Some((old, file)) if current.is_some() && old == current => file,
+                _ => {
+                    changed = true;
+                    parse_file(&path)
+                }
+            };
+            self.files.insert(path, (current, file));
+        }
+        self.changed = changed || !previous.is_empty();
+        Ok(merge(home, self.files.values().map(|(_, file)| file)))
+    }
+}
+
+/// Scans Codex rollouts recursively, using sorted paths and stable timestamp order.
+/// A missing sessions directory is empty; individual file failures are counted.
+pub fn scan_codex(home: &Path) -> Result<CodexScan, io::Error> {
+    CodexScanner::default().scan(home)
 }
 
 fn read_session_index(path: &Path) -> BTreeMap<String, String> {

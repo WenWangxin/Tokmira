@@ -1,7 +1,7 @@
 version = "2026-10-24"
 currency = "USD"
 unit = "per_million_tokens"
-note = "API 等价价格，仅用于估算订阅用量价值，不是实际账单；claude-haiku-5-5 仅采用 10 万 token 以内档，本版不计算长上下文分档"
+note = "仅供估算，非实际账单；claude-haiku-5-5 仅按 10 万 token 以内价格计算，不计长上下文加价。"
 
 # Monthly USD list prices for web subscriptions. Annual, regional, tax and app-store prices differ.
 # Sources: https://support.claude.com/en/articles/11049762-choose-a-claude-plan

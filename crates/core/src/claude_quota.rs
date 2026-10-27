@@ -1,8 +1,10 @@
 //! Opt-in, read-only Claude OAuth usage query. Secrets never appear in errors or results.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 #[cfg(target_os = "macos")]
 use std::{path::PathBuf, process::Stdio, sync::mpsc, time::Instant};
@@ -50,6 +52,100 @@ pub trait SecretStore {
         service: &str,
         account: Option<&str>,
     ) -> Result<Option<Zeroizing<Vec<u8>>>, SecretError>;
+
+    /// Like [`generic_password`](Self::generic_password) but never shows a system
+    /// prompt: a secret that needs the user's approval reads as absent. Used for
+    /// background queries, so only a user action can bring up a password dialog.
+    fn generic_password_silently(
+        &self,
+        service: &str,
+        account: Option<&str>,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, SecretError> {
+        let _ = (service, account);
+        Ok(None)
+    }
+}
+
+type SecretKey = (String, Option<String>);
+
+/// Remembers secrets read during this run, so repeated quota queries do not ask the
+/// system keychain (and the user) again. Nothing is written to disk; [`forget`]
+/// drops every remembered secret, e.g. after Anthropic rejects the token.
+///
+/// [`forget`]: MemorySecretStore::forget
+#[derive(Clone)]
+pub struct MemorySecretStore<S> {
+    inner: S,
+    remembered: Arc<Mutex<HashMap<SecretKey, Zeroizing<Vec<u8>>>>>,
+    silent: bool,
+}
+
+impl<S: Clone> MemorySecretStore<S> {
+    pub fn new(inner: S) -> Self {
+        Self {
+            inner,
+            remembered: Arc::default(),
+            silent: false,
+        }
+    }
+
+    /// The same store, sharing what it remembers, but reading the keychain only
+    /// without prompts (see [`SecretStore::generic_password_silently`]).
+    #[must_use]
+    pub fn silent(&self) -> Self {
+        Self {
+            silent: true,
+            ..self.clone()
+        }
+    }
+
+    pub fn forget(&self) {
+        self.remembered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+}
+
+impl<S: SecretStore> SecretStore for MemorySecretStore<S> {
+    fn generic_password(
+        &self,
+        service: &str,
+        account: Option<&str>,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, SecretError> {
+        let key = (service.to_owned(), account.map(str::to_owned));
+        if let Some(secret) = self
+            .remembered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+        {
+            return Ok(Some(secret.clone()));
+        }
+        let secret = if self.silent {
+            self.inner.generic_password_silently(service, account)?
+        } else {
+            self.inner.generic_password(service, account)?
+        };
+        if let Some(secret) = &secret {
+            self.remembered
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(key, secret.clone());
+        }
+        Ok(secret)
+    }
+}
+
+impl ClaudeQuotaError {
+    /// Errors after which a remembered credential should be read afresh.
+    #[must_use]
+    pub fn stale_credential(&self) -> bool {
+        matches!(
+            self,
+            Self::TokenExpired { .. } | Self::Unauthorized { .. } | Self::Parse
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -187,6 +283,34 @@ impl SecretStore for SystemSecretStore {
         {
             let _ = (service, account);
             Ok(None)
+        }
+    }
+
+    fn generic_password_silently(
+        &self,
+        service: &str,
+        account: Option<&str>,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, SecretError> {
+        #[cfg(target_os = "macos")]
+        {
+            // The Claude Code item is read through `/usr/bin/security`, whose
+            // prompt this process cannot suppress, so it is never read silently.
+            if service == "Claude Code-credentials" {
+                return Ok(None);
+            }
+            // While the lock lives, an item that needs approval fails with
+            // errSecInteractionNotAllowed instead of opening a dialog.
+            let _lock =
+                security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
+                    .map_err(|_| SecretError::Unavailable)?;
+            match self.generic_password(service, account) {
+                Err(SecretError::Unavailable) => Ok(None),
+                other => other,
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.generic_password(service, account)
         }
     }
 }

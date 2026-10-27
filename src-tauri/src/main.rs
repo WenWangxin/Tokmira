@@ -1,21 +1,29 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod login_item;
+mod notifications;
+mod realtime;
+mod tray;
+mod tray_menu;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use tauri::State;
-use token_audit_core::advice::{build_advice, AdviceConfig, AdviceInput, AdviceReport};
-use token_audit_core::attribution::{attribute, Attribution, WindowKind};
-use token_audit_core::claude::{scan_claude, ClaudeScan};
-use token_audit_core::claude_quota::{
-    query_claude_quota, system_proxy, ClaudeQuotaError, QueryOptions, SystemSecretStore,
-    UreqTransport,
+use tauri::{Emitter, State};
+use token_audit_core::advice::{
+    build_advice, AdviceAlert, AdviceConfig, AdviceInput, AdviceReport, AlertTracker,
 };
-use token_audit_core::codex::{scan_codex, CodexScan};
+use token_audit_core::attribution::{attribute, Attribution, WindowKind};
+use token_audit_core::claude::{ClaudeScan, ClaudeScanner};
+use token_audit_core::claude_quota::{
+    query_claude_quota, system_proxy, ClaudeQuotaError, MemorySecretStore, QueryOptions,
+    SystemSecretStore, UreqTransport,
+};
+use token_audit_core::codex::{CodexScan, CodexScanner};
 use token_audit_core::codex_app_server::{
     codex_candidates, read_codex_quota, resolve_launch, AppServerOptions, CodexQuotaError,
 };
@@ -43,18 +51,91 @@ struct RefreshClock {
     last_claude: Option<DateTime<Utc>>,
     last_codex: Option<DateTime<Utc>>,
     claude_retry_at: Option<DateTime<Utc>>,
+    /// The keychain read was denied or timed out. Automatic queries stop asking
+    /// until the user refreshes by hand, switches the query on again, or restarts,
+    /// so a dismissed password dialog does not come back every minute.
+    claude_awaits_user: bool,
+    claude_needs_authorization: bool,
 }
+
+/// Result of a background Claude query that could not read the credential without a
+/// prompt. The UI shows it as a button rather than an error.
+const NEEDS_AUTHORIZATION: &str = "需要授权";
+
+/// Whether a failed Claude query got as far as a request to Anthropic.
+fn reached_anthropic(error: &ClaudeQuotaError) -> bool {
+    !matches!(
+        error,
+        ClaudeQuotaError::NoCredential
+            | ClaudeQuotaError::CredentialDenied { .. }
+            | ClaudeQuotaError::KeychainTimeout { .. }
+            | ClaudeQuotaError::TokenExpired { .. }
+            | ClaudeQuotaError::Unsupported
+    )
+}
+
+/// Why a Claude query is skipped now, if it is. Pure, so the polling rules are testable.
+fn claude_skip_reason(
+    clock: &RefreshClock,
+    now: DateTime<Utc>,
+    automatic: bool,
+) -> Option<&'static str> {
+    if automatic && clock.claude_awaits_user {
+        return Some(NEEDS_AUTHORIZATION);
+    }
+    if clock.claude_retry_at.is_some_and(|at| now < at) {
+        return Some("限流退避中");
+    }
+    if clock
+        .last_claude
+        .is_some_and(|at| now - at < chrono::Duration::seconds(60))
+    {
+        return Some("60 秒内已查询");
+    }
+    None
+}
+#[derive(Clone)]
 struct AppState {
     home: PathBuf,
     data_dir: PathBuf,
-    scans: Arc<Mutex<Option<Scans>>>,
+    scans: Arc<Mutex<ScanCache>>,
     refresh: Arc<Mutex<RefreshClock>>,
+    /// Keychain secrets read for the Claude quota query, kept in memory for this
+    /// run only so periodic queries do not prompt again. Never written to disk.
+    secrets: MemorySecretStore<SystemSecretStore>,
 }
-fn scan(home: &std::path::Path) -> Result<Scans, String> {
-    Ok(Scans {
-        claude: scan_claude(home).map_err(|_| "扫描 Claude 日志失败".to_owned())?,
-        codex: scan_codex(home).map_err(|_| "扫描 Codex 日志失败".to_owned())?,
-    })
+/// The latest scan plus the incremental scanners that produced it; a rescan only
+/// reparses log files that changed since the previous one.
+#[derive(Default)]
+struct ScanCache {
+    claude: ClaudeScanner,
+    codex: CodexScanner,
+    latest: Option<Scans>,
+}
+impl ScanCache {
+    /// Rescans changed files and reports which tools' scans changed.
+    fn refresh(&mut self, home: &std::path::Path) -> Result<(bool, bool), String> {
+        let claude = self
+            .claude
+            .scan(home)
+            .map_err(|_| "扫描 Claude 日志失败".to_owned())?;
+        let codex = self
+            .codex
+            .scan(home)
+            .map_err(|_| "扫描 Codex 日志失败".to_owned())?;
+        let first = self.latest.is_none();
+        self.latest = Some(Scans { claude, codex });
+        Ok((
+            first || self.claude.changed(),
+            first || self.codex.changed(),
+        ))
+    }
+    fn current(&mut self, home: &std::path::Path) -> Result<&Scans, String> {
+        if self.latest.is_none() {
+            self.refresh(home)?;
+        }
+        self.latest.as_ref().ok_or_else(lock_error)
+    }
 }
 fn lock_error() -> String {
     "应用状态暂不可用".to_owned()
@@ -80,10 +161,26 @@ fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
 }
 #[tauri::command]
 fn update_settings(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
-    settings: AppSettings,
+    mut settings: AppSettings,
 ) -> Result<AppSettings, String> {
+    let current = settings::read_settings(&state.data_dir).ok();
+    let was_on = current
+        .as_ref()
+        .is_some_and(|current| current.claude_official_query);
+    // Set by the backend when the window first hides; a page saving an older copy must
+    // not bring the notice back.
+    settings.tray_hint_shown |= current.is_some_and(|current| current.tray_hint_shown);
     settings::write_settings(&state.data_dir, &settings).map_err(|_| "保存设置失败".to_owned())?;
+    // Switching the query on again is the user asking to retry the keychain.
+    if settings.claude_official_query && !was_on {
+        if let Ok(mut clock) = state.refresh.lock() {
+            clock.claude_awaits_user = false;
+            clock.claude_needs_authorization = false;
+        }
+    }
+    tray::signal(&app);
     Ok(settings)
 }
 #[tauri::command]
@@ -91,14 +188,14 @@ async fn rescan(state: State<'_, AppState>) -> Result<ScanSummary, String> {
     let home = state.home.clone();
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
-        let fresh = scan(&home)?;
-        let summary = ScanSummary {
+        let mut guard = cached.lock().map_err(|_| lock_error())?;
+        guard.refresh(&home)?;
+        let fresh = guard.current(&home)?;
+        Ok(ScanSummary {
             events: fresh.claude.events.len() + fresh.codex.events.len(),
             prompts: fresh.claude.prompts.len() + fresh.codex.prompts.len(),
             malformed_lines: fresh.claude.stats.malformed_lines + fresh.codex.stats.malformed_lines,
-        };
-        *cached.lock().map_err(|_| lock_error())? = Some(fresh);
-        Ok(summary)
+        })
     })
     .await
     .map_err(|_| "扫描任务失败".to_owned())?
@@ -121,164 +218,159 @@ fn proxy() -> Option<String> {
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
         .or_else(system_proxy)
 }
-#[tauri::command]
-async fn refresh_quotas(state: State<'_, AppState>) -> Result<RefreshResult, String> {
-    let home = state.home.clone();
-    let data_dir = state.data_dir.clone();
-    let refresh = Arc::clone(&state.refresh);
-    tauri::async_runtime::spawn_blocking(move || {
-        let settings = settings::read_settings(&data_dir).map_err(|_| "读取设置失败".to_owned())?;
-        let mut clock = refresh.lock().map_err(|_| lock_error())?;
-        let now = Utc::now();
-        let mut result = RefreshResult {
-            claude: "未开启".to_owned(),
-            codex: "未开启".to_owned(),
-        };
-        if settings.claude_official_query {
-            if clock.claude_retry_at.is_some_and(|at| now < at) {
-                result.claude = "限流退避中".to_owned();
-            } else if clock
-                .last_claude
-                .is_some_and(|at| now - at < chrono::Duration::seconds(60))
-            {
-                result.claude = "60 秒内已查询".to_owned();
+fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResult, String> {
+    let settings =
+        settings::read_settings(&state.data_dir).map_err(|_| "读取设置失败".to_owned())?;
+    let mut clock = state.refresh.lock().map_err(|_| lock_error())?;
+    let now = Utc::now();
+    let mut result = RefreshResult {
+        claude: "未开启".to_owned(),
+        codex: "未开启".to_owned(),
+    };
+    if settings.claude_official_query {
+        if let Some(reason) = claude_skip_reason(&clock, now, automatic) {
+            result.claude = reason.to_owned();
+        } else {
+            let previous_query = clock.last_claude;
+            clock.last_claude = Some(now);
+            clock.claude_awaits_user = false;
+            let options = QueryOptions {
+                preference: settings.claude_credential,
+                proxy: proxy(),
+                timeout: Duration::from_secs(15),
+                keychain_timeout: Duration::from_secs(60),
+            };
+            // Background polls must never open a keychain dialog; they only reuse
+            // what this run already holds or what the user set to "always allow".
+            let store = if automatic {
+                state.secrets.silent()
             } else {
-                clock.last_claude = Some(now);
-                let options = QueryOptions {
-                    preference: settings.claude_credential,
-                    proxy: proxy(),
-                    timeout: Duration::from_secs(15),
-                    keychain_timeout: Duration::from_secs(60),
-                };
-                match query_claude_quota(
-                    &SystemSecretStore::default(),
-                    &home,
-                    &UreqTransport,
-                    &options,
-                ) {
-                    Ok(quota) => {
-                        quota_store::append_claude(&data_dir, &(&quota).into())
-                            .map_err(|_| "保存 Claude 额度快照失败".to_owned())?;
-                        result.claude = "已更新".to_owned();
+                state.secrets.clone()
+            };
+            match query_claude_quota(&store, &state.home, &UreqTransport, &options) {
+                Ok(quota) => {
+                    quota_store::append_claude(&state.data_dir, &(&quota).into())
+                        .map_err(|_| "保存 Claude 额度快照失败".to_owned())?;
+                    clock.claude_needs_authorization = false;
+                    result.claude = "已更新".to_owned();
+                }
+                Err(ClaudeQuotaError::RateLimited { retry_after }) => {
+                    clock.claude_retry_at = Some(
+                        now + chrono::Duration::from_std(
+                            retry_after.unwrap_or(Duration::from_secs(300)),
+                        )
+                        .unwrap_or(chrono::Duration::minutes(5)),
+                    );
+                    result.claude = "Anthropic 查询已限流".to_owned();
+                }
+                Err(error) => {
+                    if error.stale_credential() {
+                        state.secrets.forget();
                     }
-                    Err(ClaudeQuotaError::RateLimited { retry_after }) => {
-                        clock.claude_retry_at = Some(
-                            now + chrono::Duration::from_std(
-                                retry_after.unwrap_or(Duration::from_secs(300)),
-                            )
-                            .unwrap_or(chrono::Duration::minutes(5)),
-                        );
-                        result.claude = "Anthropic 查询已限流".to_owned();
+                    // The minimum interval protects Anthropic; a query that stopped
+                    // at the credential never reached it, so it does not count and
+                    // the user's "authorize" click right after a silent poll goes ahead.
+                    if !reached_anthropic(&error) {
+                        clock.last_claude = previous_query;
                     }
-                    Err(error) => result.claude = error.to_string(),
+                    if matches!(
+                        error,
+                        ClaudeQuotaError::CredentialDenied { .. }
+                            | ClaudeQuotaError::KeychainTimeout { .. }
+                    ) {
+                        clock.claude_awaits_user = true;
+                    }
+                    // A silent read found nothing it may use without asking: the
+                    // window offers the user a button that asks once, by hand.
+                    result.claude = if automatic
+                        && matches!(
+                            error,
+                            ClaudeQuotaError::NoCredential
+                                | ClaudeQuotaError::CredentialDenied { .. }
+                        ) {
+                        NEEDS_AUTHORIZATION.to_owned()
+                    } else {
+                        error.to_string()
+                    };
+                    if result.claude == NEEDS_AUTHORIZATION {
+                        clock.claude_needs_authorization = true;
+                    }
                 }
             }
         }
-        if settings.codex_app_server {
-            if clock
-                .last_codex
-                .is_some_and(|at| now - at < chrono::Duration::seconds(60))
+    }
+    if settings.codex_app_server {
+        if clock
+            .last_codex
+            .is_some_and(|at| now - at < chrono::Duration::seconds(60))
+        {
+            result.codex = "60 秒内已查询".to_owned();
+        } else {
+            clock.last_codex = Some(now);
+            result.codex = match codex_candidates(&state.home, std::env::var_os("PATH").as_deref())
+                .into_iter()
+                .next()
             {
-                result.codex = "60 秒内已查询".to_owned();
-            } else {
-                clock.last_codex = Some(now);
-                result.codex = match codex_candidates(&home, std::env::var_os("PATH").as_deref())
-                    .into_iter()
-                    .next()
-                {
-                    Some(path) => {
-                        match read_codex_quota(&resolve_launch(&path), &AppServerOptions::default())
-                        {
-                            Ok(quota) => {
-                                quota_store::append_codex(&data_dir, &(&quota).into())
-                                    .map_err(|_| "保存 Codex 额度快照失败".to_owned())?;
-                                if let Some(usage) = quota.usage {
-                                    let days: Vec<_> = usage
-                                        .daily
-                                        .into_iter()
-                                        .map(|d| CodexDaily {
-                                            date: d.date,
-                                            tokens: d.tokens,
-                                        })
-                                        .collect();
-                                    quota_store::write_codex_daily(&data_dir, &days)
-                                        .map_err(|_| "保存 Codex 每日用量失败".to_owned())?;
-                                }
-                                "已更新".to_owned()
+                Some(path) => {
+                    match read_codex_quota(&resolve_launch(&path), &AppServerOptions::default()) {
+                        Ok(quota) => {
+                            quota_store::append_codex(&state.data_dir, &(&quota).into())
+                                .map_err(|_| "保存 Codex 额度快照失败".to_owned())?;
+                            if let Some(usage) = quota.usage {
+                                let days: Vec<_> = usage
+                                    .daily
+                                    .into_iter()
+                                    .map(|d| CodexDaily {
+                                        date: d.date,
+                                        tokens: d.tokens,
+                                    })
+                                    .collect();
+                                quota_store::write_codex_daily(&state.data_dir, &days)
+                                    .map_err(|_| "保存 Codex 每日用量失败".to_owned())?;
                             }
-                            Err(CodexQuotaError::Rpc { code, .. }) => {
-                                format!("Codex app-server 错误代码 {code}")
-                            }
-                            Err(error) => error.to_string(),
+                            "已更新".to_owned()
                         }
+                        Err(CodexQuotaError::Rpc { code, .. }) => {
+                            format!("Codex app-server 错误代码 {code}")
+                        }
+                        Err(error) => error.to_string(),
                     }
-                    None => "未找到 Codex 命令行程序".to_owned(),
-                };
-            }
+                }
+                None => "未找到 Codex 命令行程序".to_owned(),
+            };
         }
-        Ok(result)
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+async fn refresh_quotas(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    automatic: Option<bool>,
+) -> Result<RefreshResult, String> {
+    let state = state.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        refresh_quotas_sync(&state, automatic.unwrap_or(false))
     })
     .await
-    .map_err(|_| "额度查询任务失败".to_owned())?
+    .map_err(|_| "额度查询任务失败".to_owned())?;
+    tray::signal(&app);
+    result
+}
+
+fn overview_sync(state: &AppState) -> Result<Overview, String> {
+    with_usage(&state.home, &state.data_dir, &state.scans, |context| {
+        Ok(build_overview(context.input, context.now, chrono::Local))
+    })
 }
 
 #[tauri::command]
 async fn get_overview(state: State<'_, AppState>) -> Result<Overview, String> {
-    let home = state.home.clone();
-    let data_dir = state.data_dir.clone();
-    let cached = Arc::clone(&state.scans);
-    tauri::async_runtime::spawn_blocking(move || {
-        let scans = {
-            let mut guard = cached.lock().map_err(|_| lock_error())?;
-            if guard.is_none() {
-                *guard = Some(scan(&home)?);
-            }
-            guard.as_ref().ok_or_else(lock_error)?.clone()
-        };
-        let (claude_snapshots, _) = quota_store::read_claude(&data_dir);
-        let (codex_snapshots, _) = quota_store::read_codex(&data_dir);
-        let (statusline, _) = recorder::read_statusline_records(&data_dir);
-        let settings = settings::read_settings(&data_dir).map_err(|_| "读取设置失败".to_owned())?;
-        let points = build_timeline(
-            &claude_snapshots,
-            &codex_snapshots,
-            &statusline,
-            &scans.codex.rate_limits,
-            settings.calibration.as_ref(),
-        );
-        let pricing = Pricing::bundled().map_err(str::to_owned)?;
-        let mut events = scans.claude.events;
-        events.extend(scans.codex.events);
-        let mut prompts = scans.claude.prompts;
-        prompts.extend(scans.codex.prompts);
-        let mut titles: BTreeMap<_, _> = scans.claude.titles;
-        titles.extend(scans.codex.titles);
-        let attribution = attribute(
-            &events,
-            &prompts,
-            &titles,
-            &points,
-            &claude_snapshots,
-            &pricing,
-        );
-        Ok(build_overview(
-            &OverviewInput {
-                events: &events,
-                titles: &titles,
-                points: &points,
-                attribution: &attribution,
-                claude_snapshots: &claude_snapshots,
-                codex_snapshots: &codex_snapshots,
-                codex_log: &scans.codex.rate_limits,
-                pricing: &pricing,
-                recorder: recorder::status(&home, &data_dir),
-            },
-            Utc::now(),
-            chrono::Local,
-        ))
-    })
-    .await
-    .map_err(|_| "生成仪表盘失败".to_owned())?
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || overview_sync(&state))
+        .await
+        .map_err(|_| "生成仪表盘失败".to_owned())?
 }
 
 #[tauri::command]
@@ -288,11 +380,11 @@ async fn get_attribution(state: State<'_, AppState>) -> Result<Attribution, Stri
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
         let scans = {
-            let mut guard = cached.lock().map_err(|_| lock_error())?;
-            if guard.is_none() {
-                *guard = Some(scan(&home)?);
-            }
-            guard.as_ref().ok_or_else(lock_error)?.clone()
+            cached
+                .lock()
+                .map_err(|_| lock_error())?
+                .current(&home)?
+                .clone()
         };
         let (claude_snapshots, _) = quota_store::read_claude(&data_dir);
         let (codex_snapshots, _) = quota_store::read_codex(&data_dir);
@@ -377,15 +469,15 @@ async fn detect_tools(state: State<'_, AppState>) -> Result<Vec<DetectedTool>, S
 fn with_usage<R>(
     home: &std::path::Path,
     data_dir: &std::path::Path,
-    cached: &Mutex<Option<Scans>>,
+    cached: &Mutex<ScanCache>,
     build: impl FnOnce(&UsageContext<'_>) -> Result<R, String>,
 ) -> Result<R, String> {
     let scans = {
-        let mut guard = cached.lock().map_err(|_| lock_error())?;
-        if guard.is_none() {
-            *guard = Some(scan(home)?);
-        }
-        guard.as_ref().ok_or_else(lock_error)?.clone()
+        cached
+            .lock()
+            .map_err(|_| lock_error())?
+            .current(home)?
+            .clone()
     };
     let (claude_snapshots, _) = quota_store::read_claude(data_dir);
     let (codex_snapshots, _) = quota_store::read_codex(data_dir);
@@ -651,8 +743,156 @@ fn restore_advice(state: State<'_, AppState>, key: String) -> Result<AppSettings
     set_dismissed(&state, &key, false)
 }
 
+/// Rescans for the watcher and forwards its changes to the window.
+struct LiveUpdates {
+    app: tauri::AppHandle,
+    home: PathBuf,
+    scans: Arc<Mutex<ScanCache>>,
+    alerts: mpsc::Sender<()>,
+}
+
+impl realtime::Sink for LiveUpdates {
+    fn rescan(&self) -> (bool, bool) {
+        self.scans
+            .lock()
+            .ok()
+            .and_then(|mut cache| cache.refresh(&self.home).ok())
+            .unwrap_or((false, false))
+    }
+
+    fn notify(&self, change: realtime::UsageChanged) {
+        let _ = self.app.emit("usage-changed", change);
+        let _ = self.alerts.send(());
+        tray::signal(&self.app);
+    }
+}
+
+/// Checks the advice rules for background reminders on its own thread, so the watcher
+/// never waits for it. Signals that pile up during a check collapse into one. After the
+/// last change it checks once more when a quiet session lets a light task be judged.
+fn spawn_alerts(
+    app: tauri::AppHandle,
+    home: PathBuf,
+    data_dir: PathBuf,
+    scans: Arc<Mutex<ScanCache>>,
+) -> mpsc::Sender<()> {
+    let (sender, receiver) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let Ok(config) = AdviceConfig::bundled() else {
+            return;
+        };
+        let quiet = Duration::from_secs(
+            u64::try_from(config.alerts.light_task_settle_minutes).unwrap_or(0) * 60 + 5,
+        );
+        let mut tracker = AlertTracker::default();
+        let mut run = |seed: bool| {
+            let alert = with_usage(&home, &data_dir, &scans, |context| {
+                let input = AdviceInput {
+                    events: &context.input.attribution.events,
+                    prompts: context.prompts,
+                    pricing: context.input.pricing,
+                    config: &config,
+                    dismissed: &context.settings.dismissed_advice,
+                };
+                if seed {
+                    tracker.seed(&input, context.now);
+                    return Ok(None);
+                }
+                // Checked even when switched off, so turning it on later does not report old problems.
+                let alert = tracker.check(&input, context.now);
+                Ok(alert.filter(|_| context.settings.advice_notifications))
+            });
+            if let Ok(Some(alert)) = alert {
+                deliver_alert(&app, &alert);
+            }
+        };
+        // Problems already in the logs at launch are history, not news.
+        run(true);
+        let mut recheck = false;
+        loop {
+            let signal = if recheck {
+                receiver.recv_timeout(quiet)
+            } else {
+                receiver
+                    .recv()
+                    .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+            };
+            match signal {
+                Ok(()) => {
+                    while receiver.try_recv().is_ok() {}
+                    recheck = true;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => recheck = false,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+            run(false);
+        }
+    });
+    sender
+}
+
+/// An in-app message while the window has focus (macOS hides notifications from the
+/// frontmost app), otherwise a system notification.
+fn deliver_alert(app: &tauri::AppHandle, alert: &AdviceAlert) {
+    use tauri::Manager;
+    let focused = app.get_webview_window("main").is_some_and(|window| {
+        window.is_visible().unwrap_or(false)
+            && window.is_focused().unwrap_or(false)
+            && !window.is_minimized().unwrap_or(false)
+    });
+    if focused {
+        let _ = app.emit("advice-alert", alert);
+    } else {
+        notifications::post(app, &alert.title, &alert.body);
+    }
+}
+
+#[tauri::command]
+async fn notification_status() -> notifications::NotificationStatus {
+    tauri::async_runtime::spawn_blocking(notifications::status)
+        .await
+        .unwrap_or(notifications::NotificationStatus::Unknown)
+}
+
+#[tauri::command]
+async fn request_notifications() -> notifications::NotificationStatus {
+    tauri::async_runtime::spawn_blocking(notifications::request)
+        .await
+        .unwrap_or(notifications::NotificationStatus::Unknown)
+}
+
+#[tauri::command]
+fn get_autostart(app: tauri::AppHandle) -> login_item::AutostartState {
+    login_item::get(&app)
+}
+
+#[tauri::command]
+fn set_autostart(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<login_item::AutostartState, String> {
+    let result = login_item::set(&app, enabled)?;
+    tray::signal(&app);
+    let _ = app.emit("settings-changed", ());
+    Ok(result)
+}
+
+#[tauri::command]
+fn open_login_items_settings() -> Result<(), String> {
+    login_item::open_settings()
+}
+
 fn main() -> tauri::Result<()> {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main(app)
+        }))
+        .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("token-audit")
+                .build(),
+        )
         .setup(|app| {
             use tauri::Manager;
             let home =
@@ -660,13 +900,49 @@ fn main() -> tauri::Result<()> {
             let data_dir = dirs::data_dir()
                 .ok_or_else(|| std::io::Error::other("无法确定应用数据目录"))?
                 .join("token-audit");
+            let scans = Arc::new(Mutex::new(ScanCache::default()));
+            let alerts = spawn_alerts(
+                app.handle().clone(),
+                home.clone(),
+                data_dir.clone(),
+                Arc::clone(&scans),
+            );
+            realtime::spawn(
+                home.clone(),
+                data_dir.clone(),
+                LiveUpdates {
+                    app: app.handle().clone(),
+                    home: home.clone(),
+                    scans: Arc::clone(&scans),
+                    alerts,
+                },
+            );
             app.manage(AppState {
-                home,
-                data_dir,
-                scans: Arc::new(Mutex::new(None)),
+                home: home.clone(),
+                data_dir: data_dir.clone(),
+                scans,
                 refresh: Arc::new(Mutex::new(RefreshClock::default())),
+                secrets: MemorySecretStore::new(SystemSecretStore::default()),
             });
+            login_item::migrate(app.handle(), &home);
+            tray::install(app)?;
+            notifications::install(app.handle());
+            let launch_settings = settings::read_settings(&data_dir).unwrap_or_default();
+            if launch_settings.onboarding_completed && launch_settings.silent_start {
+                #[cfg(target_os = "macos")]
+                app.handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+            } else if let Some(window) = app.get_webview_window("main") {
+                window.show()?;
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri::Manager;
+                api.prevent_close();
+                tray::hide_main(window, &window.state::<AppState>().data_dir);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
@@ -691,7 +967,69 @@ fn main() -> tauri::Result<()> {
             recorder_plan,
             recorder_plan_uninstall,
             recorder_install,
-            recorder_uninstall
+            recorder_uninstall,
+            notification_status,
+            request_notifications,
+            get_autostart,
+            set_autostart,
+            open_login_items_settings
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())?
+        .run(|_app, _event| {
+            // Clicking the Dock icon brings the hidden window back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                tray::show_main(_app);
+            }
+        });
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_requests_that_reached_anthropic_count_toward_the_interval() {
+        use token_audit_core::claude_quota::CredentialSource;
+        assert!(!reached_anthropic(&ClaudeQuotaError::NoCredential));
+        assert!(!reached_anthropic(&ClaudeQuotaError::CredentialDenied {
+            source: CredentialSource::ClaudeDesktop
+        }));
+        assert!(!reached_anthropic(&ClaudeQuotaError::TokenExpired {
+            source: CredentialSource::ClaudeCode
+        }));
+        assert!(reached_anthropic(&ClaudeQuotaError::Network));
+        assert!(reached_anthropic(&ClaudeQuotaError::Http { status: 500 }));
+        assert!(reached_anthropic(&ClaudeQuotaError::Unauthorized {
+            error_type: None
+        }));
+    }
+
+    #[test]
+    fn automatic_claude_queries_wait_for_the_user_after_a_denied_keychain() {
+        let now = Utc::now();
+        let mut clock = RefreshClock::default();
+        assert_eq!(claude_skip_reason(&clock, now, true), None);
+
+        clock.claude_awaits_user = true;
+        assert_eq!(
+            claude_skip_reason(&clock, now, true),
+            Some(NEEDS_AUTHORIZATION)
+        );
+        // A manual refresh still goes ahead.
+        assert_eq!(claude_skip_reason(&clock, now, false), None);
+
+        clock.claude_awaits_user = false;
+        clock.last_claude = Some(now - chrono::Duration::seconds(30));
+        assert_eq!(claude_skip_reason(&clock, now, true), Some("60 秒内已查询"));
+        assert_eq!(
+            claude_skip_reason(&clock, now, false),
+            Some("60 秒内已查询")
+        );
+
+        clock.last_claude = Some(now - chrono::Duration::seconds(61));
+        clock.claude_retry_at = Some(now + chrono::Duration::minutes(5));
+        assert_eq!(claude_skip_reason(&clock, now, false), Some("限流退避中"));
+    }
 }

@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { showToast } from '../toast'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Palette, Scale, ShieldCheck, SlidersHorizontal, Terminal, Trash2 } from 'lucide-vue-next'
+import { BellRing, CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, LogIn, MonitorOff, Palette, Power, Scale, SlidersHorizontal, Terminal, Trash2 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Toggle from '../components/Toggle.vue'
 import { vSelectionSlide } from '../components/selectionSlide'
 import {
   clearRecorderRecords,
+  getAutostart,
   getEnvironment,
   getSettings,
+  notificationStatus,
+  openLoginItemsSettings,
   recorderInstall,
   recorderPlan,
   recorderPlanUninstall,
@@ -16,18 +20,24 @@ import {
   recorderUninstall,
   refreshQuotas,
   restoreAdvice,
+  setAutostart,
   updateSettings,
   type AppSettings,
+  type AutostartState,
   type CredentialPreference,
   type EnvironmentInfo,
+  type MenuBarQuota,
+  type NotificationStatus,
   type RecorderParts,
   type RecorderPlan,
   type RecorderStatus,
   type Theme,
   type Tool,
 } from '../api'
-import { adviceLabel, applyTheme, formatCalibration, formatPercent, parsePercent, privacyDetail, quotaMessageTone } from '../settingsLogic'
+import { adviceLabel, applyTheme, formatCalibration, formatPercent, parsePercent, quotaMessageTone } from '../settingsLogic'
+import { notificationLine, trayPlace } from '../onboardingLogic'
 import { openOnboarding } from '../onboardingState'
+import { settingsRevision } from '../realtime'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { cacheVersion, cacheVersionMatches, getPageCache, invalidatePageCache, pageCacheKey, setPageCache } from '../pageCache'
 
@@ -45,8 +55,6 @@ const loading = ref(false)
 const reveal = ref(initial === undefined)
 let loadingTimer: ReturnType<typeof setTimeout> | undefined
 const loadError = ref('')
-const notice = ref('')
-const noticeError = ref(false)
 const dialog = ref<SettingsDialog | null>(null)
 const dialogError = ref('')
 const confirming = ref(false)
@@ -64,15 +72,19 @@ const credentials: { value: CredentialPreference; label: string }[] = [
   { value: 'ClaudeDesktop', label: 'Claude 桌面版' },
   { value: 'ClaudeCode', label: 'Claude Code' },
 ]
+const quotaModes: { value: MenuBarQuota; label: string }[] = [
+  { value: 'off', label: '只显示图标' },
+  { value: 'claude', label: 'Claude' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'both', label: '两者都显示' },
+]
 const router = useRouter()
 const parsedPercent = computed(() => parsePercent(percentText.value))
 const locked = computed(() => confirming.value || dialog.value !== null)
 const recorderDialog = computed(() => (dialog.value?.kind === 'recorder' ? dialog.value : null))
-const privacyText = computed(() => privacyDetail(Boolean(settings.value?.claude_official_query), Boolean(settings.value?.codex_app_server)))
 
 function showNotice(text: string, isError = false) {
-  notice.value = text
-  noticeError.value = isError
+  showToast(text, isError ? 'error' : 'success')
 }
 function errorText(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause)
@@ -109,6 +121,45 @@ function saveSnapshot() {
   if (settings.value && environment.value && recorder.value) {
     setPageCache(settingsKey, { settings: settings.value, environment: environment.value, recorder: recorder.value })
   }
+}
+
+// System state, read from the OS rather than settings.json.
+const userAgent = navigator.userAgent
+const isMac = /Mac/.test(userAgent)
+const notifications = ref<NotificationStatus>('unknown')
+const notifyLine = computed(() => notificationLine(notifications.value))
+const autostart = ref<AutostartState | null>(null)
+const systemBusy = ref(false)
+
+async function loadSystemState() {
+  const [status, login] = await Promise.allSettled([notificationStatus(), getAutostart()])
+  notifications.value = status.status === 'fulfilled' ? status.value : 'unknown'
+  if (login.status === 'fulfilled') autostart.value = login.value
+}
+
+async function toggleAutostart() {
+  if (!autostart.value || systemBusy.value) return
+  systemBusy.value = true
+  try {
+    autostart.value = await setAutostart(!autostart.value.enabled)
+  } catch (cause) {
+    showNotice(errorText(cause), true)
+  } finally {
+    systemBusy.value = false
+  }
+}
+
+async function setBackgroundOption(change: Partial<Pick<AppSettings, 'silent_start' | 'menu_bar_quota'>>) {
+  if (!settings.value || locked.value) return
+  try { await save({ ...settings.value, ...change }) }
+  catch (cause) { showNotice(errorText(cause), true) }
+}
+
+watch(settingsRevision, () => { void load(); void loadSystemState() })
+
+/** Back from System Settings: show what changed there. */
+function onWindowFocus() {
+  void loadSystemState()
 }
 
 async function load() {
@@ -159,6 +210,15 @@ async function setTheme(theme: Theme) {
     await save({ ...settings.value, theme })
   } catch (cause) {
     applyTheme(previous)
+    showNotice(errorText(cause), true)
+  }
+}
+
+async function setAdviceNotifications(enabled: boolean) {
+  if (!settings.value || locked.value) return
+  try {
+    await save({ ...settings.value, advice_notifications: enabled })
+  } catch (cause) {
     showNotice(errorText(cause), true)
   }
 }
@@ -317,8 +377,15 @@ function openGuide() {
   if (router.currentRoute.value.path !== '/') void router.push('/')
 }
 
-onMounted(load)
-onUnmounted(() => { if (loadingTimer) clearTimeout(loadingTimer) })
+onMounted(() => {
+  void load()
+  void loadSystemState()
+  window.addEventListener('focus', onWindowFocus)
+})
+onUnmounted(() => {
+  if (loadingTimer) clearTimeout(loadingTimer)
+  window.removeEventListener('focus', onWindowFocus)
+})
 </script>
 
 <template>
@@ -336,16 +403,6 @@ onUnmounted(() => { if (loadingTimer) clearTimeout(loadingTimer) })
       <CircleAlert :size="28" /><strong>读取设置失败</strong><p>{{ loadError }}</p><button type="button" @click="load">重试</button>
     </div>
     <template v-else-if="settings && environment && recorder">
-      <Transition name="notice"><p v-if="notice" class="settings-notice" :class="{ 'settings-notice-error': noticeError }" role="status">{{ notice }}</p></Transition>
-
-      <section class="settings-banner content-reveal">
-        <span class="settings-banner-icon"><ShieldCheck :size="20" :stroke-width="2" aria-hidden="true" /></span>
-        <div>
-          <strong>所有数据均保留在本机</strong>
-          <p>{{ privacyText }}</p>
-        </div>
-      </section>
-
       <article class="card settings-card content-reveal">
         <header class="settings-card-head"><Database :size="16" aria-hidden="true" />数据来源</header>
 
@@ -423,6 +480,61 @@ onUnmounted(() => { if (loadingTimer) clearTimeout(loadingTimer) })
       </article>
 
       <article class="card settings-card">
+        <header class="settings-card-head"><Power :size="16" aria-hidden="true" />后台运行</header>
+
+        <div class="settings-row">
+          <span class="settings-icon"><BellRing :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">省额度提醒</div>
+            <p class="settings-desc">关闭窗口后仍在后台运行，发现上下文过长、缓存过期重建等浪费额度的情况时发系统通知。只在本机判断，同一问题只提醒一次。</p>
+            <p class="settings-note settings-notify">
+              <span class="settings-notify-status" :class="`notify-${notifyLine.tone}`"><i aria-hidden="true" />{{ notifyLine.text }}</span>
+            </p>
+          </div>
+          <div class="settings-controls">
+            <Toggle :checked="settings.advice_notifications" :disabled="locked" label="省额度提醒" @toggle="setAdviceNotifications(!settings.advice_notifications)" />
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <span class="settings-icon"><LogIn :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">开机自动启动</div>
+            <p class="settings-desc">登录后自动启动 token-audit。</p>
+            <p v-if="autostart && !autostart.available" class="settings-note">开发版不可用，请在打包后的应用里设置。</p>
+            <p v-if="autostart?.requires_approval" class="settings-note">需要在系统设置中允许 <button type="button" class="settings-link" @click="openLoginItemsSettings">打开登录项设置</button></p>
+          </div>
+          <div class="settings-controls">
+            <Toggle :checked="Boolean(autostart?.enabled)" :disabled="locked || systemBusy || !autostart?.available" label="开机自动启动" @toggle="toggleAutostart" />
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <span class="settings-icon"><MonitorOff :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">静默启动</div>
+            <p class="settings-desc">启动时不打开窗口，只在{{ trayPlace(userAgent) }}显示图标。</p>
+          </div>
+          <div class="settings-controls">
+            <Toggle :checked="settings.silent_start" :disabled="locked" label="静默启动" @toggle="setBackgroundOption({ silent_start: !settings.silent_start })" />
+          </div>
+        </div>
+
+        <div v-if="isMac" class="settings-row">
+          <span class="settings-icon"><Gauge :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">菜单栏显示额度</div>
+            <p class="settings-desc">选择图标旁显示的 5 小时额度。</p>
+          </div>
+          <div class="settings-controls">
+            <div v-selection-slide class="segmented settings-theme" role="group" aria-label="菜单栏显示额度">
+              <button v-for="item in quotaModes" :key="item.value" type="button" :class="{ active: settings.menu_bar_quota === item.value }" :aria-pressed="settings.menu_bar_quota === item.value" :disabled="locked" @click="setBackgroundOption({ menu_bar_quota: item.value })">{{ item.label }}</button>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card settings-card">
         <header class="settings-card-head"><SlidersHorizontal :size="16" aria-hidden="true" />通用</header>
 
         <div class="settings-row">
@@ -442,7 +554,7 @@ onUnmounted(() => { if (loadingTimer) clearTimeout(loadingTimer) })
           <span class="settings-icon"><Coins :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
             <div class="settings-title">价格表</div>
-            <p class="settings-desc">用于将 token 折算为 API 等价费用，随应用内置，当前版本 {{ environment.pricing_version }}；不联网更新。</p>
+            <p class="settings-desc">将 token 折算为 API 等价费用。随应用内置，当前版本 {{ environment.pricing_version }}，不联网更新。</p>
             <p v-if="environment.pricing_note" class="settings-note">{{ environment.pricing_note }}</p>
           </div>
         </div>
@@ -488,7 +600,7 @@ onUnmounted(() => { if (loadingTimer) clearTimeout(loadingTimer) })
           <span class="settings-icon"><Compass :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
             <div class="settings-title">重新查看引导</div>
-            <p class="settings-desc">再看一遍数据说明、已检测到的工具和额度来源。不会改动当前设置。</p>
+            <p class="settings-desc">再看一遍数据说明、已检测到的工具、后台提醒和额度来源。不会改动当前设置。</p>
           </div>
           <div class="settings-controls">
             <button type="button" class="settings-tonal" :disabled="locked" @click="openGuide">打开</button>

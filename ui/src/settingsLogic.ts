@@ -28,18 +28,6 @@ export function applyTheme(theme: ThemeChoice, root: HTMLElement = document.docu
   else delete root.dataset.theme
 }
 
-/** Second sentence of the settings privacy banner. */
-export function privacyDetail(claudeOfficial: boolean, codexOfficial: boolean): string {
-  const enabled = [
-    claudeOfficial ? 'Claude 官方额度查询' : '',
-    codexOfficial ? 'Codex 官方额度' : '',
-  ].filter(Boolean)
-  if (!enabled.length) {
-    return '仅读取 ~/.claude/projects 与 ~/.codex/sessions 中的日志，默认不发起任何网络请求；核心算法开源，结果可独立复现。'
-  }
-  return `已开启：${enabled.join(' / ')}，仅在刷新额度时联网。`
-}
-
 /** `claude:cache_rebuild` → `Claude · 缓存过期后的整段重建`. */
 export function adviceLabel(key: string): string {
   const separator = key.indexOf(':')
@@ -72,6 +60,6 @@ export function formatCalibration(tool: string, percent: number, recordedAt: Dat
 
 export function quotaMessageTone(message: string): QuotaMessageTone {
   if (message === '已更新') return 'ok'
-  if (message === '未开启' || message === '60 秒内已查询' || message === '限流退避中' || message === '开发预览') return 'neutral'
+  if (message === '未开启' || message === '60 秒内已查询' || message === '限流退避中' || message === '开发预览' || message === '需要授权') return 'neutral'
   return 'bad'
 }

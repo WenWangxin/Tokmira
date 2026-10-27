@@ -8,6 +8,7 @@ import { vSelectionSlide } from '../components/selectionSlide'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
 import { usePageRequest } from '../usePageRequest'
+import { usageRevision } from '../realtime'
 import {
   getSessionDetail, getSessions,
   type SessionDetail, type SessionRow, type Source, type TimelineEntry, type TokenCounts, type Tool,
@@ -62,8 +63,8 @@ function setContentLock(selected: boolean) {
   }
 }
 
-async function load() {
-  await listRequest.load(listKey, () => getSessions(7))
+async function load(keep = false) {
+  await listRequest.load(listKey, () => getSessions(7), { keep })
 }
 async function loadDetail(tool: Tool, sessionId: string) {
   const ticket = ++detailTicket
@@ -91,6 +92,11 @@ async function loadDetail(tool: Tool, sessionId: string) {
     }
   }
 }
+watch(usageRevision, () => {
+  void load(true)
+  const open = routeSession.value
+  if (open) void loadDetail(open.tool, open.id)
+})
 watch(routeSession, (selected) => {
   requestLimit.value = 50
   setContentLock(Boolean(selected))
@@ -247,7 +253,7 @@ const detailSubtitle = computed(() => {
 
     <PageSkeleton v-if="pending && loading" kind="sessions" />
     <div v-else-if="pending" class="page-await" />
-    <div v-else-if="error && !listRequest.data.value" class="center-state"><CircleAlert :size="28" /><strong>读取会话失败</strong><p>{{ error }}</p><button type="button" @click="load">重试</button></div>
+    <div v-else-if="error && !listRequest.data.value" class="center-state"><CircleAlert :size="28" /><strong>读取会话失败</strong><p>{{ error }}</p><button type="button" @click="load()">重试</button></div>
     <div v-else-if="!rows.length" class="center-state"><Database :size="28" /><strong>近 7 天没有会话</strong><p>开始使用 Claude Code 或 Codex 后，会话会显示在这里。</p></div>
     <div v-else-if="!filtered.length" class="center-state"><Search :size="28" /><strong>没有匹配的会话</strong><p>换一个关键词，或切换来源后再试。</p></div>
     <section v-else class="card sessions-table content-reveal" aria-label="会话列表">

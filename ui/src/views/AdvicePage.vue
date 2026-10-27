@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { showToast } from '../toast'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { CircleAlert, Clock, Coins, Cpu, ExternalLink, GitFork, Layers, Lightbulb, List, Zap } from 'lucide-vue-next'
@@ -10,6 +11,7 @@ import { dismissAdvice, getAdvice, type AdviceItem, type AdviceReport, type Tool
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { getPageCache, invalidatePageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
 import { usePageRequest } from '../usePageRequest'
+import { usageRevision } from '../realtime'
 
 const router = useRouter()
 const period = ref<7 | 30>(pageSelection.advice.period)
@@ -32,9 +34,9 @@ const icons: Record<string, unknown> = {
   many_subagents: GitFork,
 }
 
-async function load() {
+async function load(keep = false) {
   const selectedPeriod = period.value
-  const result = await request.load(pageCacheKey('advice', selectedPeriod), () => getAdvice(selectedPeriod))
+  const result = await request.load(pageCacheKey('advice', selectedPeriod), () => getAdvice(selectedPeriod), { keep })
   if (result && !pageSelection.advice.tool) {
     const withItems = result.tools.find(item => item.items.length)
     tool.value = withItems?.tool ?? result.tools[0]?.tool ?? 'Claude'
@@ -68,11 +70,12 @@ async function dismiss(item: AdviceItem) {
     if (period.value === dismissedPeriod) request.replace(key, fresh)
     else setPageCache(key, fresh)
   } catch (cause) {
-    error.value = String(cause)
+    showToast(cause instanceof Error ? cause.message : String(cause), 'error')
   }
 }
 
 onMounted(() => { void load() })
+watch(usageRevision, () => { void load(true) })
 const current = computed(() => report.value?.tools.find(item => item.tool === tool.value) ?? null)
 const available = (item: Tool) => Boolean(report.value?.tools.some(entry => entry.tool === item))
 const pct = (value: number) => `${value.toFixed(1)}%`
@@ -109,7 +112,6 @@ function impact(item: AdviceItem) {
     <div v-else-if="error && !report" class="center-state"><CircleAlert :size="28" /><strong>生成建议失败</strong><p>{{ error }}</p><button @click="load()">重试</button></div>
     <div v-else-if="!current" class="center-state"><Lightbulb :size="28" /><strong>近 {{ period }} 天没有 {{ tool }} 的本地用量</strong></div>
     <template v-else>
-      <p v-if="error" class="advice-error-note" role="alert">{{ error }}</p>
       <section class="advice-summary content-reveal" aria-label="建议汇总">
         <article class="card advice-stat">
           <span class="advice-stat-icon"><Coins :size="20" /></span>

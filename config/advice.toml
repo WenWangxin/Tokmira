@@ -41,6 +41,14 @@ codex_alternative = "gpt-6-sol"
 min_cost_share = 0.3
 min_requests = 10
 
+[alerts]
+# 后台提醒：两条系统通知之间至少间隔这么多分钟，期间新出现的问题只记下不通知
+cooldown_minutes = 5
+# 轻量任务要等这次提示结束才能判断：同一会话出现下一条提示，或安静这么多分钟
+light_task_settle_minutes = 3
+# 只看最近这么多小时内的请求
+lookback_hours = 6
+
 # 每条建议的外部链接（导流位）。为空时界面不显示按钮。链接不影响诊断结果。
 [links.cache_rebuild]
 label = ""

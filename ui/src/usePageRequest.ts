@@ -12,15 +12,19 @@ export function usePageRequest<T>(initialKey: string) {
   let ticket = 0
   let disposed = false
 
-  async function load(key: string, request: () => Promise<T>): Promise<T | null> {
+  /** `keep` refreshes in place: the data on screen stays until the new result arrives. */
+  async function load(key: string, request: () => Promise<T>, options: { keep?: boolean } = {}): Promise<T | null> {
     const current = ++ticket
     if (timer) clearTimeout(timer)
     const cached = getPageCache<T>(key)
-    data.value = (cached ?? null)
-    pending.value = cached === undefined
+    const keep = options.keep === true && data.value !== null
+    if (!keep) {
+      data.value = (cached ?? null)
+      pending.value = cached === undefined
+    }
     loading.value = false
     error.value = ''
-    if (cached === undefined) {
+    if (!keep && cached === undefined) {
       timer = setTimeout(() => { if (!disposed && current === ticket) loading.value = true }, 250)
     }
     const version = cacheVersion(key)
@@ -35,7 +39,7 @@ export function usePageRequest<T>(initialKey: string) {
       }
       return result
     } catch (cause) {
-      if (!disposed && current === ticket && cached === undefined) error.value = cause instanceof Error ? cause.message : String(cause)
+      if (!disposed && current === ticket && cached === undefined && !keep) error.value = cause instanceof Error ? cause.message : String(cause)
       return null
     } finally {
       if (!disposed && current === ticket) {

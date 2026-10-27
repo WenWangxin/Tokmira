@@ -13,6 +13,7 @@ import './styles/settings.css'
 import './styles/onboarding.css'
 import './styles/share.css'
 import './styles/motion.css'
+import './styles/toast.css'
 
 async function boot() {
   try {

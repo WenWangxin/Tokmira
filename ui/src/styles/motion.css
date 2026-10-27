@@ -28,9 +28,6 @@
 
 .content-fade-enter-active, .content-fade-leave-active { transition: opacity var(--motion-medium) var(--ease-standard); }
 .content-fade-enter-from, .content-fade-leave-to { opacity: 0; }
-.notice-enter-active, .notice-leave-active { transition: opacity var(--motion-medium) var(--ease-standard), transform var(--motion-medium) var(--ease-standard), max-height var(--motion-medium) var(--ease-standard), padding var(--motion-medium) var(--ease-standard), margin var(--motion-medium) var(--ease-standard); overflow: hidden; max-height: 120px; }
-.notice-enter-from { opacity: 0; transform: translateY(-6px); max-height: 0; padding-block: 0; margin-block: 0 -16px; }
-.notice-leave-to { opacity: 0; max-height: 0; padding-block: 0; margin-block: 0 -16px; }
 
 .dialog-enter-active, .dialog-leave-active { transition: opacity var(--motion-dialog-in) var(--ease-emphasized-decelerate); }
 .dialog-leave-active { transition-duration: var(--motion-dialog-out); transition-timing-function: var(--ease-emphasized-accelerate); }
@@ -51,7 +48,7 @@
 .advice-list-enter-active { transition: opacity var(--motion-medium) var(--ease-emphasized-decelerate); }
 .advice-list-enter-from { opacity: 0; }
 
-.quota-ring circle:last-child { transition: stroke-dashoffset var(--motion-long) var(--ease-emphasized-decelerate); }
+.quota-ring circle:last-child { transition: stroke-dashoffset var(--motion-long) var(--ease-emphasized-decelerate), stroke var(--motion-long) var(--ease-standard); }
 .usage-segment, .usage-remainder, .usage-rank-track span { transition: width var(--motion-long) var(--ease-emphasized-decelerate); }
 .sparkline { animation: content-reveal var(--motion-medium) var(--ease-standard) both; }
 .round-action, .session-row, .session-line, .advice-card-row, .usage-prompt-row, .settings-page button, .advice-item button, .sessions-more, .share-dialog button, .confirm-dialog button { transition: background-color var(--motion-short) var(--ease-standard), color var(--motion-short) var(--ease-standard); }
@@ -60,8 +57,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; }
-  .page-fade-through-enter-active, .page-fade-through-leave-active, .content-fade-enter-active, .content-fade-leave-active, .notice-enter-active, .notice-leave-active, .dialog-enter-active, .dialog-leave-active, .drawer-mask-enter-active, .drawer-mask-leave-active { transition: opacity var(--motion-reduced) linear !important; }
-  .page-fade-through-enter-from, .notice-enter-from, .dialog-enter-from, .drawer-enter-from, .drawer-leave-to, .advice-list-leave-to { transform: none !important; }
+  .page-fade-through-enter-active, .page-fade-through-leave-active, .content-fade-enter-active, .content-fade-leave-active, .dialog-enter-active, .dialog-leave-active, .drawer-mask-enter-active, .drawer-mask-leave-active { transition: opacity var(--motion-reduced) linear !important; }
+  .page-fade-through-enter-from, .dialog-enter-from, .drawer-enter-from, .drawer-leave-to, .advice-list-leave-to { transform: none !important; }
   .dialog-enter-active .share-dialog, .dialog-enter-active .confirm-dialog, .dialog-leave-active .share-dialog, .dialog-leave-active .confirm-dialog, .drawer-enter-active, .drawer-leave-active, .advice-list-move, .advice-list-leave-active, .selection-slide-ready .selection-slider, .quota-ring circle:last-child, .usage-segment, .usage-remainder, .usage-rank-track span, .toggle, .toggle-thumb { transition-duration: 0ms !important; }
   .dialog-enter-from .share-dialog, .dialog-enter-from .confirm-dialog, .dialog-leave-to .share-dialog, .dialog-leave-to .confirm-dialog { transform: none !important; }
 }
@@ -86,3 +83,11 @@
 .no-entry-reveal .sparkline,
 .no-entry-reveal .first-card,
 .no-entry-reveal.settings-page > .settings-card:not(.content-reveal) { animation: none; }
+
+.popover-enter-active { transition: opacity var(--motion-medium) var(--ease-emphasized-decelerate), transform var(--motion-medium) var(--ease-emphasized-decelerate); }
+.popover-leave-active { transition: opacity var(--motion-short) var(--ease-emphasized-accelerate), transform var(--motion-short) var(--ease-emphasized-accelerate); }
+.popover-enter-from, .popover-leave-to { opacity: 0; transform: translateY(-6px) scale(.96); }
+@media (prefers-reduced-motion: reduce) {
+  .popover-enter-active, .popover-leave-active { transition: opacity var(--motion-reduced) linear; }
+  .popover-enter-from, .popover-leave-to { transform: none; }
+}

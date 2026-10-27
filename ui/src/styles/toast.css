@@ -1,0 +1,64 @@
+/* Top-of-window messages, like Element Plus ElMessage, in the app's tinted status colours. */
+.toast-host {
+  position: fixed;
+  z-index: 60;
+  top: 16px;
+  left: 50%;
+  width: min(480px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.toast-stack { position: relative; display: grid; justify-items: center; gap: 8px; }
+
+.toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  min-height: 40px;
+  padding: 9px 10px 9px 14px;
+  border-radius: 12px;
+  background: var(--surface-container-highest);
+  box-shadow: var(--shadow-dialog);
+  color: var(--on-surface);
+  font-size: 13px;
+  line-height: 1.5;
+  pointer-events: auto;
+}
+.toast-success { background: var(--success-container); color: var(--on-success-container); }
+.toast-warning { background: var(--warning-container); color: var(--on-warning-container); }
+.toast-error { background: var(--error-container); color: var(--on-error-container); }
+
+.toast-icon { flex: none; }
+.toast-info .toast-icon { color: var(--primary); }
+.toast-text { min-width: 0; overflow-wrap: anywhere; }
+
+.toast-close {
+  display: grid;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: background-color var(--motion-short) var(--ease-standard), opacity var(--motion-short) var(--ease-standard);
+}
+.toast-close:hover { background: color-mix(in srgb, currentColor 12%, transparent); opacity: 1; }
+.toast-close:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+.toast-enter-active { transition: opacity var(--motion-medium) var(--ease-emphasized-decelerate), transform var(--motion-medium) var(--ease-emphasized-decelerate); }
+.toast-leave-active { position: absolute; transition: opacity var(--motion-dialog-out) var(--ease-emphasized-accelerate), transform var(--motion-dialog-out) var(--ease-emphasized-accelerate); }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-12px); }
+.toast-move { transition: transform var(--motion-medium) var(--ease-standard); }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-enter-active, .toast-leave-active { transition: opacity var(--motion-reduced) linear; }
+  .toast-enter-from, .toast-leave-to { transform: none; }
+  .toast-move { transition: none; }
+}

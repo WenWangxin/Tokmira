@@ -1,19 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { reactive } from 'vue'
-import { adviceLabel, clonePreview, formatCalibration, parsePercent, privacyDetail, themeDataset } from './settingsLogic.ts'
+import { adviceLabel, clonePreview, formatCalibration, parsePercent, themeDataset } from './settingsLogic.ts'
 
 test('system theme clears the document attribute', () => {
   assert.equal(themeDataset('system'), null)
   assert.equal(themeDataset('light'), 'light')
   assert.equal(themeDataset('dark'), 'dark')
-})
-
-test('privacy banner names only the sources that are on', () => {
-  assert.match(privacyDetail(false, false), /默认不发起任何网络请求/)
-  assert.equal(privacyDetail(true, false), '已开启：Claude 官方额度查询，仅在刷新额度时联网。')
-  assert.equal(privacyDetail(false, true), '已开启：Codex 官方额度，仅在刷新额度时联网。')
-  assert.equal(privacyDetail(true, true), '已开启：Claude 官方额度查询 / Codex 官方额度，仅在刷新额度时联网。')
 })
 
 test('dismissed advice keys use the rule title', () => {

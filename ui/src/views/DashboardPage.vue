@@ -1,16 +1,21 @@
 <script setup lang="ts">
+import { showToast } from '../toast'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Share, RefreshCw, CircleCheck, CircleAlert, Coins, Database, TrendingUp, ShieldCheck, Lightbulb, ChevronRight } from 'lucide-vue-next'
-import { getAdvice, getOverview, refreshQuotas, rescan, type AdviceItem, type AdviceReport, type Overview, type Origin, type QuotaDisplay, type Tool, type Source } from '../api'
+import { getAdvice, getOverview, getSettings, refreshQuotas, rescan, type AdviceItem, type AdviceReport, type Overview, type Origin, type QuotaDisplay, type Tool, type Source } from '../api'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import Sparkline from '../components/Sparkline.vue'
 import QuotaTrend from '../components/QuotaTrend.vue'
+import { remainingQuotaColor } from '../components/quotaChart'
 import ShareDialog from '../components/ShareDialog.vue'
 import AnimatedNumber from '../components/AnimatedNumber.vue'
 import { vSelectionSlide } from '../components/selectionSlide'
 import { dashboardRefreshToken, pendingDashboardNotice } from '../onboardingState'
+import { claudeNeedsAuthorization, lastQuotaResult, usageRevision } from '../realtime'
+import SourceStatusPanel from '../components/SourceStatusPanel.vue'
+import { overallTone, sourceRows, timeAgo } from '../sourceStatus'
 import { cacheVersion, cacheVersionMatches, getPageCache, invalidatePageCache, pageCacheKey, setPageCache } from '../pageCache'
 
 const router = useRouter()
@@ -25,8 +30,6 @@ const reveal = ref(initialOverview === null)
 const refreshing = ref(false)
 const error = ref('')
 const refreshError = ref('')
-const notice = ref('')
-const noticeTone = ref<'warning' | 'success'>('warning')
 const selectedTool = ref<Tool>(initialOverview?.tools.filter(item => item.five_hour.used_percent !== null)
   .sort((a, b) => (b.five_hour.used_percent ?? 0) - (a.five_hour.used_percent ?? 0))[0]?.tool ?? 'Claude')
 let userSelectedTool = false
@@ -49,6 +52,8 @@ async function loadAdvice() {
 
 async function load(quiet = false) {
   const ticket = ++loadTicket
+  // Live updates must not flip the trend chart between tools; only the first data picks one.
+  const hadData = overview.value !== null
   if (!quiet && !overview.value) {
     pending.value = true
     loadingTimer = setTimeout(() => { loading.value = true }, 250)
@@ -62,7 +67,7 @@ async function load(quiet = false) {
     setPageCache(overviewKey, data)
     void loadAdvice()
     const available = data.tools.filter(item => item.five_hour.used_percent !== null)
-    if (!userSelectedTool || !available.some(item => item.tool === selectedTool.value)) {
+    if ((!userSelectedTool && !hadData) || !available.some(item => item.tool === selectedTool.value)) {
       selectedTool.value = available.sort((a, b) => (b.five_hour.used_percent ?? 0) - (a.five_hour.used_percent ?? 0))[0]?.tool ?? 'Claude'
     }
   } catch (cause) {
@@ -93,8 +98,7 @@ async function refresh() {
     invalidatePageCache('overview', 'advice', 'usageWindows', 'usageDetail', 'sessions', 'sessionDetail')
     const result = await refreshQuotas()
     refreshError.value = [result.claude, result.codex].filter(message => !['已更新', '未开启', '60 秒内已查询', '开发预览'].includes(message)).join('；')
-    notice.value = refreshError.value
-    noticeTone.value = 'warning'
+    if (refreshError.value) showToast(refreshError.value, 'warning')
     overview.value = await getOverview()
     setPageCache(overviewKey, overview.value)
     void loadAdvice()
@@ -108,13 +112,65 @@ async function refresh() {
     refreshing.value = false
   }
 }
+// Source status panel behind the round status button in the header.
+const statusOpen = ref(false)
+const statusAnchor = ref<HTMLElement | null>(null)
+const sourceSettings = ref<{ claude_official_query: boolean; codex_app_server: boolean } | null>(null)
+const now = ref(Date.now())
+let nowTimer: ReturnType<typeof setInterval> | undefined
+async function loadSourceSettings() {
+  try { sourceSettings.value = await getSettings() } catch { /* The panel shows sources as off until settings load. */ }
+}
+const statusRows = computed(() => overview.value ? sourceRows({
+  claudeOfficialEnabled: Boolean(sourceSettings.value?.claude_official_query),
+  codexOfficialEnabled: Boolean(sourceSettings.value?.codex_app_server),
+  recorder: overview.value.recorder,
+  times: overview.value.quota_sources ?? null,
+  claudeNeedsAuthorization: claudeNeedsAuthorization.value,
+  lastResult: lastQuotaResult.value,
+  now: now.value,
+}) : [])
+const statusTone = computed(() => overallTone(statusRows.value, error.value))
+const logsUpdated = computed(() => overview.value ? `${timeAgo(overview.value.generated_at, now.value)}更新` : null)
+function toggleStatus() {
+  statusOpen.value = !statusOpen.value
+  if (statusOpen.value) { now.value = Date.now(); void loadSourceSettings() }
+}
+function onStatusPointer(event: PointerEvent) {
+  if (statusOpen.value && !statusAnchor.value?.contains(event.target as Node)) statusOpen.value = false
+}
+function onStatusKey(event: KeyboardEvent) {
+  if (statusOpen.value && event.key === 'Escape') statusOpen.value = false
+}
+function openSourceSettings() {
+  statusOpen.value = false
+  void router.push('/settings')
+}
+onMounted(() => {
+  void loadSourceSettings()
+  document.addEventListener('pointerdown', onStatusPointer)
+  document.addEventListener('keydown', onStatusKey)
+  nowTimer = setInterval(() => { now.value = Date.now() }, 30_000)
+})
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onStatusPointer)
+  document.removeEventListener('keydown', onStatusKey)
+  if (nowTimer) clearInterval(nowTimer)
+})
+
+/** Asks for the keychain once, by hand, so background queries can read it afterwards. */
+async function authorizeClaude() {
+  showToast('如果系统弹出钥匙串授权，请选择“始终允许”，以后打开会自动获取最新额度', 'info')
+  await refresh()
+  if (!claudeNeedsAuthorization.value) showToast('已获取最新的 Claude 额度', 'success')
+}
 onMounted(() => { void load() })
 onUnmounted(() => { loadTicket++; if (loadingTimer) clearTimeout(loadingTimer) })
+watch(usageRevision, () => { if (!refreshing.value) void load(true) })
 watch(dashboardRefreshToken, () => {
   const pending = pendingDashboardNotice.value
   if (pending) {
-    notice.value = pending.text
-    noticeTone.value = pending.tone
+    showToast(pending.text, pending.tone)
     pendingDashboardNotice.value = null
   }
   invalidatePageCache('overview', 'advice', 'usageWindows', 'usageDetail', 'sessions', 'sessionDetail')
@@ -232,12 +288,14 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
       <div class="header-actions">
         <button class="round-action" title="分享" aria-label="分享" @click="shareOpen = true"><Share :size="21" /></button>
         <button class="round-action" title="刷新" aria-label="刷新" :disabled="refreshing || loading" @click="refresh"><RefreshCw :size="21" :class="{ spinning: refreshing }" /></button>
-        <button class="round-action state-action" :class="error || refreshError ? 'state-warning' : 'state-success'" :title="error || refreshError || '数据已就绪'" aria-label="数据状态" @click="notice = error || refreshError || '数据已就绪'">
-          <CircleAlert v-if="error || refreshError" :size="22" /><CircleCheck v-else :size="22" />
-        </button>
+        <div ref="statusAnchor" class="state-anchor">
+          <button class="round-action state-action" :class="statusTone === 'warning' ? 'state-warning' : 'state-success'" :title="statusTone === 'warning' ? '有数据来源需要处理' : '数据来源正常'" aria-label="数据来源" :aria-expanded="statusOpen" @click="toggleStatus">
+            <CircleAlert v-if="statusTone === 'warning'" :size="22" /><CircleCheck v-else :size="22" />
+          </button>
+          <Transition name="popover"><SourceStatusPanel v-if="statusOpen" :rows="statusRows" :logs-updated="logsUpdated" :load-error="error" :busy="refreshing" @authorize="statusOpen = false; authorizeClaude()" @settings="openSourceSettings" /></Transition>
+        </div>
       </div>
     </header>
-    <Transition name="notice"><div v-if="notice" class="notice" :class="{ 'notice-success': noticeTone === 'success' }" role="status">{{ notice }} <button @click="notice = ''" aria-label="关闭提示">×</button></div></Transition>
     <div v-if="pending && loading" class="skeleton-layout" aria-label="正在加载数据"><div class="skeleton" v-for="i in 9" :key="i" /></div>
     <div v-else-if="pending" class="page-await" />
     <div v-else-if="error && !overview" class="center-state"><CircleAlert :size="30" /><strong>加载概览失败</strong><p>{{ error }}</p><button @click="load()">重试</button></div>
@@ -247,10 +305,10 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
         <article v-for="item in overview.tools" :key="item.tool" class="card quota-card" :class="{ 'first-card': firstContent }">
           <div class="quota-body">
             <div class="quota-top"><span class="tool-icon"><img v-if="item.tool === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else /></span><span class="plan-label">{{ planName(item.tool, item.plan) }}</span><span class="origin-pill" :class="item.five_hour.origin === 'Manual' ? 'pill-warning' : item.five_hour.used_percent === null || item.five_hour.origin === 'Estimated' ? 'pill-neutral' : 'pill-success'">{{ sourceText(item.tool, item.five_hour.origin) }}</span></div>
-            <div class="quota-main"><div><div class="eyebrow">5 小时额度已用</div><div class="quota-number" :class="{ 'quota-passed': item.five_hour.window_passed }"><AnimatedNumber :initial-animation="reveal" :value="item.five_hour.window_passed ? '已重置' : quotaPercent(item.five_hour.used_percent)" /><span v-if="!item.five_hour.window_passed && item.five_hour.used_percent !== null">%</span></div><button v-if="item.five_hour.used_percent === null && !item.five_hour.window_passed" class="settings-link" @click="router.push('/settings')">在设置中开启额度来源 <ChevronRight :size="14" /></button></div>
-              <div class="quota-ring" :class="item.tool === 'Claude' ? 'ring-claude' : 'ring-codex'"><svg viewBox="0 0 96 96" aria-hidden="true"><circle cx="48" cy="48" r="42" fill="none" stroke="var(--surface-container-high)" stroke-width="10"/><circle v-if="item.five_hour.used_percent !== null && !item.five_hour.window_passed" cx="48" cy="48" r="42" fill="none" :stroke="item.tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)'" stroke-width="10" stroke-dasharray="264 264" :stroke-dashoffset="ringReady ? 264 - Math.max(0, Math.min(100, item.five_hour.used_percent)) * 2.639 : 264" transform="rotate(-90 48 48)" /></svg><div class="ring-label"><strong>{{ item.five_hour.used_percent === null ? '—' : `${Math.max(0, 100 - item.five_hour.used_percent).toFixed(0)}%` }}</strong><span>剩余</span></div></div>
+            <div class="quota-main"><div><div class="eyebrow">5 小时额度已用</div><div class="quota-number" :class="{ 'quota-passed': item.five_hour.window_passed }"><AnimatedNumber :initial-animation="reveal" :value="item.five_hour.window_passed ? '已重置' : quotaPercent(item.five_hour.used_percent)" /><span v-if="!item.five_hour.window_passed && item.five_hour.used_percent !== null">%</span></div><button v-if="item.tool === 'Claude' && claudeNeedsAuthorization" class="settings-link" :disabled="refreshing" @click="authorizeClaude">授权以获取最新额度 <ChevronRight :size="14" /></button><button v-else-if="item.five_hour.used_percent === null && !item.five_hour.window_passed" class="settings-link" @click="router.push('/settings')">在设置中开启额度来源 <ChevronRight :size="14" /></button></div>
+              <div class="quota-ring"><svg viewBox="0 0 96 96" aria-hidden="true"><circle cx="48" cy="48" r="42" fill="none" stroke="var(--surface-container-high)" stroke-width="10"/><circle v-if="item.five_hour.used_percent !== null && !item.five_hour.window_passed" cx="48" cy="48" r="42" fill="none" :style="{ stroke: remainingQuotaColor(100 - item.five_hour.used_percent) }" stroke-width="10" stroke-dasharray="264 264" :stroke-dashoffset="ringReady ? 264 - Math.max(0, Math.min(100, 100 - item.five_hour.used_percent)) * 2.639 : 264" transform="rotate(-90 48 48)" /></svg><div class="ring-label"><strong>{{ item.five_hour.used_percent === null ? '—' : `${Math.max(0, 100 - item.five_hour.used_percent).toFixed(0)}%` }}</strong><span>剩余</span></div></div>
             </div>
-            <div class="quota-facts"><div><span>下次重置</span><strong>{{ time(item.five_hour.resets_at) }}</strong><small>{{ resetRemaining(item.five_hour.resets_at) }}</small></div><div><span>本周额度</span><strong>{{ item.weekly.used_percent === null ? '—' : `${quotaPercent(item.weekly.used_percent)}%` }}</strong><small>{{ item.weekly.resets_at ? `${dateSlash(item.weekly.resets_at)} 重置` : '—' }}</small></div><div><span>用量预测</span><strong :class="forecast(item.five_hour).tone" class="forecast-text">{{ forecast(item.five_hour).text }}</strong><small>{{ forecast(item.five_hour).sub }}</small></div></div>
+            <div class="quota-facts"><div><span>下次重置</span><template v-if="item.five_hour.used_percent === 0 && !item.five_hour.resets_at"><strong>未开始</strong><small>首次使用后开始计时</small></template><template v-else><strong>{{ time(item.five_hour.resets_at) }}</strong><small>{{ resetRemaining(item.five_hour.resets_at) }}</small></template></div><div><span>本周额度</span><strong>{{ item.weekly.used_percent === null ? '—' : `${quotaPercent(item.weekly.used_percent)}%` }}</strong><small>{{ item.weekly.resets_at ? `${dateSlash(item.weekly.resets_at)} 重置` : '—' }}</small></div><div><span>用量预测</span><strong :class="forecast(item.five_hour).tone" class="forecast-text">{{ forecast(item.five_hour).text }}</strong><small>{{ forecast(item.five_hour).sub }}</small></div></div>
           </div>
         </article>
       </section>

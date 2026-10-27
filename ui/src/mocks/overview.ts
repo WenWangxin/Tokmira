@@ -66,6 +66,7 @@ export function mockOverview(variant: 'default' | 'empty' | 'nodata'): Overview 
     daily_cost: Array.from({ length: 14 }, (_, index) => ({ date: day(index - 13), estimated_cost_usd: empty ? 0 : [4, 6, 5, 8, 7, 11, 9, 13, 12, 15, 13, 18, 16, 20][index] ?? 0 })),
     recorder: { statusline_installed: true, statusline_modified: false, hooks_installed: true, hooks_modified: false,
       statusline_records: 19, hook_events: 38, last_statusline_record: at(-8), last_hook_event: at(-14) },
+    quota_sources: { claude_official: noQuota || empty ? null : at(-3), codex_official: null, codex_log: noQuota || empty ? null : at(-11) },
     trends: [
       { tool: 'Claude', five_hour_started_at: at(-300), five_hour: empty || noQuota ? [] : claudePoints,
         high_prompts: empty || noQuota ? [] : [marker(-270, 4, '初始化模块'), marker(-240, 3.6, '重构登录模块'), marker(-120, 3.9, '检查缓存'), marker(-90, 4.2, '写对账测试')],

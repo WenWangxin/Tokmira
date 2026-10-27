@@ -8,6 +8,7 @@ import { vSelectionSlide } from '../components/selectionSlide'
 import { getAdvice, getUsageDetail, getUsageWindows, promptTag, type AdviceReport, type Tool, type UsageDetail, type UsageRank, type UsageWindowRef } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
+import { usageRevision } from '../realtime'
 
 const router = useRouter()
 const windowsKey = pageCacheKey('usageWindows', 'all')
@@ -43,8 +44,8 @@ const dimensions = [
   { key: 'subagents', name: '子代理', icon: GitFork },
 ] as const
 
-async function load() {
-  if (!cachedWindows) {
+async function load(quiet = false) {
+  if (!quiet && !cachedWindows) {
     pending.value = true
     loadingTimer = setTimeout(() => { loading.value = true }, 250)
   }
@@ -66,7 +67,7 @@ async function load() {
       void selectWindow(nextWindow)
     }
   } catch (cause) {
-    if (!cachedWindows) error.value = String(cause)
+    if (!quiet && !cachedWindows) error.value = String(cause)
   } finally {
     if (loadingTimer) clearTimeout(loadingTimer)
     pending.value = false
@@ -117,6 +118,7 @@ function selectTool(next: Tool) {
   void selectWindow(window)
 }
 
+watch(usageRevision, () => { void load(true) })
 onUnmounted(() => {
   detailRequest++
   if (loadingTimer) clearTimeout(loadingTimer)
@@ -183,7 +185,7 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
     </header>
     <PageSkeleton v-if="pending && loading" kind="usage" />
     <div v-else-if="pending" class="page-await" />
-    <div v-else-if="error && !selected" class="center-state"><CircleAlert :size="28" /><strong>读取用量数据失败</strong><p>{{ error }}</p><button @click="load">重试</button></div>
+    <div v-else-if="error && !selected" class="center-state"><CircleAlert :size="28" /><strong>读取用量数据失败</strong><p>{{ error }}</p><button @click="load()">重试</button></div>
     <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>暂无 {{ tool }} 额度数据</strong><p>开启官方额度查询或安装状态栏记录器后，即可按会话和提示追溯额度。</p><button @click="router.push('/settings')">前往设置</button></div>
     <template v-else>
       <nav class="usage-window-list" aria-label="额度窗口">

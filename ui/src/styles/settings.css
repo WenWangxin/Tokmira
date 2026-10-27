@@ -8,14 +8,6 @@
 .settings-page select:focus-visible,
 .settings-percent:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
 
-.settings-notice { margin: 0; padding: 10px 14px; border-radius: 12px; background: var(--success-container); color: var(--on-success-container); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.settings-notice-error { background: var(--error-container); color: var(--on-error-container); }
-
-.settings-banner { display: flex; gap: 14px; align-items: center; min-height: 76px; padding: 16px 20px; border-radius: 20px; background: var(--success-container); color: var(--on-success-container); }
-.settings-banner-icon { display: grid; flex: none; width: 44px; height: 44px; place-items: center; border-radius: 12px; background: var(--surface-container); color: var(--success); }
-.settings-banner strong { display: block; font-size: 14px; font-weight: 600; line-height: 1.4; }
-.settings-banner p { margin: 4px 0 0; font-size: 12px; line-height: 1.65; }
-
 .settings-card { padding: 14px 20px 8px; }
 .settings-card-head { display: flex; align-items: center; gap: 8px; min-height: 26px; color: var(--on-surface-variant); font-size: 13px; }
 .settings-card-head > svg { width: 26px; height: 26px; padding: 5px; border-radius: 8px; background: var(--surface-container-high); }
@@ -27,6 +19,13 @@
 .settings-desc,
 .settings-note { margin: 4px 0 0; color: var(--on-surface-variant); font-size: 12px; line-height: 1.65; }
 .settings-note { color: var(--on-surface-muted); }
+.settings-notify { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.settings-notify-status { display: inline-flex; gap: 6px; align-items: center; color: var(--on-surface-variant); }
+.settings-notify-status i { width: 7px; height: 7px; border-radius: 99px; background: var(--outline); }
+.settings-notify-status.notify-success i { background: var(--success); }
+.settings-notify-status.notify-warning i { background: var(--warning); }
+.settings-link { padding: 0; border: 0; background: none; color: var(--primary); font-size: 12px; }
+.settings-link:hover:not(:disabled) { text-decoration: underline; }
 .settings-controls { display: flex; flex: none; align-items: center; gap: 8px; margin-left: auto; }
 .settings-pill { display: inline-flex; align-items: center; gap: 5px; }
 .settings-pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }

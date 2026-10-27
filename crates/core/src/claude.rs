@@ -3,6 +3,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Error};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
 use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
@@ -21,7 +22,7 @@ pub struct ClaudeScanStats {
     pub unreadable_files: u64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClaudeScan {
     pub events: Vec<UsageEvent>,
     pub prompts: Vec<PromptEvent>,
@@ -290,7 +291,7 @@ enum ParsedLine {
     Malformed,
 }
 
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 enum DedupKey {
     Both(String, String),
     Message(String),
@@ -379,22 +380,39 @@ fn parse_line(line: &[u8]) -> ParsedLine {
     )
 }
 
-fn scan_file(
-    path: &Path,
-    scan: &mut ClaudeScan,
-    dedup: &mut HashMap<DedupKey, usize>,
-    custom_titles: &mut BTreeMap<String, String>,
-    ai_titles: &mut BTreeMap<String, String>,
-) -> Result<(), Error> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
+/// One transcript parsed on its own. Usage lines keep their dedup keys and line
+/// order, so merging files replays exactly the single-pass deduplication.
+#[derive(Clone, Default)]
+struct ClaudeFile {
+    events: Vec<(UsageEvent, Option<DedupKey>)>,
+    prompts: Vec<PromptEvent>,
+    custom_titles: BTreeMap<String, String>,
+    ai_titles: BTreeMap<String, String>,
+    total_lines: u64,
+    valid_usage_lines: u64,
+    malformed_lines: u64,
+    non_usage_lines: u64,
+    /// Opening or reading failed. Lines read before the failure still count.
+    unreadable: bool,
+}
+
+fn parse_file(path: &Path) -> ClaudeFile {
+    let mut file = ClaudeFile::default();
+    if read_file(path, &mut file).is_err() {
+        file.unreadable = true;
+    }
+    file
+}
+
+fn read_file(path: &Path, file: &mut ClaudeFile) -> Result<(), Error> {
+    let mut reader = BufReader::new(File::open(path)?);
     let mut line = Vec::new();
     loop {
         line.clear();
         if reader.read_until(b'\n', &mut line)? == 0 {
             break;
         }
-        scan.stats.total_lines += 1;
+        file.total_lines += 1;
         let metadata_kind = serde_json::from_slice::<KindLine>(&line)
             .ok()
             .and_then(|raw| raw.kind);
@@ -407,12 +425,12 @@ fn scan_file(
                     match raw.kind.as_deref() {
                         Some("custom-title") => {
                             if let Some(title) = raw.custom_title {
-                                custom_titles.insert(id, title);
+                                file.custom_titles.insert(id, title);
                             }
                         }
                         Some("ai-title") => {
                             if let Some(title) = raw.ai_title {
-                                ai_titles.insert(id, title);
+                                file.ai_titles.insert(id, title);
                             }
                         }
                         Some("user")
@@ -427,7 +445,7 @@ fn scan_file(
                                 .as_deref()
                                 .and_then(|time| DateTime::parse_from_rfc3339(time).ok())
                             {
-                                scan.prompts.push(PromptEvent {
+                                file.prompts.push(PromptEvent {
                                     tool: Tool::Claude,
                                     session_id: id,
                                     timestamp: timestamp.with_timezone(&Utc),
@@ -440,27 +458,62 @@ fn scan_file(
             }
         }
         match parse_line(&line) {
-            ParsedLine::NonUsage => scan.stats.non_usage_lines += 1,
-            ParsedLine::Malformed => scan.stats.malformed_lines += 1,
+            ParsedLine::NonUsage => file.non_usage_lines += 1,
+            ParsedLine::Malformed => file.malformed_lines += 1,
             ParsedLine::Event(event, key) => {
-                scan.stats.valid_usage_lines += 1;
-                if let Some(key) = key {
-                    if let Some(&index) = dedup.get(&key) {
-                        scan.stats.deduplicated_lines += 1;
-                        if event.tokens.output > scan.events[index].tokens.output {
-                            scan.events[index] = *event;
-                        }
-                    } else {
-                        dedup.insert(key, scan.events.len());
-                        scan.events.push(*event);
-                    }
-                } else {
-                    scan.events.push(*event);
-                }
+                file.valid_usage_lines += 1;
+                file.events.push((*event, key));
             }
         }
     }
     Ok(())
+}
+
+/// Combines files in path order. A repeated key keeps the first position and the
+/// line with the most output tokens, as one sequential pass would.
+fn merge<'a>(files: impl Iterator<Item = &'a ClaudeFile>) -> ClaudeScan {
+    let mut scan = ClaudeScan::default();
+    let mut dedup: HashMap<&DedupKey, usize> = HashMap::new();
+    let mut custom_titles = BTreeMap::new();
+    let mut ai_titles = BTreeMap::new();
+    for file in files {
+        scan.stats.files += 1;
+        if file.unreadable {
+            scan.stats.unreadable_files += 1;
+        }
+        scan.stats.total_lines += file.total_lines;
+        scan.stats.valid_usage_lines += file.valid_usage_lines;
+        scan.stats.malformed_lines += file.malformed_lines;
+        scan.stats.non_usage_lines += file.non_usage_lines;
+        for (event, key) in &file.events {
+            match key {
+                Some(key) => {
+                    if let Some(&index) = dedup.get(key) {
+                        scan.stats.deduplicated_lines += 1;
+                        if event.tokens.output > scan.events[index].tokens.output {
+                            scan.events[index] = event.clone();
+                        }
+                    } else {
+                        dedup.insert(key, scan.events.len());
+                        scan.events.push(event.clone());
+                    }
+                }
+                None => scan.events.push(event.clone()),
+            }
+        }
+        scan.prompts.extend(file.prompts.iter().cloned());
+        custom_titles.extend(
+            file.custom_titles
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        ai_titles.extend(file.ai_titles.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+    scan.events.sort_by_key(|event| event.timestamp);
+    scan.prompts.sort_by_key(|prompt| prompt.timestamp);
+    ai_titles.extend(custom_titles);
+    scan.titles = ai_titles;
+    scan
 }
 
 /// Recursion bound for project subdirectories. Subagent transcripts live at
@@ -488,50 +541,76 @@ fn collect_jsonl(directory: &Path, depth: usize, paths: &mut Vec<PathBuf>) {
     }
 }
 
+/// Size and modification time; a transcript is reparsed only when either changes.
+pub(crate) type Fingerprint = Option<(u64, SystemTime)>;
+
+pub(crate) fn fingerprint(path: &Path) -> Fingerprint {
+    let metadata = fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
+}
+
+/// Keeps each transcript's parse between scans and reparses only new or changed
+/// files. Every scan returns the same result a fresh [`scan_claude`] would.
+#[derive(Default)]
+pub struct ClaudeScanner {
+    files: BTreeMap<PathBuf, (Fingerprint, ClaudeFile)>,
+    changed: bool,
+}
+
+impl ClaudeScanner {
+    /// Whether the last [`scan`](Self::scan) parsed or dropped any file.
+    #[must_use]
+    pub fn changed(&self) -> bool {
+        self.changed
+    }
+
+    /// Scans JSONL files in each Claude project directory, including subagent
+    /// transcripts in nested `subagents/` folders.
+    ///
+    /// A missing projects directory is an empty scan. Failure to enumerate an existing
+    /// projects directory is returned to the caller; individual file failures are counted.
+    pub fn scan(&mut self, home: &Path) -> Result<ClaudeScan, Error> {
+        let projects = home.join(".claude").join("projects");
+        let project_entries = match fs::read_dir(projects) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.changed = !self.files.is_empty();
+                self.files.clear();
+                return Ok(ClaudeScan::default());
+            }
+            Err(error) => return Err(error),
+        };
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for project in project_entries {
+            let project = project?;
+            if !project.file_type()?.is_dir() {
+                continue;
+            }
+            collect_jsonl(&project.path(), 0, &mut paths);
+        }
+        let mut previous = std::mem::take(&mut self.files);
+        let mut changed = false;
+        for path in paths {
+            let current = fingerprint(&path);
+            let file = match previous.remove(&path) {
+                Some((old, file)) if current.is_some() && old == current => file,
+                _ => {
+                    changed = true;
+                    parse_file(&path)
+                }
+            };
+            self.files.insert(path, (current, file));
+        }
+        self.changed = changed || !previous.is_empty();
+        Ok(merge(self.files.values().map(|(_, file)| file)))
+    }
+}
+
 /// Scans JSONL files in each Claude project directory, including subagent
 /// transcripts in nested `subagents/` folders.
 ///
 /// A missing projects directory is an empty scan. Failure to enumerate an existing
 /// projects directory is returned to the caller; individual file failures are counted.
 pub fn scan_claude(home: &Path) -> Result<ClaudeScan, Error> {
-    let projects = home.join(".claude").join("projects");
-    let project_entries = match fs::read_dir(projects) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ClaudeScan::default());
-        }
-        Err(error) => return Err(error),
-    };
-    let mut scan = ClaudeScan::default();
-    let mut dedup = HashMap::new();
-    let mut custom_titles = BTreeMap::new();
-    let mut ai_titles = BTreeMap::new();
-    let mut paths: Vec<PathBuf> = Vec::new();
-    for project in project_entries {
-        let project = project?;
-        if !project.file_type()?.is_dir() {
-            continue;
-        }
-        collect_jsonl(&project.path(), 0, &mut paths);
-    }
-    paths.sort();
-    for path in paths {
-        scan.stats.files += 1;
-        if scan_file(
-            &path,
-            &mut scan,
-            &mut dedup,
-            &mut custom_titles,
-            &mut ai_titles,
-        )
-        .is_err()
-        {
-            scan.stats.unreadable_files += 1;
-        }
-    }
-    scan.events.sort_by_key(|event| event.timestamp);
-    scan.prompts.sort_by_key(|prompt| prompt.timestamp);
-    ai_titles.extend(custom_titles);
-    scan.titles = ai_titles;
-    Ok(scan)
+    ClaudeScanner::default().scan(home)
 }

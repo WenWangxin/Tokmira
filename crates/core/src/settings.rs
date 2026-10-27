@@ -17,6 +17,16 @@ pub enum Theme {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MenuBarQuota {
+    Off,
+    Claude,
+    Codex,
+    #[default]
+    Both,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Calibration {
     pub tool: Tool,
@@ -34,6 +44,12 @@ pub struct AppSettings {
     pub theme: Theme,
     pub calibration: Option<Calibration>,
     pub dismissed_advice: Vec<String>,
+    /// System notification when a new advice problem shows up while the app runs.
+    pub advice_notifications: bool,
+    /// Set after the first "still running in the menu bar" notice.
+    pub tray_hint_shown: bool,
+    pub silent_start: bool,
+    pub menu_bar_quota: MenuBarQuota,
 }
 impl Default for AppSettings {
     fn default() -> Self {
@@ -45,6 +61,10 @@ impl Default for AppSettings {
             theme: Theme::System,
             calibration: None,
             dismissed_advice: Vec::new(),
+            advice_notifications: true,
+            tray_hint_shown: false,
+            silent_start: false,
+            menu_bar_quota: MenuBarQuota::Both,
         }
     }
 }

@@ -13,6 +13,10 @@ export const mockSettings: AppSettings = {
     recorded_at: '2026-10-24T06:30:00.000Z',
   },
   dismissed_advice: ['claude:long_context'],
+  advice_notifications: true,
+  tray_hint_shown: true,
+  silent_start: false,
+  menu_bar_quota: 'both',
 }
 
 export const mockEnvironment: EnvironmentInfo = {
@@ -20,7 +24,7 @@ export const mockEnvironment: EnvironmentInfo = {
   codex_logs: { path: '/Users/preview/.codex/sessions', exists: false },
   data_dir: '/Users/preview/Library/Application Support/token-audit',
   pricing_version: '2026-10-24',
-  pricing_note: 'API 等价价格，仅用于估算订阅用量价值，不是实际账单。',
+  pricing_note: '仅供估算，非实际账单；claude-haiku-5-5 仅按 10 万 token 以内价格计算，不计长上下文加价。',
   advice_version: '2026-10-24',
   backup_dir: '/Users/preview/Library/Application Support/token-audit/recorder/backups',
 }

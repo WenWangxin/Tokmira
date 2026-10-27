@@ -847,3 +847,115 @@ fn every_error_display_omits_test_tokens() {
         assert!(!display.contains("fake-refresh-token"));
     }
 }
+
+#[test]
+fn memory_store_reads_the_keychain_once_until_forgotten() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use token_audit_core::claude_quota::MemorySecretStore;
+
+    #[derive(Clone, Default)]
+    struct CountingStore(Arc<AtomicUsize>);
+    impl SecretStore for CountingStore {
+        fn generic_password(
+            &self,
+            service: &str,
+            _account: Option<&str>,
+        ) -> Result<Option<Zeroizing<Vec<u8>>>, SecretError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok((service != "missing").then(|| Zeroizing::new(b"secret".to_vec())))
+        }
+    }
+
+    let inner = CountingStore::default();
+    let store = MemorySecretStore::new(inner.clone());
+    for _ in 0..3 {
+        let secret = store
+            .generic_password("Claude Code-credentials", None)
+            .expect("read");
+        assert_eq!(secret.as_deref().map(Vec::as_slice), Some(&b"secret"[..]));
+    }
+    assert_eq!(inner.0.load(Ordering::SeqCst), 1);
+
+    // A missing item is not remembered, so it is looked up again next time.
+    assert!(store
+        .generic_password("missing", None)
+        .expect("read")
+        .is_none());
+    assert!(store
+        .generic_password("missing", None)
+        .expect("read")
+        .is_none());
+    assert_eq!(inner.0.load(Ordering::SeqCst), 3);
+
+    store.forget();
+    store
+        .generic_password("Claude Code-credentials", None)
+        .expect("read");
+    assert_eq!(inner.0.load(Ordering::SeqCst), 4);
+}
+
+#[test]
+fn silent_memory_store_never_asks_interactively() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use token_audit_core::claude_quota::MemorySecretStore;
+
+    #[derive(Clone, Default)]
+    struct Store {
+        prompts: Arc<AtomicUsize>,
+        silent_reads: Arc<AtomicUsize>,
+    }
+    impl SecretStore for Store {
+        fn generic_password(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<Option<Zeroizing<Vec<u8>>>, SecretError> {
+            self.prompts.fetch_add(1, Ordering::SeqCst);
+            Ok(Some(Zeroizing::new(b"approved".to_vec())))
+        }
+        fn generic_password_silently(
+            &self,
+            service: &str,
+            _: Option<&str>,
+        ) -> Result<Option<Zeroizing<Vec<u8>>>, SecretError> {
+            self.silent_reads.fetch_add(1, Ordering::SeqCst);
+            Ok((service == "always-allowed").then(|| Zeroizing::new(b"silent".to_vec())))
+        }
+    }
+
+    let inner = Store::default();
+    let store = MemorySecretStore::new(inner.clone());
+    let quiet = store.silent();
+
+    // Needs approval: absent, and no dialog.
+    assert!(quiet
+        .generic_password("Claude Safe Storage", Some("Claude"))
+        .expect("read")
+        .is_none());
+    // Already allowed: read without a dialog and remembered for both views.
+    assert_eq!(
+        quiet
+            .generic_password("always-allowed", None)
+            .expect("read")
+            .as_deref()
+            .map(Vec::as_slice),
+        Some(&b"silent"[..])
+    );
+    store
+        .generic_password("always-allowed", None)
+        .expect("read");
+    assert_eq!(inner.prompts.load(Ordering::SeqCst), 0);
+
+    // A user action may prompt; afterwards background reads reuse it silently.
+    store
+        .generic_password("Claude Safe Storage", Some("Claude"))
+        .expect("read");
+    let reused = quiet
+        .generic_password("Claude Safe Storage", Some("Claude"))
+        .expect("read");
+    assert_eq!(reused.as_deref().map(Vec::as_slice), Some(&b"approved"[..]));
+    assert_eq!(inner.prompts.load(Ordering::SeqCst), 1);
+    assert_eq!(inner.silent_reads.load(Ordering::SeqCst), 2);
+}

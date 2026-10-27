@@ -5,6 +5,10 @@ fn main() {
     let manifest_dir = PathBuf::from(env_var("CARGO_MANIFEST_DIR"));
     let sidecar = sidecar_path(&manifest_dir, &target);
     println!("cargo:rerun-if-changed={}", sidecar.display());
+    // Any explicit rerun-if-changed turns off Cargo's "rerun on any package file"
+    // default, and `generate_context!` embeds the icons at compile time, so a new
+    // icon would otherwise keep the old one in a stale binary.
+    println!("cargo:rerun-if-changed=icons");
 
     // `tauri-build` copies `bundle.externalBin` beside the desktop executable and
     // fails when the file is missing. Release (`pnpm tauri build`) must have it.

@@ -89,10 +89,14 @@ input {
 }
 
 .brand-icon {
+  display: grid;
   flex: none;
   width: 28px;
   height: 28px;
+  place-items: center;
   border-radius: 8px;
+  background: var(--primary);
+  color: var(--on-primary);
   pointer-events: none;
   transition: opacity 100ms ease;
 }

@@ -20,7 +20,8 @@
         "minHeight": 640,
         "titleBarStyle": "Overlay",
         "trafficLightPosition": { "x": 16, "y": 16 },
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "visible": false
       }
     ],
     "security": {
@@ -31,6 +32,9 @@
   "bundle": {
     "active": true,
     "targets": ["dmg", "nsis"],
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "externalBin": ["binaries/token-audit"],
     "icon": [
       "icons/32x32.png",

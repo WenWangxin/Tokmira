@@ -3,6 +3,7 @@ import { mockDetectedTools } from './mocks/onboarding'
 import type { ShareSummary } from './shareLogic'
 import { mockEnvironment, mockRecorderStatus, mockSettings, previewRecorderPlan } from './mocks/settings'
 import { clonePreview } from './settingsLogic'
+import { noteQuotaResult } from './realtime'
 
 const isPreview = () => import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
 let previewSettings: AppSettings = clonePreview(mockSettings)
@@ -12,6 +13,7 @@ export type Tool = 'Claude' | 'Codex'
 export type Source = 'ClaudeCli' | 'ClaudeDesktop' | 'CodexCli' | 'CodexDesktop' | 'Unknown'
 export type Origin = 'Official' | 'Statusline' | 'Log' | 'Manual' | 'Estimated'
 export type Theme = 'system' | 'light' | 'dark'
+export type MenuBarQuota = 'off' | 'claude' | 'codex' | 'both'
 export type CredentialPreference = 'Auto' | 'ClaudeDesktop' | 'ClaudeCode'
 export type Forecast = { WillHit: { at: string } } | 'Ample' | 'Unknown'
 
@@ -39,6 +41,19 @@ export interface AppSettings {
   theme: Theme
   calibration: Calibration | null
   dismissed_advice: string[]
+  advice_notifications: boolean
+  tray_hint_shown: boolean
+  silent_start: boolean
+  menu_bar_quota: MenuBarQuota
+}
+
+/** A background reminder from the advice rules, sent while the window has focus. */
+export interface AdviceAlert {
+  key: string
+  tool: Tool
+  session_id: string
+  title: string
+  body: string
 }
 
 export interface QuotaDisplay {
@@ -85,6 +100,12 @@ export interface SessionOverview {
   last_at: string
 }
 
+export interface QuotaSourceTimes {
+  claude_official: string | null
+  codex_official: string | null
+  codex_log: string | null
+}
+
 export interface Overview {
   generated_at: string
   tools: ToolOverview[]
@@ -102,6 +123,8 @@ export interface Overview {
   subscription_value_multiple: number | null
   daily_cost: { date: string; estimated_cost_usd: number }[]
   recorder: RecorderStatus
+  /** When each quota source last delivered data. */
+  quota_sources: QuotaSourceTimes
   trends: {
     tool: Tool
     five_hour_started_at: string | null
@@ -275,13 +298,20 @@ export const rescan = () =>
   import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
     ? Promise.resolve({ events: 0, prompts: 0, malformed_lines: 0 })
     : invoke<ScanSummary>('rescan')
-export const refreshQuotas = () =>
-  isPreview()
-    ? Promise.resolve({
+/**
+ * `automatic` marks background polls; the backend then never re-prompts for a keychain the user dismissed.
+ * Every result goes through {@link noteQuotaResult}, so a success from any page clears “需要授权”.
+ */
+export async function refreshQuotas(automatic = false): Promise<RefreshResult> {
+  const result = isPreview()
+    ? {
         claude: previewSettings.claude_official_query ? '已更新' : '未开启',
         codex: previewSettings.codex_app_server ? '已更新' : '未开启',
-      })
-    : invoke<RefreshResult>('refresh_quotas')
+      }
+    : await invoke<RefreshResult>('refresh_quotas', { automatic })
+  noteQuotaResult(result)
+  return result
+}
 async function developmentOverview(): Promise<Overview> {
   const { mockOverview } = await import('./mocks/overview')
   const variant = new URLSearchParams(window.location.search).get('mock')
@@ -331,6 +361,38 @@ function applyPreviewRecorder(parts: RecorderParts, action: 'install' | 'uninsta
   }
   return previewRecorderPlan(parts, action)
 }
+/** macOS reports the real permission; Windows and the dev build cannot read it (`unknown`). */
+export type NotificationStatus = 'unknown' | 'not_determined' | 'denied' | 'authorized'
+export interface AutostartState {
+  enabled: boolean
+  /** False in the dev build, where a login item would point at the debug binary. */
+  available: boolean
+  requires_approval: boolean
+}
+let previewNotifications: NotificationStatus = 'not_determined'
+let previewAutostart: AutostartState = { enabled: false, available: true, requires_approval: false }
+export const notificationStatus = () =>
+  isPreview() ? Promise.resolve(previewNotifications) : invoke<NotificationStatus>('notification_status')
+/** Shows the system permission prompt when the user has not answered it yet. */
+export const requestNotifications = () => {
+  if (isPreview()) {
+    if (previewNotifications === 'not_determined') previewNotifications = 'authorized'
+    return Promise.resolve(previewNotifications)
+  }
+  return invoke<NotificationStatus>('request_notifications')
+}
+export const getAutostart = () =>
+  isPreview() ? Promise.resolve({ ...previewAutostart }) : invoke<AutostartState>('get_autostart')
+export const setAutostart = (enabled: boolean) => {
+  if (isPreview()) {
+    previewAutostart = { ...previewAutostart, enabled }
+    return Promise.resolve({ ...previewAutostart })
+  }
+  return invoke<AutostartState>('set_autostart', { enabled })
+}
+export const openLoginItemsSettings = () =>
+  isPreview() ? Promise.resolve() : invoke<void>('open_login_items_settings')
+
 export const recorderStatus = () =>
   isPreview() ? Promise.resolve(clonePreview(previewRecorder)) : invoke<RecorderStatus>('recorder_status')
 export const recorderPlan = (parts: RecorderParts) =>

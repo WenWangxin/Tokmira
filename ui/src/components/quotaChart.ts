@@ -31,3 +31,11 @@ export function placeMarkerLabels(markers: MarkerPosition[]): (number | null)[] 
   }
   return labels
 }
+
+/** Remaining-quota colour: green when plenty is left, orange around half, red near empty. */
+export function remainingQuotaColor(remainingPercent: number): string {
+  const remaining = Math.max(0, Math.min(100, remainingPercent))
+  return remaining >= 50
+    ? `color-mix(in oklch, var(--success) ${Math.round((remaining - 50) * 2)}%, var(--warning))`
+    : `color-mix(in oklch, var(--warning) ${Math.round(remaining * 2)}%, var(--error))`
+}
