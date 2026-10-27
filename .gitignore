@@ -9,3 +9,10 @@
 /.claude/launch.json
 .DS_Store
 *.log
+
+# 内部文档和本机工具，只留在本地，不上传
+/docs/
+/prototype/
+/CLAUDE.md
+/AGENTS.md
+/scripts/reset-local-data.sh
