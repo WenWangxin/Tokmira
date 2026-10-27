@@ -3,7 +3,7 @@
   "packageManager": "pnpm@12.15.0",
   "scripts": {
     "tauri": "tauri",
-    "bundle:mac": "sh scripts/build-sidecar.sh universal-apple-darwin && CI=true pnpm tauri build --target universal-apple-darwin --bundles dmg",
+    "bundle:mac": "sh scripts/bundle-mac.sh",
     "dev": "pnpm -C ui dev",
     "build": "pnpm -C ui build",
     "typecheck": "pnpm -C ui typecheck",

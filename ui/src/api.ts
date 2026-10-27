@@ -45,6 +45,10 @@ export interface AppSettings {
   tray_hint_shown: boolean
   silent_start: boolean
   menu_bar_quota: MenuBarQuota
+  auto_check_updates: boolean
+  /** Written by the backend only. */
+  update_last_checked_at: string | null
+  update_notified_version: string | null
 }
 
 /** A background reminder from the advice rules, sent while the window has focus. */
@@ -392,6 +396,44 @@ export const setAutostart = (enabled: boolean) => {
 }
 export const openLoginItemsSettings = () =>
   isPreview() ? Promise.resolve() : invoke<void>('open_login_items_settings')
+
+export interface UpdateInfo {
+  version: string
+  notes: string | null
+  date: string | null
+}
+export interface UpdateStatus {
+  current_version: string
+  last_checked_at: string | null
+  available: UpdateInfo | null
+  /** The new version is in place; only a restart is left. */
+  installed: boolean
+}
+export interface UpdateProgress {
+  downloaded: number
+  total: number | null
+}
+// The browser preview finds a made-up 0.2.0 so the dialog can be tried without GitHub.
+let previewUpdate: UpdateStatus = { current_version: '0.1.0', last_checked_at: null, available: null, installed: false }
+const previewRelease: UpdateInfo = { version: '0.2.0', notes: '仅供开发预览的更新说明。\n- 新增检查更新\n- 修复若干问题', date: null }
+export const getUpdateStatus = () =>
+  isPreview() ? Promise.resolve(clonePreview(previewUpdate)) : invoke<UpdateStatus>('get_update_status')
+export const checkUpdate = () => {
+  if (isPreview()) {
+    const latest = new URLSearchParams(window.location.search).get('mock') === 'latest'
+    previewUpdate = { ...previewUpdate, last_checked_at: new Date().toISOString(), available: latest ? null : previewRelease }
+    return new Promise<UpdateStatus>(resolve => setTimeout(() => resolve(clonePreview(previewUpdate)), 600))
+  }
+  return invoke<UpdateStatus>('check_update')
+}
+export const installUpdate = () => {
+  if (isPreview()) {
+    previewUpdate = { ...previewUpdate, installed: true }
+    return new Promise<void>(resolve => setTimeout(resolve, 1200))
+  }
+  return invoke<void>('install_update')
+}
+export const restartApp = () => (isPreview() ? Promise.resolve() : invoke<void>('restart_app'))
 
 export const recorderStatus = () =>
   isPreview() ? Promise.resolve(clonePreview(previewRecorder)) : invoke<RecorderStatus>('recorder_status')

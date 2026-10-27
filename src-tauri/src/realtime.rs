@@ -299,12 +299,22 @@ mod tests {
         std::fs::create_dir_all(&project).expect("create projects");
         let seen = Arc::new(Mutex::new(Vec::new()));
         spawn(home.clone(), data, Recorder(Arc::clone(&seen)));
-        // Give the watcher a moment to register before writing.
-        std::thread::sleep(Duration::from_millis(500));
-        std::fs::write(project.join("session.jsonl"), "{}\n").expect("write log");
-
+        // Keep appending until the watcher reports: right after a rebuild the watcher can take
+        // longer than a fixed pause to register, and a single early write would be missed.
+        let log = project.join("session.jsonl");
         let deadline = Instant::now() + Duration::from_secs(10);
+        let mut next_write = Instant::now() + Duration::from_millis(500);
         while seen.lock().expect("read").is_empty() && Instant::now() < deadline {
+            if Instant::now() >= next_write {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log)
+                    .expect("open log");
+                writeln!(file, "{{}}").expect("write log");
+                next_write = Instant::now() + Duration::from_millis(500);
+            }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = std::fs::remove_dir_all(&root);

@@ -50,6 +50,11 @@ pub struct AppSettings {
     pub tray_hint_shown: bool,
     pub silent_start: bool,
     pub menu_bar_quota: MenuBarQuota,
+    /// Off by default: checking for updates is one of the two allowed network requests.
+    pub auto_check_updates: bool,
+    pub update_last_checked_at: Option<DateTime<Utc>>,
+    /// The newest version already announced, so each release is announced once.
+    pub update_notified_version: Option<String>,
 }
 impl Default for AppSettings {
     fn default() -> Self {
@@ -65,6 +70,9 @@ impl Default for AppSettings {
             tray_hint_shown: false,
             silent_start: false,
             menu_bar_quota: MenuBarQuota::Both,
+            auto_check_updates: false,
+            update_last_checked_at: None,
+            update_notified_version: None,
         }
     }
 }

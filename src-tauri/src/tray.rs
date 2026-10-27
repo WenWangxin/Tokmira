@@ -31,9 +31,11 @@ struct TrayState {
     modes: Vec<CheckMenuItem<tauri::Wry>>,
     #[cfg(target_os = "macos")]
     mode_submenu: Submenu<tauri::Wry>,
+    update: MenuItem<tauri::Wry>,
     settings: MenuItem<tauri::Wry>,
     quit: MenuItem<tauri::Wry>,
-    layout: Mutex<(usize, bool)>,
+    /// Quota lines shown, authorization row shown, update row shown.
+    layout: Mutex<(usize, bool, bool)>,
 }
 
 pub fn signal(app: &AppHandle) {
@@ -79,7 +81,7 @@ fn menu_event(app: &AppHandle, id: &str) {
         }
         "dashboard" | "authorization" => navigate(app, "/"),
         "advice" => navigate(app, "/advice"),
-        "settings" => navigate(app, "/settings"),
+        "settings" | "update" => navigate(app, "/settings"),
         "alerts" => edit_settings(app, |s| s.advice_notifications = !s.advice_notifications),
         "silent" => edit_settings(app, |s| s.silent_start = !s.silent_start),
         "autostart" => {
@@ -133,6 +135,7 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     .into_iter()
     .map(|(id, label)| CheckMenuItem::with_id(app, id, label, true, false, None::<&str>))
     .collect::<tauri::Result<Vec<_>>>()?;
+    let update_item = MenuItem::with_id(app, "update", "", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 token-audit", true, None::<&str>)?;
     let menu = Menu::new(app)?;
@@ -207,9 +210,10 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
         modes,
         #[cfg(target_os = "macos")]
         mode_submenu,
+        update: update_item,
         settings,
         quit,
-        layout: Mutex::new((6, true)),
+        layout: Mutex::new((6, true, false)),
     });
     let app = app.handle().clone();
     signal(&app);
@@ -241,6 +245,7 @@ fn rebuild_menu(
     state: &TrayState,
     count: usize,
     authorization: bool,
+    update: bool,
 ) -> tauri::Result<()> {
     let menu = Menu::new(app)?;
     for line in state.lines.iter().take(count) {
@@ -261,6 +266,9 @@ fn rebuild_menu(
     #[cfg(target_os = "macos")]
     menu.append(&state.mode_submenu)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
+    if update {
+        menu.append(&state.update)?;
+    }
     menu.append(&state.settings)?;
     menu.append(&state.quit)?;
     state.tray.set_menu(Some(menu))
@@ -333,11 +341,16 @@ fn update(app: &AppHandle) {
     if let Some(updated) = text.lines.last() {
         let _ = menu.updated.set_text(updated);
     }
+    let update = crate::updates::available(app);
+    if let Some(update) = &update {
+        let _ = menu
+            .update
+            .set_text(format!("新版本 {} 可以更新…", update.version));
+    }
+    let wanted = (line_count, text.needs_authorization, update.is_some());
     if let Ok(mut layout) = menu.layout.lock() {
-        if *layout != (line_count, text.needs_authorization)
-            && rebuild_menu(app, &menu, line_count, text.needs_authorization).is_ok()
-        {
-            *layout = (line_count, text.needs_authorization);
+        if *layout != wanted && rebuild_menu(app, &menu, wanted.0, wanted.1, wanted.2).is_ok() {
+            *layout = wanted;
         }
     }
     let _ = menu.alerts.set_checked(settings.advice_notifications);

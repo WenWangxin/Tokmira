@@ -17,6 +17,7 @@ pub mod sessions;
 pub mod settings;
 pub mod share;
 pub mod timeline;
+pub mod update;
 pub mod usage;
 
 /// Returns the version of the shared core library.

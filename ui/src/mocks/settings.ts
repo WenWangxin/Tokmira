@@ -17,6 +17,9 @@ export const mockSettings: AppSettings = {
   tray_hint_shown: true,
   silent_start: false,
   menu_bar_quota: 'both',
+  auto_check_updates: false,
+  update_last_checked_at: null,
+  update_notified_version: null,
 }
 
 export const mockEnvironment: EnvironmentInfo = {

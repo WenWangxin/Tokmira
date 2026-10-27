@@ -13,6 +13,7 @@ test('dismissed advice keys use the rule title', () => {
   assert.equal(adviceLabel('claude:cache_rebuild'), 'Claude · 缓存过期后的整段重建')
   assert.equal(adviceLabel('codex:many_subagents'), 'Codex · 子代理使用过多')
   assert.equal(adviceLabel('claude:expensive_light_task'), 'Claude · 轻量任务使用了高价模型')
+  assert.equal(adviceLabel('codex:runaway_prompt'), 'Codex · 一次提示跑了太多轮')
 })
 
 test('preview copy accepts a Vue reactive settings object', () => {

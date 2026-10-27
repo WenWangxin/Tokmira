@@ -15,10 +15,12 @@ token_audit_core = { path = "../crates/core" }
 dirs = "7.0.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 notify = "8.2.1"
 tauri-plugin-notification = "2.7.0"
 tauri-plugin-autostart = "2.7.0"
 tauri-plugin-single-instance = "=2.5.4"
+tauri-plugin-updater = "=2.13.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
@@ -30,3 +32,6 @@ objc2-service-management = { version = "0.3.2", default-features = false, featur
 [build-dependencies]
 serde_json = "1.0.149"
 tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }

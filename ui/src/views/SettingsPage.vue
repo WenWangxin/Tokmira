@@ -2,13 +2,17 @@
 import { showToast } from '../toast'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { BellRing, CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, LogIn, MonitorOff, Palette, Power, Scale, SlidersHorizontal, Terminal, Trash2 } from 'lucide-vue-next'
+import { listen } from '@tauri-apps/api/event'
+import { BellRing, CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Info, LogIn, MonitorOff, Palette, Power, RefreshCw, Scale, SlidersHorizontal, Tag, Terminal, Trash2 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Toggle from '../components/Toggle.vue'
 import { vSelectionSlide } from '../components/selectionSlide'
 import {
+  checkUpdate,
   clearRecorderRecords,
   getAutostart,
+  getUpdateStatus,
+  installUpdate,
   getEnvironment,
   getSettings,
   notificationStatus,
@@ -19,6 +23,7 @@ import {
   recorderStatus,
   recorderUninstall,
   refreshQuotas,
+  restartApp,
   restoreAdvice,
   setAutostart,
   updateSettings,
@@ -33,9 +38,12 @@ import {
   type RecorderStatus,
   type Theme,
   type Tool,
+  type UpdateProgress,
+  type UpdateStatus,
 } from '../api'
 import { adviceLabel, applyTheme, formatCalibration, formatPercent, parsePercent, quotaMessageTone } from '../settingsLogic'
 import { notificationLine, trayPlace } from '../onboardingLogic'
+import { lastCheckedLine, progressLine, updateActionLabel, type UpdateStage } from '../updateLogic'
 import { openOnboarding } from '../onboardingState'
 import { settingsRevision } from '../realtime'
 import PageSkeleton from '../components/PageSkeleton.vue'
@@ -155,7 +163,68 @@ async function setBackgroundOption(change: Partial<Pick<AppSettings, 'silent_sta
   catch (cause) { showNotice(errorText(cause), true) }
 }
 
-watch(settingsRevision, () => { void load(); void loadSystemState() })
+// Updates: checked only when the user clicks, or by the opt-in daily background check.
+const update = ref<UpdateStatus | null>(null)
+const checking = ref(false)
+const installing = ref(false)
+const updateOpen = ref(false)
+const progress = ref<UpdateProgress | null>(null)
+const updateError = ref('')
+const updateStage = computed<UpdateStage>(() => installing.value ? 'installing' : update.value?.installed ? 'installed' : 'ready')
+let stopProgress: Promise<() => void> | undefined
+
+async function loadUpdate() {
+  try { update.value = await getUpdateStatus() } catch { /* the version row stays as it was */ }
+}
+
+function openUpdate() {
+  updateError.value = ''
+  updateOpen.value = true
+}
+
+async function onCheckUpdate() {
+  if (checking.value || installing.value) return
+  checking.value = true
+  try {
+    update.value = await checkUpdate()
+    if (update.value.available) openUpdate()
+    else showToast(`已是最新版本 ${update.value.current_version}`, 'success')
+  } catch (cause) {
+    showNotice(errorText(cause), true)
+  } finally {
+    checking.value = false
+  }
+}
+
+async function onUpdateConfirm() {
+  if (update.value?.installed) {
+    await restartApp()
+    return
+  }
+  installing.value = true
+  updateError.value = ''
+  progress.value = null
+  try {
+    await installUpdate()
+    update.value = await getUpdateStatus()
+  } catch (cause) {
+    updateError.value = errorText(cause)
+  } finally {
+    installing.value = false
+  }
+}
+
+function closeUpdate() {
+  if (!installing.value) updateOpen.value = false
+}
+
+async function setAutoCheck(enabled: boolean) {
+  if (!settings.value || locked.value) return
+  try { await save({ ...settings.value, auto_check_updates: enabled }) }
+  catch (cause) { showNotice(errorText(cause), true) }
+}
+
+watch(settingsRevision, () => { void load(); void loadSystemState(); void loadUpdate() })
 
 /** Back from System Settings: show what changed there. */
 function onWindowFocus() {
@@ -380,11 +449,14 @@ function openGuide() {
 onMounted(() => {
   void load()
   void loadSystemState()
+  void loadUpdate()
   window.addEventListener('focus', onWindowFocus)
+  if ('__TAURI_INTERNALS__' in window) stopProgress = listen<UpdateProgress>('update-progress', event => { progress.value = event.payload })
 })
 onUnmounted(() => {
   if (loadingTimer) clearTimeout(loadingTimer)
   window.removeEventListener('focus', onWindowFocus)
+  void stopProgress?.then(stop => stop())
 })
 </script>
 
@@ -607,6 +679,33 @@ onUnmounted(() => {
           </div>
         </div>
       </article>
+
+      <article class="card settings-card">
+        <header class="settings-card-head"><Info :size="16" aria-hidden="true" />关于与更新</header>
+
+        <div class="settings-row">
+          <span class="settings-icon"><Tag :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">当前版本 {{ update?.current_version ?? '—' }}</div>
+            <p class="settings-desc">{{ lastCheckedLine(update?.last_checked_at ?? null) }}</p>
+            <p v-if="update?.available" class="settings-note">发现新版本 {{ update.available.version }} <button type="button" class="settings-link" @click="openUpdate">查看并安装</button></p>
+          </div>
+          <div class="settings-controls">
+            <button type="button" class="settings-tonal" :disabled="checking || installing" @click="onCheckUpdate">{{ checking ? '检查中…' : '检查更新' }}</button>
+          </div>
+        </div>
+
+        <div class="settings-row">
+          <span class="settings-icon"><RefreshCw :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">自动检查更新</div>
+            <p class="settings-desc">每天最多检查一次，有新版本时提醒。只连接 GitHub 获取更新清单，不发送版本号、设备信息或任何使用数据。</p>
+          </div>
+          <div class="settings-controls">
+            <Toggle :checked="settings.auto_check_updates" :disabled="locked" label="自动检查更新" @toggle="setAutoCheck(!settings.auto_check_updates)" />
+          </div>
+        </div>
+      </article>
     </template>
 
     <Transition name="dialog"><ConfirmDialog v-if="recorderDialog" :title="recorderDialog.enabling ? '安装记录器' : '卸载记录器'" :confirm-label="recorderDialog.enabling ? '安装' : '卸载'" :busy="confirming" @cancel="dialog = null" @confirm="confirmRecorder">
@@ -632,6 +731,13 @@ onUnmounted(() => {
     <ConfirmDialog v-else-if="dialog?.kind === 'clear'" title="清除记录" confirm-label="清除" danger :busy="confirming" @cancel="dialog = null" @confirm="confirmClear">
       <p class="confirm-copy">删除状态栏和 hooks 的本地记录。Claude Code 与 Codex 自己的日志不会被删除。</p>
       <p v-if="dialogError" class="settings-result bad">{{ dialogError }}</p>
+    </ConfirmDialog>
+
+    <ConfirmDialog v-else-if="updateOpen && update?.available" :title="`新版本 ${update.available.version}`" :confirm-label="updateActionLabel(updateStage)" :busy="installing" @cancel="closeUpdate" @confirm="onUpdateConfirm">
+      <p class="confirm-copy update-notes">{{ update.available.notes ?? '这个版本没有附更新说明。' }}</p>
+      <p v-if="installing" class="confirm-copy">{{ progress ? progressLine(progress.downloaded, progress.total) : '正在连接 GitHub…' }}</p>
+      <p v-if="update.installed" class="confirm-copy">新版本已安装，重启 token-audit 后生效。</p>
+      <p v-if="updateError" class="settings-result bad">{{ updateError }}</p>
     </ConfirmDialog></Transition>
   </div>
 </template>

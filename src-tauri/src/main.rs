@@ -5,6 +5,8 @@ mod notifications;
 mod realtime;
 mod tray;
 mod tray_menu;
+mod update_text;
+mod updates;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -172,8 +174,14 @@ fn update_settings(
         .as_ref()
         .is_some_and(|current| current.claude_official_query);
     // Set by the backend when the window first hides; a page saving an older copy must
-    // not bring the notice back.
-    settings.tray_hint_shown |= current.is_some_and(|current| current.tray_hint_shown);
+    // not bring the notice back. The update bookkeeping is likewise backend-owned.
+    if let Some(current) = &current {
+        settings.tray_hint_shown |= current.tray_hint_shown;
+        settings.update_last_checked_at = current.update_last_checked_at;
+        settings
+            .update_notified_version
+            .clone_from(&current.update_notified_version);
+    }
     settings::write_settings(&state.data_dir, &settings).map_err(|_| "保存设置失败".to_owned())?;
     // Switching the query on again is the user asking to retry the keychain.
     if settings.claude_official_query && !was_on {
@@ -935,6 +943,7 @@ fn main() -> tauri::Result<()> {
             tray::show_main(app)
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name("token-audit")
@@ -964,6 +973,8 @@ fn main() -> tauri::Result<()> {
                     alerts,
                 },
             );
+            app.manage(updates::UpdateState::default());
+            updates::spawn_auto_check(app.handle().clone(), data_dir.clone());
             app.manage(AppState {
                 home: home.clone(),
                 data_dir: data_dir.clone(),
@@ -1019,7 +1030,11 @@ fn main() -> tauri::Result<()> {
             request_notifications,
             get_autostart,
             set_autostart,
-            open_login_items_settings
+            open_login_items_settings,
+            updates::get_update_status,
+            updates::check_update,
+            updates::install_update,
+            updates::restart_app
         ])
         .build(tauri::generate_context!())?
         .run(|_app, _event| {

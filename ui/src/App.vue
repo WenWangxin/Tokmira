@@ -3,7 +3,7 @@ import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ChartColumn, Gauge, LayoutDashboard, Lightbulb, List, PanelLeftClose, PanelLeftOpen, Settings2, ShieldCheck } from 'lucide-vue-next'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { listen } from '@tauri-apps/api/event'
-import { getSettings, refreshQuotas, type AdviceAlert } from './api'
+import { getSettings, refreshQuotas, type AdviceAlert, type UpdateInfo } from './api'
 import OnboardingDialog from './components/OnboardingDialog.vue'
 import ToastHost from './components/ToastHost.vue'
 import { showToast } from './toast'
@@ -134,13 +134,17 @@ const stopRealtime = '__TAURI_INTERNALS__' in window
 const stopAlerts = '__TAURI_INTERNALS__' in window
   ? listen<AdviceAlert>('advice-alert', event => { showToast(`${event.payload.title}：${event.payload.body}`, 'warning', 10_000) })
   : undefined
+// A new version found by the automatic check while the window is in front.
+const stopUpdates = '__TAURI_INTERNALS__' in window
+  ? listen<UpdateInfo>('update-available', event => { showToast(`token-audit ${event.payload.version} 可以更新了，可在“设置 → 关于与更新”中安装。`, 'info', 10_000) })
+  : undefined
 const stopNavigate = '__TAURI_INTERNALS__' in window
   ? listen<string>('navigate', event => { void router.push(event.payload) })
   : undefined
 const stopSettings = '__TAURI_INTERNALS__' in window
   ? listen('settings-changed', () => { settingsRevision.value += 1 })
   : undefined
-onUnmounted(() => { cancelAnimationFrame(indicatorFrame); stopRealtime?.(); void stopAlerts?.then(stop => stop()); void stopNavigate?.then(stop => stop()); void stopSettings?.then(stop => stop()) })
+onUnmounted(() => { cancelAnimationFrame(indicatorFrame); stopRealtime?.(); void stopAlerts?.then(stop => stop()); void stopUpdates?.then(stop => stop()); void stopNavigate?.then(stop => stop()); void stopSettings?.then(stop => stop()) })
 </script>
 
 <template>

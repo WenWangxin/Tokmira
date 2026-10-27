@@ -15,6 +15,17 @@ const ADVICE_TITLES: Record<string, string> = {
   long_context: '上下文过长',
   expensive_light_task: '轻量任务使用了高价模型',
   many_subagents: '子代理使用过多',
+  model_switch: '中途换模型导致缓存重建',
+  context_spike: '一次塞入大量内容',
+  runaway_prompt: '一次提示跑了太多轮',
+  expensive_subagent: '子代理用了高价模型',
+  heavy_reasoning: '推理 token 占比过高',
+  fast_mode: '使用了快速模式',
+  high_effort_light_task: '轻量任务用了高推理强度',
+  frequent_compaction: '频繁压缩上下文',
+  web_search: '联网搜索次数较多',
+  quota_rebalance: '两个额度池可以分流',
+  plan_fit: '套餐是否合适',
 }
 
 /** `null` means the document should follow the system theme and drop `data-theme`. */
