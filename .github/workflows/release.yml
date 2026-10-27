@@ -55,16 +55,20 @@ jobs:
             echo "RELEASE_NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # 直接从创建接口的响应取 id：刚建好的草稿不会马上出现在 Release 列表里。
       - name: Create draft release
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           NOTES: ${{ steps.notes.outputs.notes }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-            --title "token-audit ${GITHUB_REF_NAME#v}" --notes "$NOTES"
-          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
-            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n 1)
+          id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$GITHUB_REF_NAME" -f name="token-audit ${GITHUB_REF_NAME#v}" \
+            -f body="$NOTES" -F draft=true --jq .id)
+          if [ -z "$id" ]; then
+            echo "没有拿到草稿 Release 的 id" >&2
+            exit 1
+          fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
   bundle:
@@ -142,7 +146,8 @@ jobs:
           updaterJsonPreferNsis: true
           retryAttempts: 2
           uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: token-audit-${{ matrix.target }}
+          # macOS 同时出 .app 和 .dmg，名字要带 [bundle] 才不会重名。
+          workflowArtifactNamePattern: token-audit-${{ matrix.target }}-[bundle]
 
   # 三个任务各自合并 latest.json，同时完成时可能互相覆盖；缺平台就失败，重跑缺的任务即可。
   check-updater-json:
