@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::attribution::{Attribution, WindowKind as AttributionWindowKind};
 use crate::codex::RateLimitSnapshot;
+use crate::estimate;
 use crate::forecast::{forecast, Forecast, WindowKind};
 use crate::model::{Source, TokenCounts, Tool, UsageEvent};
 use crate::pricing::Pricing;
@@ -25,11 +26,18 @@ pub struct OverviewInput<'a> {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct QuotaDisplay {
+    /// Includes `estimated_percent` when present.
     pub used_percent: Option<f64>,
     pub resets_at: Option<DateTime<Utc>>,
+    /// Source of the latest reading; an estimate on top keeps that reading's origin.
     pub origin: Option<Origin>,
     pub forecast: Forecast,
     pub window_passed: bool,
+    /// When the latest reading was taken.
+    pub as_of: Option<DateTime<Utc>>,
+    /// Estimated share of requests logged after the latest reading, already added to
+    /// `used_percent`. `None` when nothing is estimated.
+    pub estimated_percent: Option<f64>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct ToolOverview {
@@ -204,7 +212,64 @@ fn display(
         origin: Some(latest.map_or(Origin::Estimated, |(p, _)| p.origin)),
         forecast: forecast(points, tool, kind, now),
         window_passed,
+        as_of: latest.map(|(p, _)| p.at),
+        estimated_percent: None,
     }
+}
+
+/// Adds the requests logged since the latest reading at the learned rate, so the number
+/// moves with local usage until the next reading. Codex readings arrive in the same log
+/// line as the request, so in practice this fills Claude's gaps between queries.
+fn with_estimate(
+    mut display: QuotaDisplay,
+    input: &OverviewInput<'_>,
+    tool: Tool,
+    kind: WindowKind,
+    now: DateTime<Utc>,
+) -> QuotaDisplay {
+    let (Some(used), Some(as_of)) = (display.used_percent, display.as_of) else {
+        return display;
+    };
+    if display.window_passed {
+        return display;
+    }
+    let pending = estimate::cost_since(input.events, input.pricing, tool, as_of, now);
+    if pending <= 0.0 {
+        return display;
+    }
+    let (learn_kind, minutes) = match kind {
+        WindowKind::FiveHour => (AttributionWindowKind::FiveHour, 300),
+        WindowKind::Weekly => (AttributionWindowKind::Weekly, 10080),
+    };
+    let in_window = display.resets_at.and_then(|reset| {
+        estimate::window_rate(
+            input.events,
+            input.pricing,
+            tool,
+            used,
+            reset - Duration::minutes(minutes),
+            as_of,
+        )
+    });
+    let Some(rate) = in_window.or_else(|| {
+        estimate::learn_rate(
+            &input.attribution.events,
+            input.pricing,
+            tool,
+            learn_kind,
+            as_of,
+        )
+    }) else {
+        return display;
+    };
+    let extra = (pending * rate).clamp(0.0, (100.0 - used).max(0.0));
+    // Below what the dashboard shows (one decimal), there is nothing to mark.
+    if extra < 0.05 {
+        return display;
+    }
+    display.used_percent = Some(used + extra);
+    display.estimated_percent = Some(extra);
+    display
 }
 fn current_five_hour_id(
     points: &[QuotaPoint],
@@ -582,8 +647,20 @@ pub fn build_overview<Tz: TimeZone>(
                     .as_deref()
                     .and_then(|plan| input.pricing.subscription_usd(tool, plan)),
                 plan,
-                five_hour: display(input.points, tool, WindowKind::FiveHour, now),
-                weekly: display(input.points, tool, WindowKind::Weekly, now),
+                five_hour: with_estimate(
+                    display(input.points, tool, WindowKind::FiveHour, now),
+                    input,
+                    tool,
+                    WindowKind::FiveHour,
+                    now,
+                ),
+                weekly: with_estimate(
+                    display(input.points, tool, WindowKind::Weekly, now),
+                    input,
+                    tool,
+                    WindowKind::Weekly,
+                    now,
+                ),
             }
         })
         .collect();

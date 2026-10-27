@@ -49,6 +49,9 @@
 .settings-tonal:disabled { opacity: 0.55; }
 .settings-calibration { display: flex; align-items: center; gap: 12px; margin: 8px 0 0; color: var(--on-surface-variant); font-size: 12px; }
 .settings-theme button { min-width: 72px; padding: 8px 14px; font-size: 12px; }
+.settings-menubar-tools button { display: flex; align-items: center; gap: 6px; min-width: 88px; justify-content: center; padding: 7px 14px; font-size: 12px; }
+.settings-menubar-tools button:disabled { opacity: .4; cursor: not-allowed; }
+.settings-menubar-tools img, .settings-menubar-tools svg { width: 14px; height: 14px; }
 
 .settings-paths,
 .settings-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }

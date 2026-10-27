@@ -13,7 +13,7 @@ export type Tool = 'Claude' | 'Codex'
 export type Source = 'ClaudeCli' | 'ClaudeDesktop' | 'CodexCli' | 'CodexDesktop' | 'Unknown'
 export type Origin = 'Official' | 'Statusline' | 'Log' | 'Manual' | 'Estimated'
 export type Theme = 'system' | 'light' | 'dark'
-export type MenuBarQuota = 'off' | 'claude' | 'codex' | 'both'
+export type Language = 'system' | 'zh' | 'en'
 export type CredentialPreference = 'Auto' | 'ClaudeDesktop' | 'ClaudeCode'
 export type Forecast = { WillHit: { at: string } } | 'Ample' | 'Unknown'
 
@@ -39,12 +39,14 @@ export interface AppSettings {
   claude_credential: CredentialPreference
   codex_app_server: boolean
   theme: Theme
+  language: Language
   calibration: Calibration | null
   dismissed_advice: string[]
   advice_notifications: boolean
   tray_hint_shown: boolean
   silent_start: boolean
-  menu_bar_quota: MenuBarQuota
+  /** Tools shown next to the menu bar icon, at most two; empty shows the icon only. */
+  menu_bar_tools: Tool[]
   auto_check_updates: boolean
   /** Written by the backend only. */
   update_last_checked_at: string | null
@@ -66,6 +68,10 @@ export interface QuotaDisplay {
   origin: Origin | null
   forecast: Forecast
   window_passed: boolean
+  /** When the latest reading was taken. */
+  as_of: string | null
+  /** Estimated share of requests logged after the latest reading, already in `used_percent`. */
+  estimated_percent: number | null
 }
 
 export interface ToolOverview {

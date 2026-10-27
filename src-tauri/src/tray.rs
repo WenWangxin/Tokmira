@@ -6,21 +6,26 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-#[cfg(target_os = "macos")]
-use tauri::menu::Submenu;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::image::Image;
+use tauri::menu::{CheckMenuItem, IconMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Emitter, Manager};
 use token_audit_core::model::Tool;
-use token_audit_core::settings::{self, MenuBarQuota};
+use token_audit_core::settings;
 
 use crate::{login_item, tray_menu, AppState};
+
+const TOOLS: [Tool; 2] = [Tool::Claude, Tool::Codex];
+/// Enough rows for every tool's 5-hour, weekly and forecast lines.
+const ROWS: usize = 6;
 
 struct TrayState {
     sender: Sender<()>,
     tray: TrayIcon,
-    lines: Vec<MenuItem<tauri::Wry>>,
-    authorization: MenuItem<tauri::Wry>,
+    /// A heading with the tool's logo, then that tool's quota rows indented under it.
+    headers: Vec<IconMenuItem<tauri::Wry>>,
+    rows: Vec<IconMenuItem<tauri::Wry>>,
+    authorization: IconMenuItem<tauri::Wry>,
     updated: MenuItem<tauri::Wry>,
     refresh: MenuItem<tauri::Wry>,
     dashboard: MenuItem<tauri::Wry>,
@@ -28,14 +33,28 @@ struct TrayState {
     alerts: CheckMenuItem<tauri::Wry>,
     autostart: CheckMenuItem<tauri::Wry>,
     silent: CheckMenuItem<tauri::Wry>,
-    modes: Vec<CheckMenuItem<tauri::Wry>>,
+    startup_submenu: Submenu<tauri::Wry>,
+    #[cfg(target_os = "macos")]
+    icon_only: CheckMenuItem<tauri::Wry>,
+    #[cfg(target_os = "macos")]
+    shown_tools: Vec<CheckMenuItem<tauri::Wry>>,
     #[cfg(target_os = "macos")]
     mode_submenu: Submenu<tauri::Wry>,
     update: MenuItem<tauri::Wry>,
     settings: MenuItem<tauri::Wry>,
     quit: MenuItem<tauri::Wry>,
-    /// Quota lines shown, authorization row shown, update row shown.
-    layout: Mutex<(usize, bool, bool)>,
+    layout: Mutex<Option<Layout>>,
+    /// The menu bar badges last drawn, so the minute tick does not redraw the same image.
+    #[cfg(target_os = "macos")]
+    badges: Mutex<Option<Vec<(Tool, String)>>>,
+}
+
+/// What decides the menu's structure; text changes alone keep the built menu.
+#[derive(Clone, PartialEq)]
+struct Layout {
+    rows: Vec<usize>,
+    authorization: bool,
+    update: bool,
 }
 
 pub fn signal(app: &AppHandle) {
@@ -75,11 +94,11 @@ fn menu_event(app: &AppHandle, id: &str) {
                     "usage-changed",
                     crate::realtime::UsageChanged {
                         tools: vec!["Claude", "Codex"],
+                        claude_logs: false,
                     },
                 );
             });
         }
-        "dashboard" | "authorization" => navigate(app, "/"),
         "advice" => navigate(app, "/advice"),
         "settings" | "update" => navigate(app, "/settings"),
         "alerts" => edit_settings(app, |s| s.advice_notifications = !s.advice_notifications),
@@ -91,31 +110,76 @@ fn menu_event(app: &AppHandle, id: &str) {
                 let _ = app.emit("settings-changed", ());
             }
         }
-        "quota-off" => edit_settings(app, |s| s.menu_bar_quota = MenuBarQuota::Off),
-        "quota-claude" => edit_settings(app, |s| s.menu_bar_quota = MenuBarQuota::Claude),
-        "quota-codex" => edit_settings(app, |s| s.menu_bar_quota = MenuBarQuota::Codex),
-        "quota-both" => edit_settings(app, |s| s.menu_bar_quota = MenuBarQuota::Both),
+        "menubar-off" => edit_settings(app, |s| s.menu_bar_tools.clear()),
+        "menubar-Claude" => edit_settings(app, |s| {
+            settings::toggle_menu_bar_tool(&mut s.menu_bar_tools, Tool::Claude);
+        }),
+        "menubar-Codex" => edit_settings(app, |s| {
+            settings::toggle_menu_bar_tool(&mut s.menu_bar_tools, Tool::Codex);
+        }),
         "quit" => app.exit(0),
+        // Tool headings and quota rows open the dashboard, like "打开仪表盘".
+        id if id == "dashboard"
+            || id == "authorization"
+            || id.starts_with("tool-")
+            || id.starts_with("row-") =>
+        {
+            navigate(app, "/");
+        }
         _ => {}
     }
 }
 
+fn menu_logo(tool: Tool) -> tauri::Result<Image<'static>> {
+    Image::from_bytes(match tool {
+        Tool::Claude => include_bytes!("../icons/tray/claude-menu.png"),
+        Tool::Codex => include_bytes!("../icons/tray/codex-menu.png"),
+    })
+}
+
+/// A blank icon the size of the logos, so rows line up under the tool name.
+fn indent() -> Image<'static> {
+    Image::new_owned(vec![0; 36 * 36 * 4], 36, 36)
+}
+
+#[cfg(target_os = "macos")]
+fn gauge() -> tauri::Result<Image<'static>> {
+    Image::from_bytes(include_bytes!("../icons/tray-template.png"))
+}
+
 pub fn install(app: &tauri::App) -> tauri::Result<()> {
-    let mut lines = Vec::new();
-    for i in 0..6 {
-        lines.push(MenuItem::with_id(
-            app,
-            format!("info-{i}"),
-            "",
-            false,
-            None::<&str>,
-        )?);
-    }
-    let authorization = MenuItem::with_id(
+    let headers = TOOLS
+        .into_iter()
+        .map(|tool| {
+            let name = tray_menu::tool_name(tool);
+            IconMenuItem::with_id(
+                app,
+                format!("tool-{name}"),
+                name,
+                true,
+                Some(menu_logo(tool)?),
+                None::<&str>,
+            )
+        })
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let rows = (0..ROWS)
+        .map(|i| {
+            IconMenuItem::with_id(
+                app,
+                format!("row-{i}"),
+                "",
+                true,
+                Some(indent()),
+                None::<&str>,
+            )
+        })
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let authorization = IconMenuItem::with_id(
         app,
         "authorization",
-        "Claude 需要授权，点此打开应用",
-        false,
+        "需要授权，点此打开应用",
+        true,
+        Some(indent()),
         None::<&str>,
     )?;
     let updated = MenuItem::with_id(app, "updated", "更新于 --:--", false, None::<&str>)?;
@@ -126,55 +190,50 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     let autostart =
         CheckMenuItem::with_id(app, "autostart", "开机自动启动", true, false, None::<&str>)?;
     let silent = CheckMenuItem::with_id(app, "silent", "静默启动", true, false, None::<&str>)?;
-    let modes = [
-        ("quota-off", "只显示图标"),
-        ("quota-claude", "Claude"),
-        ("quota-codex", "Codex"),
-        ("quota-both", "两者都显示"),
-    ]
-    .into_iter()
-    .map(|(id, label)| CheckMenuItem::with_id(app, id, label, true, false, None::<&str>))
-    .collect::<tauri::Result<Vec<_>>>()?;
+    let startup_submenu = Submenu::with_id_and_items(
+        app,
+        "startup-menu",
+        "启动方式",
+        true,
+        &[&autostart, &silent],
+    )?;
+    #[cfg(target_os = "macos")]
+    let icon_only =
+        CheckMenuItem::with_id(app, "menubar-off", "只显示图标", true, false, None::<&str>)?;
+    #[cfg(target_os = "macos")]
+    let shown_tools = TOOLS
+        .into_iter()
+        .map(|tool| {
+            let name = tray_menu::tool_name(tool);
+            CheckMenuItem::with_id(
+                app,
+                format!("menubar-{name}"),
+                name,
+                true,
+                false,
+                None::<&str>,
+            )
+        })
+        .collect::<tauri::Result<Vec<_>>>()?;
+    #[cfg(target_os = "macos")]
+    let mode_submenu = {
+        let submenu = Submenu::with_id(app, "menubar-menu", "菜单栏显示", true)?;
+        submenu.append(&icon_only)?;
+        submenu.append(&PredefinedMenuItem::separator(app)?)?;
+        for item in &shown_tools {
+            submenu.append(item)?;
+        }
+        submenu
+    };
     let update_item = MenuItem::with_id(app, "update", "", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 token-audit", true, None::<&str>)?;
-    let menu = Menu::new(app)?;
-    for line in &lines {
-        menu.append(line)?;
-    }
-    menu.append(&authorization)?;
-    menu.append(&updated)?;
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-    for item in [&refresh, &dashboard, &advice] {
-        menu.append(item)?;
-    }
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-    for item in [&alerts, &autostart, &silent] {
-        menu.append(item)?;
-    }
-    #[cfg(target_os = "macos")]
-    let mode_submenu = {
-        let submenu = Submenu::with_id(app, "quota-menu", "菜单栏显示", true)?;
-        for mode in &modes {
-            submenu.append(mode)?;
-        }
-        menu.append(&submenu)?;
-        submenu
-    };
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&settings)?;
-    menu.append(&quit)?;
     let tray = TrayIconBuilder::with_id("main")
         .tooltip("token-audit")
-        .menu(&menu)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| menu_event(app, event.id().as_ref()));
     #[cfg(target_os = "macos")]
-    let tray = tray
-        .icon(tauri::image::Image::from_bytes(include_bytes!(
-            "../icons/tray-template.png"
-        ))?)
-        .icon_as_template(true);
+    let tray = tray.icon(gauge()?).icon_as_template(true);
     #[cfg(not(target_os = "macos"))]
     let tray = {
         use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -198,7 +257,8 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     app.manage(TrayState {
         sender,
         tray,
-        lines,
+        headers,
+        rows,
         authorization,
         updated,
         refresh,
@@ -207,15 +267,33 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
         alerts,
         autostart,
         silent,
-        modes,
+        startup_submenu,
+        #[cfg(target_os = "macos")]
+        icon_only,
+        #[cfg(target_os = "macos")]
+        shown_tools,
         #[cfg(target_os = "macos")]
         mode_submenu,
         update: update_item,
         settings,
         quit,
-        layout: Mutex::new((6, true, false)),
+        layout: Mutex::new(None),
+        #[cfg(target_os = "macos")]
+        badges: Mutex::new(None),
     });
     let app = app.handle().clone();
+    // A menu exists from the start; the first update fills in the numbers.
+    let state = app.state::<TrayState>();
+    let first = Layout {
+        rows: vec![1; TOOLS.len()],
+        authorization: false,
+        update: false,
+    };
+    if rebuild_menu(&app, &state, &first).is_ok() {
+        if let Ok(mut layout) = state.layout.lock() {
+            *layout = Some(first);
+        }
+    }
     signal(&app);
     std::thread::spawn(move || {
         // A silent start has no window polling, so the first hidden poll runs right away.
@@ -240,19 +318,18 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn rebuild_menu(
-    app: &AppHandle,
-    state: &TrayState,
-    count: usize,
-    authorization: bool,
-    update: bool,
-) -> tauri::Result<()> {
+fn rebuild_menu(app: &AppHandle, state: &TrayState, layout: &Layout) -> tauri::Result<()> {
     let menu = Menu::new(app)?;
-    for line in state.lines.iter().take(count) {
-        menu.append(line)?;
-    }
-    if authorization {
-        menu.append(&state.authorization)?;
+    let mut rows = state.rows.iter();
+    for ((header, count), tool) in state.headers.iter().zip(&layout.rows).zip(TOOLS) {
+        menu.append(header)?;
+        for row in rows.by_ref().take(*count) {
+            menu.append(row)?;
+        }
+        // The Claude authorization prompt sits with Claude's own rows.
+        if tool == Tool::Claude && layout.authorization {
+            menu.append(&state.authorization)?;
+        }
     }
     menu.append(&state.updated)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
@@ -260,13 +337,12 @@ fn rebuild_menu(
         menu.append(item)?;
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    for item in [&state.alerts, &state.autostart, &state.silent] {
-        menu.append(item)?;
-    }
+    menu.append(&state.alerts)?;
     #[cfg(target_os = "macos")]
     menu.append(&state.mode_submenu)?;
+    menu.append(&state.startup_submenu)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    if update {
+    if layout.update {
         menu.append(&state.update)?;
     }
     menu.append(&state.settings)?;
@@ -318,39 +394,36 @@ fn update(app: &AppHandle) {
         needs_auth && settings.claude_official_query,
         updated_at,
         Utc::now(),
-        settings.menu_bar_quota,
+        &settings.menu_bar_tools,
     );
     let menu = app.state::<TrayState>();
-    let line_count = text.lines.len().saturating_sub(1).min(menu.lines.len());
-    for (item, line) in menu.lines.iter().zip(
-        text.lines
-            .iter()
-            .take(text.lines.len().saturating_sub(1))
-            .map(String::as_str)
-            .chain(std::iter::repeat("")),
-    ) {
-        let _ = item.set_text(line);
-        let _ = item.set_enabled(false);
+    let mut rows = menu.rows.iter();
+    let mut counts = Vec::new();
+    for (header, section) in menu.headers.iter().zip(&text.sections) {
+        let _ = header.set_text(&section.heading);
+        let mut count = 0;
+        // The section's rows lead the zip, so the shared pool loses no item at its end.
+        for (line, item) in section.rows.iter().zip(rows.by_ref()) {
+            let _ = item.set_text(line);
+            count += 1;
+        }
+        counts.push(count);
     }
-    let _ = menu.authorization.set_enabled(text.needs_authorization);
-    let _ = menu.authorization.set_text(if text.needs_authorization {
-        "Claude 需要授权，点此打开应用"
-    } else {
-        ""
-    });
-    if let Some(updated) = text.lines.last() {
-        let _ = menu.updated.set_text(updated);
-    }
+    let _ = menu.updated.set_text(&text.updated);
     let update = crate::updates::available(app);
     if let Some(update) = &update {
         let _ = menu
             .update
             .set_text(format!("新版本 {} 可以更新…", update.version));
     }
-    let wanted = (line_count, text.needs_authorization, update.is_some());
+    let wanted = Layout {
+        rows: counts,
+        authorization: text.needs_authorization,
+        update: update.is_some(),
+    };
     if let Ok(mut layout) = menu.layout.lock() {
-        if *layout != wanted && rebuild_menu(app, &menu, wanted.0, wanted.1, wanted.2).is_ok() {
-            *layout = wanted;
+        if layout.as_ref() != Some(&wanted) && rebuild_menu(app, &menu, &wanted).is_ok() {
+            *layout = Some(wanted);
         }
     }
     let _ = menu.alerts.set_checked(settings.advice_notifications);
@@ -358,16 +431,34 @@ fn update(app: &AppHandle) {
     let _ = menu.autostart.set_checked(login.enabled);
     let _ = menu.autostart.set_enabled(login.available);
     let _ = menu.silent.set_checked(settings.silent_start);
-    for (item, mode) in menu.modes.iter().zip([
-        MenuBarQuota::Off,
-        MenuBarQuota::Claude,
-        MenuBarQuota::Codex,
-        MenuBarQuota::Both,
-    ]) {
-        let _ = item.set_checked(settings.menu_bar_quota == mode);
-    }
     #[cfg(target_os = "macos")]
-    let _ = menu.tray.set_title(text.title.as_deref());
+    {
+        let _ = menu
+            .icon_only
+            .set_checked(settings.menu_bar_tools.is_empty());
+        for (item, tool) in menu.shown_tools.iter().zip(TOOLS) {
+            let _ = item.set_checked(settings.menu_bar_tools.contains(&tool));
+        }
+        if let Ok(mut drawn) = menu.badges.lock() {
+            if drawn.as_ref() != Some(&text.badges) {
+                // Offscreen bitmap drawing is safe off the main thread; the icon setter
+                // hands the result to it.
+                let icon = match crate::tray_image::render(&text.badges) {
+                    Some((rgba, width, height)) => Ok(Image::new_owned(rgba, width, height)),
+                    None => gauge(),
+                };
+                if let Ok(icon) = icon {
+                    if menu
+                        .tray
+                        .set_icon_with_as_template(Some(icon), true)
+                        .is_ok()
+                    {
+                        *drawn = Some(text.badges.clone());
+                    }
+                }
+            }
+        }
+    }
     let _ = menu.tray.set_tooltip(Some(text.tooltip.as_str()));
 }
 

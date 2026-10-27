@@ -69,9 +69,10 @@ export function startRealtime({ listen, refreshQuotas, visible, now = Date.now }
   }
 
   // New quota snapshots land in the app's data folder, which the backend watches,
-  // so a successful query comes back as a change event.
-  const poll = async (force = false) => {
-    if (stopped || polling || !(force ? visible() : quotaPollDue(now(), lastPollAt, visible()))) return
+  // so a successful query comes back as a change event. New local usage needs no poll
+  // here: the backend queries after it on its own, also while the window is hidden.
+  const poll = async () => {
+    if (stopped || polling || !quotaPollDue(now(), lastPollAt, visible())) return
     polling = true
     lastPollAt = now()
     try { await refreshQuotas() } catch { /* The dashboard shows query errors on manual refresh. */ }
@@ -79,7 +80,7 @@ export function startRealtime({ listen, refreshQuotas, visible, now = Date.now }
   }
 
   let unlisten: (() => void) | undefined
-  void listen(() => { bump(); void poll(true) }).then(stop => { if (stopped) stop(); else unlisten = stop })
+  void listen(bump).then(stop => { if (stopped) stop(); else unlisten = stop })
   const interval = setInterval(() => { void poll() }, QUOTA_POLL_MS / 4)
   const onVisibility = () => { if (visible()) { bump(); void poll() } }
   document.addEventListener('visibilitychange', onVisibility)

@@ -2,8 +2,11 @@
 
 mod login_item;
 mod notifications;
+mod quota_follow;
 mod realtime;
 mod tray;
+#[cfg(target_os = "macos")]
+mod tray_image;
 mod tray_menu;
 mod update_text;
 mod updates;
@@ -182,6 +185,7 @@ fn update_settings(
             .update_notified_version
             .clone_from(&current.update_notified_version);
     }
+    settings::normalize_menu_bar_tools(&mut settings.menu_bar_tools);
     settings::write_settings(&state.data_dir, &settings).map_err(|_| "保存设置失败".to_owned())?;
     // Switching the query on again is the user asking to retry the keychain.
     if settings.claude_official_query && !was_on {
@@ -229,6 +233,17 @@ fn proxy() -> Option<String> {
         .or_else(system_proxy)
 }
 fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResult, String> {
+    refresh_sync(state, automatic, true)
+}
+/// The automatic query after new Claude usage; Codex readings already arrive in its logs.
+fn refresh_claude_sync(state: &AppState) -> Result<RefreshResult, String> {
+    refresh_sync(state, true, false)
+}
+fn refresh_sync(
+    state: &AppState,
+    automatic: bool,
+    include_codex: bool,
+) -> Result<RefreshResult, String> {
     let settings =
         settings::read_settings(&state.data_dir).map_err(|_| "读取设置失败".to_owned())?;
     let mut clock = state.refresh.lock().map_err(|_| lock_error())?;
@@ -309,7 +324,7 @@ fn refresh_quotas_sync(state: &AppState, automatic: bool) -> Result<RefreshResul
             }
         }
     }
-    if settings.codex_app_server {
+    if include_codex && settings.codex_app_server {
         if clock
             .last_codex
             .is_some_and(|at| now - at < chrono::Duration::seconds(60))
@@ -801,6 +816,8 @@ struct LiveUpdates {
     home: PathBuf,
     scans: Arc<Mutex<ScanCache>>,
     alerts: mpsc::Sender<()>,
+    /// New Claude log lines; drives the follow-up official query.
+    claude_usage: mpsc::Sender<()>,
 }
 
 impl realtime::Sink for LiveUpdates {
@@ -813,8 +830,12 @@ impl realtime::Sink for LiveUpdates {
     }
 
     fn notify(&self, change: realtime::UsageChanged) {
+        let claude_logs = change.claude_logs;
         let _ = self.app.emit("usage-changed", change);
         let _ = self.alerts.send(());
+        if claude_logs {
+            let _ = self.claude_usage.send(());
+        }
         tray::signal(&self.app);
     }
 }
@@ -971,6 +992,7 @@ fn main() -> tauri::Result<()> {
                     home: home.clone(),
                     scans: Arc::clone(&scans),
                     alerts,
+                    claude_usage: quota_follow::spawn(app.handle().clone()),
                 },
             );
             app.manage(updates::UpdateState::default());

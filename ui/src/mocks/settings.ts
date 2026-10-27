@@ -7,6 +7,7 @@ export const mockSettings: AppSettings = {
   claude_credential: 'Auto',
   codex_app_server: false,
   theme: 'system',
+  language: 'system',
   calibration: {
     tool: 'Claude',
     five_hour_percent: 28,
@@ -16,7 +17,7 @@ export const mockSettings: AppSettings = {
   advice_notifications: true,
   tray_hint_shown: true,
   silent_start: false,
-  menu_bar_quota: 'both',
+  menu_bar_tools: [],
   auto_check_updates: false,
   update_last_checked_at: null,
   update_notified_version: null,

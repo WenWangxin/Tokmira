@@ -6,6 +6,8 @@ import { listen } from '@tauri-apps/api/event'
 import { BellRing, CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Info, LogIn, MonitorOff, Palette, Power, RefreshCw, Scale, SlidersHorizontal, Tag, Terminal, Trash2 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import Toggle from '../components/Toggle.vue'
+import CodexLogo from '../components/CodexLogo.vue'
+import ClaudeLogo from '../assets/logos/claude.svg'
 import { vSelectionSlide } from '../components/selectionSlide'
 import {
   checkUpdate,
@@ -31,7 +33,6 @@ import {
   type AutostartState,
   type CredentialPreference,
   type EnvironmentInfo,
-  type MenuBarQuota,
   type NotificationStatus,
   type RecorderParts,
   type RecorderPlan,
@@ -80,12 +81,9 @@ const credentials: { value: CredentialPreference; label: string }[] = [
   { value: 'ClaudeDesktop', label: 'Claude 桌面版' },
   { value: 'ClaudeCode', label: 'Claude Code' },
 ]
-const quotaModes: { value: MenuBarQuota; label: string }[] = [
-  { value: 'off', label: '只显示图标' },
-  { value: 'claude', label: 'Claude' },
-  { value: 'codex', label: 'Codex' },
-  { value: 'both', label: '两者都显示' },
-]
+const menuBarTools: Tool[] = ['Claude', 'Codex']
+/** The menu bar has room for two quotas, stacked. */
+const MENU_BAR_TOOLS_MAX = 2
 const router = useRouter()
 const parsedPercent = computed(() => parsePercent(percentText.value))
 const locked = computed(() => confirming.value || dialog.value !== null)
@@ -157,10 +155,23 @@ async function toggleAutostart() {
   }
 }
 
-async function setBackgroundOption(change: Partial<Pick<AppSettings, 'silent_start' | 'menu_bar_quota'>>) {
+async function setBackgroundOption(change: Partial<Pick<AppSettings, 'silent_start' | 'menu_bar_tools'>>) {
   if (!settings.value || locked.value) return
   try { await save({ ...settings.value, ...change }) }
   catch (cause) { showNotice(errorText(cause), true) }
+}
+
+function menuBarShown(tool: Tool) {
+  return Boolean(settings.value?.menu_bar_tools.includes(tool))
+}
+function menuBarFull(tool: Tool) {
+  return !menuBarShown(tool) && (settings.value?.menu_bar_tools.length ?? 0) >= MENU_BAR_TOOLS_MAX
+}
+function toggleMenuBarTool(tool: Tool) {
+  if (!settings.value || menuBarFull(tool)) return
+  const current = settings.value.menu_bar_tools
+  const next = current.includes(tool) ? current.filter((item) => item !== tool) : [...current, tool]
+  void setBackgroundOption({ menu_bar_tools: next })
 }
 
 // Updates: checked only when the user clicks, or by the opt-in daily background check.
@@ -596,11 +607,13 @@ onUnmounted(() => {
           <span class="settings-icon"><Gauge :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
             <div class="settings-title">菜单栏显示额度</div>
-            <p class="settings-desc">选择图标旁显示的 5 小时额度。</p>
+            <p class="settings-desc">在图标旁显示 5 小时额度，最多选 {{ MENU_BAR_TOOLS_MAX }} 个，选两个时上下排列；都不选只显示图标。</p>
           </div>
           <div class="settings-controls">
-            <div v-selection-slide class="segmented settings-theme" role="group" aria-label="菜单栏显示额度">
-              <button v-for="item in quotaModes" :key="item.value" type="button" :class="{ active: settings.menu_bar_quota === item.value }" :aria-pressed="settings.menu_bar_quota === item.value" :disabled="locked" @click="setBackgroundOption({ menu_bar_quota: item.value })">{{ item.label }}</button>
+            <div class="segmented settings-menubar-tools" role="group" aria-label="菜单栏显示额度">
+              <button v-for="item in menuBarTools" :key="item" type="button" :class="{ active: menuBarShown(item) }" :aria-pressed="menuBarShown(item)" :disabled="locked || menuBarFull(item)" :title="menuBarFull(item) ? `最多同时显示 ${MENU_BAR_TOOLS_MAX} 个` : undefined" @click="toggleMenuBarTool(item)">
+                <img v-if="item === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else />{{ item }}
+              </button>
             </div>
           </div>
         </div>

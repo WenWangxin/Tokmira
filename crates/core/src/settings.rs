@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::claude_quota::CredentialPreference;
+use crate::i18n::Lang;
 use crate::model::Tool;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,14 +18,53 @@ pub enum Theme {
     Dark,
 }
 
+/// Interface language; `System` follows the OS locale.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum MenuBarQuota {
-    Off,
-    Claude,
-    Codex,
+pub enum Language {
     #[default]
-    Both,
+    System,
+    Zh,
+    En,
+}
+impl Language {
+    /// `system_locale` is asked only when the user follows the system.
+    pub fn resolve(self, system_locale: impl FnOnce() -> Option<String>) -> Lang {
+        match self {
+            Self::Zh => Lang::Zh,
+            Self::En => Lang::En,
+            Self::System => system_locale().map_or(Lang::Zh, |tag| Lang::from_locale(&tag)),
+        }
+    }
+}
+
+/// At most this many tools show their quota next to the menu bar icon.
+pub const MENU_BAR_TOOLS_MAX: usize = 2;
+
+/// Keeps the menu bar selection in the order picked, without repeats, and at most
+/// [`MENU_BAR_TOOLS_MAX`] long.
+pub fn normalize_menu_bar_tools(tools: &mut Vec<Tool>) {
+    let mut seen = Vec::with_capacity(MENU_BAR_TOOLS_MAX);
+    tools.retain(|tool| {
+        let keep = !seen.contains(tool) && seen.len() < MENU_BAR_TOOLS_MAX;
+        if keep {
+            seen.push(*tool);
+        }
+        keep
+    });
+}
+
+/// Adds `tool` to the menu bar selection, or removes it when already shown. Adding a
+/// third tool replaces the one picked first.
+pub fn toggle_menu_bar_tool(tools: &mut Vec<Tool>, tool: Tool) {
+    if let Some(index) = tools.iter().position(|value| *value == tool) {
+        tools.remove(index);
+        return;
+    }
+    if tools.len() >= MENU_BAR_TOOLS_MAX {
+        tools.remove(0);
+    }
+    tools.push(tool);
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -42,6 +82,7 @@ pub struct AppSettings {
     pub claude_credential: CredentialPreference,
     pub codex_app_server: bool,
     pub theme: Theme,
+    pub language: Language,
     pub calibration: Option<Calibration>,
     pub dismissed_advice: Vec<String>,
     /// System notification when a new advice problem shows up while the app runs.
@@ -49,7 +90,9 @@ pub struct AppSettings {
     /// Set after the first "still running in the menu bar" notice.
     pub tray_hint_shown: bool,
     pub silent_start: bool,
-    pub menu_bar_quota: MenuBarQuota,
+    /// Tools whose 5-hour quota shows next to the menu bar icon (macOS); empty shows
+    /// the icon only. Replaces the old `menu_bar_quota`, which is ignored on read.
+    pub menu_bar_tools: Vec<Tool>,
     /// Off by default: checking for updates is one of the two allowed network requests.
     pub auto_check_updates: bool,
     pub update_last_checked_at: Option<DateTime<Utc>>,
@@ -64,12 +107,13 @@ impl Default for AppSettings {
             claude_credential: CredentialPreference::Auto,
             codex_app_server: false,
             theme: Theme::System,
+            language: Language::System,
             calibration: None,
             dismissed_advice: Vec::new(),
             advice_notifications: true,
             tray_hint_shown: false,
             silent_start: false,
-            menu_bar_quota: MenuBarQuota::Both,
+            menu_bar_tools: Vec::new(),
             auto_check_updates: false,
             update_last_checked_at: None,
             update_notified_version: None,
@@ -85,6 +129,9 @@ pub fn read_settings(data_dir: &Path) -> io::Result<AppSettings> {
     }
 }
 pub fn write_settings(data_dir: &Path, settings: &AppSettings) -> io::Result<()> {
+    let mut settings = settings.clone();
+    normalize_menu_bar_tools(&mut settings.menu_bar_tools);
+    let settings = &settings;
     if settings.calibration.as_ref().is_some_and(|c| {
         !c.five_hour_percent.is_finite() || !(0.0..=100.0).contains(&c.five_hour_percent)
     }) {

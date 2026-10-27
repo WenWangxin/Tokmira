@@ -15,7 +15,9 @@ use token_audit_core::quota_store::{
     append_claude, read_claude, ClaudeSnapshot, CodexSnapshot, StoredWindow,
 };
 use token_audit_core::recorder::{QuotaWindow, RecorderStatus, StatuslineRecord};
-use token_audit_core::settings::{read_settings, write_settings, AppSettings, Calibration, Theme};
+use token_audit_core::settings::{
+    read_settings, toggle_menu_bar_tool, write_settings, AppSettings, Calibration, Theme,
+};
 use token_audit_core::timeline::{build_timeline, window_id, Origin, QuotaPoint, Window};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
@@ -428,6 +430,31 @@ fn idle_time_reduces_forecast_and_passed_window_has_no_usage() {
     assert!(overview.tools[0].five_hour.window_passed);
     assert_eq!(overview.tools[0].five_hour.used_percent, None);
     assert_eq!(overview.tools[0].five_hour.forecast, Forecast::Unknown);
+}
+
+#[test]
+fn menu_bar_tools_default_empty_ignore_legacy_and_cap_at_two() {
+    let temp = Temp::new();
+    // Old files carry `menu_bar_quota`; it no longer means anything and must not fail.
+    fs::write(
+        temp.path().join("settings.json"),
+        b"{\"menu_bar_quota\":\"both\",\"theme\":\"dark\"}",
+    )
+    .expect("legacy settings");
+    let mut settings = read_settings(temp.path()).expect("legacy settings");
+    assert_eq!(settings.theme, Theme::Dark);
+    assert!(settings.menu_bar_tools.is_empty());
+    settings.menu_bar_tools = vec![Tool::Codex, Tool::Codex, Tool::Claude, Tool::Claude];
+    write_settings(temp.path(), &settings).expect("save settings");
+    assert_eq!(
+        read_settings(temp.path()).expect("saved").menu_bar_tools,
+        vec![Tool::Codex, Tool::Claude]
+    );
+    let mut tools = vec![Tool::Claude];
+    toggle_menu_bar_tool(&mut tools, Tool::Codex);
+    assert_eq!(tools, vec![Tool::Claude, Tool::Codex]);
+    toggle_menu_bar_tool(&mut tools, Tool::Claude);
+    assert_eq!(tools, vec![Tool::Codex]);
 }
 
 #[test]

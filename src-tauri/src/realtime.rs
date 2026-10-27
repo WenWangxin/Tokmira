@@ -101,6 +101,10 @@ impl Debouncer {
 #[derive(Clone, Debug, Serialize)]
 pub struct UsageChanged {
     pub tools: Vec<&'static str>,
+    /// The Claude logs themselves changed, not just the app's own quota records. Only
+    /// these trigger a follow-up query; the query's own snapshot must not trigger another.
+    #[serde(skip)]
+    pub claude_logs: bool,
 }
 
 /// What the watcher needs from the app: rescan the logs (returning which tools'
@@ -242,7 +246,10 @@ pub fn spawn(home: PathBuf, data_dir: PathBuf, sink: impl Sink) {
                 tools.push("Codex");
             }
             if !tools.is_empty() {
-                sink.notify(UsageChanged { tools });
+                sink.notify(UsageChanged {
+                    tools,
+                    claude_logs: claude_scan,
+                });
             }
         }
     });

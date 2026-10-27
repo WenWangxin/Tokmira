@@ -3,38 +3,80 @@
 use chrono::{DateTime, Datelike, Local, Utc};
 use token_audit_core::dashboard::{QuotaDisplay, ToolOverview};
 use token_audit_core::forecast::Forecast;
-use token_audit_core::settings::MenuBarQuota;
+use token_audit_core::model::Tool;
 
 pub struct MenuText {
-    pub title: Option<String>,
+    /// Logo and 5-hour percent next to the menu bar icon, top to bottom; empty shows
+    /// the icon alone.
+    pub badges: Vec<(Tool, String)>,
     pub tooltip: String,
-    pub lines: Vec<String>,
+    pub sections: Vec<ToolSection>,
+    pub updated: String,
     pub needs_authorization: bool,
+}
+
+/// One tool's block in the menu, Claude first: a heading with its logo, then plain rows
+/// under it.
+pub struct ToolSection {
+    pub heading: String,
+    pub rows: Vec<String>,
+}
+
+pub fn tool_name(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Claude => "Claude",
+        Tool::Codex => "Codex",
+    }
+}
+
+/// The plan after the tool name, named as on the dashboard; unknown plans show as stored.
+fn plan_label(tool: Tool, plan: Option<&str>) -> Option<String> {
+    let plan = plan.map(str::trim).filter(|plan| !plan.is_empty())?;
+    let key = plan.to_lowercase().replace([' ', '-'], "_");
+    let known = match (tool, key.as_str()) {
+        (Tool::Claude, "pro") | (Tool::Codex, "pro") => "Pro",
+        (Tool::Claude, "max") => "Max",
+        (Tool::Claude, "max_5x") => "Max 5x",
+        (Tool::Claude, "max_20x") => "Max 20x",
+        (Tool::Codex, "plus") => "Plus",
+        _ => return Some(plan.to_owned()),
+    };
+    Some(known.to_owned())
+}
+
+fn heading(tool: Tool, overview: Option<&ToolOverview>) -> String {
+    match plan_label(tool, overview.and_then(|value| value.plan.as_deref())) {
+        Some(plan) => format!("{} · {plan}", tool_name(tool)),
+        None => tool_name(tool).to_owned(),
+    }
 }
 
 fn passed(display: &QuotaDisplay, now: DateTime<Utc>) -> bool {
     display.window_passed || display.resets_at.is_some_and(|at| at <= now)
 }
 
-fn percent(display: &QuotaDisplay, now: DateTime<Utc>) -> Option<String> {
+/// `urgent_mark` adds "!" when the window is expected to run out within the hour; the
+/// menu leaves it off because its forecast row already says so.
+fn percent(display: &QuotaDisplay, now: DateTime<Utc>, urgent_mark: bool) -> Option<String> {
     let value = if passed(display, now) {
         Some(0.0)
     } else {
         display.used_percent
     }?;
-    let urgent = !passed(display, now)
+    let urgent = urgent_mark
+        && !passed(display, now)
         && matches!(display.forecast, Forecast::WillHit { at } if at >= now && at - now <= chrono::Duration::hours(1));
+    // "≈" marks a number that still includes requests not yet confirmed by a reading.
+    let estimated = !passed(display, now) && display.estimated_percent.is_some();
     Some(format!(
-        "{}%{}",
+        "{}{}%{}",
+        if estimated { "≈" } else { "" },
         value.round() as u32,
         if urgent { "!" } else { "" }
     ))
 }
 
-fn reset_time(at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
-    let Some(at) = at else {
-        return "重置时间未知".to_owned();
-    };
+fn reset_time(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let local = at.with_timezone(&Local);
     if local.date_naive() == now.with_timezone(&Local).date_naive() {
         local.format("%H:%M 重置").to_string()
@@ -43,45 +85,47 @@ fn reset_time(at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
     }
 }
 
-fn tool_lines(
-    name: &str,
-    tool: Option<&ToolOverview>,
-    enabled: bool,
-    now: DateTime<Utc>,
-) -> Vec<String> {
+fn duration(minutes: i64) -> String {
+    if minutes < 60 {
+        format!("{minutes} 分钟")
+    } else if minutes % 60 == 0 {
+        format!("{} 小时", minutes / 60)
+    } else {
+        format!("{} 小时 {} 分", minutes / 60, minutes % 60)
+    }
+}
+
+fn window_row(label: &str, display: &QuotaDisplay, now: DateTime<Utc>) -> Option<String> {
+    if passed(display, now) && display.used_percent.is_some() {
+        return Some(format!("{label}额度已重置"));
+    }
+    let value = percent(display, now, false)?;
+    Some(match display.resets_at {
+        Some(at) => format!("{label}已用 {value} · {}", reset_time(at, now)),
+        None => format!("{label}已用 {value}"),
+    })
+}
+
+fn tool_rows(tool: Option<&ToolOverview>, enabled: bool, now: DateTime<Utc>) -> Vec<String> {
     if !enabled {
-        return vec![format!("{name} 未开启额度来源")];
+        return vec!["未开启额度来源".to_owned()];
     }
     let Some(tool) = tool else {
-        return vec![format!("{name} 暂无额度数据")];
+        return vec!["暂无额度数据".to_owned()];
     };
-    let mut lines = Vec::new();
-    let reset = |display: &QuotaDisplay| {
-        if passed(display, now) {
-            "已重置".to_owned()
-        } else {
-            reset_time(display.resets_at, now)
-        }
-    };
-    if let Some(value) = percent(&tool.five_hour, now) {
-        lines.push(format!(
-            "{name}   5 小时 {value} · {}",
-            reset(&tool.five_hour)
-        ));
-    }
-    if let Some(value) = percent(&tool.weekly, now) {
-        lines.push(format!("         本周 {value} · {}", reset(&tool.weekly)));
-    }
+    let mut rows = Vec::new();
+    rows.extend(window_row("5 小时", &tool.five_hour, now));
+    rows.extend(window_row("本周", &tool.weekly, now));
     if let Forecast::WillHit { at } = tool.five_hour.forecast {
         if at > now && !passed(&tool.five_hour, now) {
             let minutes = (at - now).num_minutes().max(1);
-            lines.push(format!("         约 {minutes} 分钟后达到上限"));
+            rows.push(format!("按当前速度约 {}后用完", duration(minutes)));
         }
     }
-    if lines.is_empty() {
-        lines.push(format!("{name} 暂无额度数据"));
+    if rows.is_empty() {
+        rows.push("暂无额度数据".to_owned());
     }
-    lines
+    rows
 }
 
 #[expect(
@@ -96,66 +140,46 @@ pub fn format_menu(
     needs_authorization: bool,
     updated_at: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
-    mode: MenuBarQuota,
+    shown: &[Tool],
 ) -> MenuText {
-    let cl = claude_on
-        .then_some(claude)
-        .flatten()
-        .and_then(|v| percent(&v.five_hour, now));
-    let cx = codex_on
-        .then_some(codex)
-        .flatten()
-        .and_then(|v| percent(&v.five_hour, now));
-    let selected = match mode {
-        MenuBarQuota::Off => Vec::new(),
-        MenuBarQuota::Claude => cl.as_ref().map(|v| vec![("Cl", v)]).unwrap_or_default(),
-        MenuBarQuota::Codex => cx.as_ref().map(|v| vec![("Cx", v)]).unwrap_or_default(),
-        MenuBarQuota::Both => {
-            let mut list = Vec::new();
-            if let Some(v) = &cl {
-                list.push(("Cl", v));
-            }
-            if let Some(v) = &cx {
-                list.push(("Cx", v));
-            }
-            list
-        }
+    let tools = [
+        (Tool::Claude, claude, claude_on),
+        (Tool::Codex, codex, codex_on),
+    ];
+    let current = |tool: Option<&ToolOverview>, on: bool| {
+        on.then_some(tool)
+            .flatten()
+            .and_then(|v| percent(&v.five_hour, now, true))
     };
-    let title = if selected.is_empty() {
-        None
-    } else if selected.len() == 1 {
-        Some(selected[0].1.to_string())
-    } else {
-        Some(
-            selected
-                .iter()
-                .map(|(name, value)| format!("{name} {value}"))
-                .collect::<Vec<_>>()
-                .join(" · "),
-        )
-    };
+    // A fixed order keeps each logo on the same row however the selection was made.
+    let badges = tools
+        .iter()
+        .filter(|(tool, _, _)| shown.contains(tool))
+        .filter_map(|(tool, overview, on)| current(*overview, *on).map(|value| (*tool, value)))
+        .collect();
     let mut tooltip_parts = vec!["token-audit".to_owned()];
-    if let Some(v) = &cl {
-        tooltip_parts.push(format!("Claude {v}"));
+    for (tool, overview, on) in &tools {
+        if let Some(value) = current(*overview, *on) {
+            tooltip_parts.push(format!("{} {value}", tool_name(*tool)));
+        }
     }
-    if let Some(v) = &cx {
-        tooltip_parts.push(format!("Codex {v}"));
-    }
-    let mut lines = tool_lines("Claude", claude, claude_on, now);
-    lines.extend(tool_lines("Codex", codex, codex_on, now));
-    if lines.iter().all(|line| line.contains("暂无额度数据")) {
-        lines = vec!["暂无额度数据".to_owned()];
-    }
-    lines.push(format!(
-        "更新于 {}",
-        updated_at
-            .map(|at| at.with_timezone(&Local).format("%H:%M").to_string())
-            .unwrap_or_else(|| "--:--".to_owned())
-    ));
+    let sections = tools
+        .iter()
+        .map(|(tool, overview, on)| ToolSection {
+            heading: heading(*tool, *overview),
+            rows: tool_rows(*overview, *on, now),
+        })
+        .collect();
     MenuText {
-        title,
+        badges,
         tooltip: tooltip_parts.join(" · "),
-        lines,
+        sections,
+        updated: format!(
+            "更新于 {}",
+            updated_at
+                .map(|at| at.with_timezone(&Local).format("%H:%M").to_string())
+                .unwrap_or_else(|| "--:--".to_owned())
+        ),
         needs_authorization: claude_on && needs_authorization,
     }
 }
@@ -163,7 +187,6 @@ pub fn format_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use token_audit_core::model::Tool;
     fn empty(tool: Tool) -> ToolOverview {
         let display = QuotaDisplay {
             used_percent: None,
@@ -171,6 +194,8 @@ mod tests {
             origin: None,
             forecast: Forecast::Unknown,
             window_passed: false,
+            as_of: None,
+            estimated_percent: None,
         };
         ToolOverview {
             tool,
@@ -180,28 +205,26 @@ mod tests {
             weekly: display,
         }
     }
+    fn badges(text: &MenuText) -> Vec<(Tool, &str)> {
+        text.badges
+            .iter()
+            .map(|(tool, value)| (*tool, value.as_str()))
+            .collect()
+    }
+    const BOTH: &[Tool] = &[Tool::Codex, Tool::Claude];
+
     #[test]
     fn empty_disabled_and_authorization() {
         let now = Utc::now();
-        let empty_text = format_menu(None, None, true, true, false, None, now, MenuBarQuota::Both);
-        assert_eq!(empty_text.lines[0], "暂无额度数据");
-        let disabled = format_menu(
-            None,
-            None,
-            false,
-            false,
-            true,
-            None,
-            now,
-            MenuBarQuota::Both,
-        );
-        assert!(disabled.lines[0].contains("未开启"));
+        let empty_text = format_menu(None, None, true, true, false, None, now, BOTH);
+        assert_eq!(empty_text.sections[0].rows, ["暂无额度数据"]);
+        assert_eq!(empty_text.updated, "更新于 --:--");
+        let disabled = format_menu(None, None, false, false, true, None, now, BOTH);
+        assert_eq!(disabled.sections[1].rows, ["未开启额度来源"]);
         assert!(!disabled.needs_authorization);
-        assert!(
-            format_menu(None, None, true, false, true, None, now, MenuBarQuota::Off)
-                .needs_authorization
-        );
+        assert!(format_menu(None, None, true, false, true, None, now, &[]).needs_authorization);
     }
+
     #[test]
     fn selection_reset_and_forecast() {
         let now = Utc::now();
@@ -215,63 +238,17 @@ mod tests {
         let mut cx = empty(Tool::Codex);
         cx.five_hour.used_percent = Some(40.0);
         cx.five_hour.window_passed = true;
+        let menu =
+            |shown: &[Tool]| format_menu(Some(&cl), Some(&cx), true, true, false, None, now, shown);
+        // Claude stays on top even when Codex was picked first.
         assert_eq!(
-            format_menu(
-                Some(&cl),
-                Some(&cx),
-                true,
-                true,
-                false,
-                None,
-                now,
-                MenuBarQuota::Both
-            )
-            .title
-            .as_deref(),
-            Some("Cl 82%! · Cx 0%")
+            badges(&menu(BOTH)),
+            [(Tool::Claude, "82%!"), (Tool::Codex, "0%")]
         );
-        assert_eq!(
-            format_menu(
-                Some(&cl),
-                Some(&cx),
-                true,
-                true,
-                false,
-                None,
-                now,
-                MenuBarQuota::Claude
-            )
-            .title
-            .as_deref(),
-            Some("82%!")
-        );
-        assert_eq!(
-            format_menu(
-                Some(&cl),
-                Some(&cx),
-                true,
-                true,
-                false,
-                None,
-                now,
-                MenuBarQuota::Codex
-            )
-            .title
-            .as_deref(),
-            Some("0%")
-        );
-        assert!(format_menu(
-            Some(&cl),
-            Some(&cx),
-            true,
-            true,
-            false,
-            None,
-            now,
-            MenuBarQuota::Off
-        )
-        .title
-        .is_none());
+        assert_eq!(badges(&menu(&[Tool::Claude])), [(Tool::Claude, "82%!")]);
+        assert_eq!(badges(&menu(&[Tool::Codex])), [(Tool::Codex, "0%")]);
+        assert!(menu(&[]).badges.is_empty());
+        // A tool without data drops out of the menu bar.
         assert!(format_menu(
             Some(&cl),
             None,
@@ -280,11 +257,32 @@ mod tests {
             false,
             None,
             now,
-            MenuBarQuota::Both
+            &[Tool::Codex]
         )
-        .lines
-        .iter()
-        .any(|line| line.contains("7 分钟")));
+        .badges
+        .is_empty());
+        let text = menu(BOTH);
+        assert_eq!(
+            text.sections[0].rows,
+            [
+                format!(
+                    "5 小时已用 82% · {}",
+                    reset_time(now + chrono::Duration::minutes(30), now)
+                ),
+                "本周已用 70%".to_owned(),
+                "按当前速度约 7 分钟后用完".to_owned(),
+            ]
+        );
+        assert_eq!(text.sections[1].rows, ["5 小时额度已重置"]);
+        assert!(text.tooltip.contains("Claude 82%!"));
+    }
+
+    #[test]
+    fn headings_name_the_plan() {
+        let mut cl = empty(Tool::Claude);
+        cl.plan = Some("max_5x".to_owned());
+        let mut cx = empty(Tool::Codex);
+        cx.plan = Some(" ".to_owned());
         let text = format_menu(
             Some(&cl),
             Some(&cx),
@@ -292,22 +290,42 @@ mod tests {
             true,
             false,
             None,
+            Utc::now(),
+            &[],
+        );
+        assert_eq!(text.sections[0].heading, "Claude · Max 5x");
+        assert_eq!(text.sections[1].heading, "Codex");
+        assert_eq!(
+            plan_label(Tool::Codex, Some("team")).as_deref(),
+            Some("team")
+        );
+    }
+
+    #[test]
+    fn long_forecasts_read_in_hours() {
+        assert_eq!(duration(7), "7 分钟");
+        assert_eq!(duration(120), "2 小时");
+        assert_eq!(duration(219), "3 小时 39 分");
+    }
+
+    #[test]
+    fn an_estimated_percent_is_marked() {
+        let now = Utc::now();
+        let mut cl = empty(Tool::Claude);
+        cl.five_hour.used_percent = Some(63.4);
+        cl.five_hour.estimated_percent = Some(2.4);
+        cl.five_hour.resets_at = Some(now + chrono::Duration::hours(2));
+        let text = format_menu(
+            Some(&cl),
+            None,
+            true,
+            false,
+            false,
+            None,
             now,
-            MenuBarQuota::Both,
+            &[Tool::Claude],
         );
-        assert!(
-            text.lines[0].contains(&format!(
-                "{} 重置",
-                (now + chrono::Duration::minutes(30))
-                    .with_timezone(&Local)
-                    .format("%H:%M")
-            )) || text.lines[0].contains("/")
-        );
-        assert!(text.tooltip.contains("Claude 82%!"));
-        assert!(text
-            .lines
-            .iter()
-            .any(|line| line == "Codex   5 小时 0% · 已重置"));
+        assert_eq!(badges(&text), [(Tool::Claude, "≈63%")]);
     }
 
     #[test]
@@ -327,10 +345,9 @@ mod tests {
             false,
             None,
             now,
-            MenuBarQuota::Claude,
+            &[Tool::Claude],
         );
-        assert_eq!(text.title.as_deref(), Some("0%"));
-        assert_eq!(text.lines[0], "Claude   5 小时 0% · 已重置");
-        assert!(!text.lines.iter().any(|line| line.contains("达到上限")));
+        assert_eq!(badges(&text), [(Tool::Claude, "0%")]);
+        assert_eq!(text.sections[0].rows, ["5 小时额度已重置"]);
     }
 }

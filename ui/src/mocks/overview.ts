@@ -33,12 +33,14 @@ export function mockOverview(variant: 'default' | 'empty' | 'nodata'): Overview 
     session('Claude', 'sample-claude-04', '写对账单元测试', 'ClaudeDesktop', 'claude-opus-5-5', tokens(180000, 350000, 230000), .48, 5.8),
     session('Codex', 'sample-codex-05', '检查命令行参数', 'CodexCli', 'gpt-6-sol', tokens(43000, 121000, 42000), .58, 2.1),
   ]
-  const quota = (used: number, reset: number, forecast: Overview['tools'][number]['five_hour']['forecast'], origin: Overview['tools'][number]['five_hour']['origin']) => ({
+  const quota = (used: number, reset: number, forecast: Overview['tools'][number]['five_hour']['forecast'], origin: Overview['tools'][number]['five_hour']['origin'], estimated: number | null = null) => ({
     used_percent: noQuota || empty ? null : used,
     resets_at: noQuota || empty ? null : at(reset),
     origin: noQuota || empty ? null : origin,
     forecast: noQuota || empty ? 'Unknown' as const : forecast,
     window_passed: false,
+    as_of: noQuota || empty ? null : at(-3),
+    estimated_percent: noQuota || empty ? null : estimated,
   })
   const claudePoints = series([0, 4, 6, 9, 11, 13, 17, 21, 24, 28], -300, 30)
   const codexPoints = series([0, 2, 4, 8, 11, 16, 21], -300, 45)
@@ -47,7 +49,7 @@ export function mockOverview(variant: 'default' | 'empty' | 'nodata'): Overview 
     generated_at: now.toISOString(),
     tools: [
       { tool: 'Claude', plan: 'pro', subscription_usd: 20,
-        five_hour: quota(28, 16, 'Ample', 'Statusline'), weekly: quota(6, 6 * 24 * 60, 'Unknown', 'Statusline') },
+        five_hour: quota(28, 16, 'Ample', 'Official', 2.4), weekly: quota(6, 6 * 24 * 60, 'Unknown', 'Official', 0.3) },
       { tool: 'Codex', plan: 'plus', subscription_usd: 20,
         five_hour: quota(21, 52, { WillHit: { at: at(100) } }, 'Log'), weekly: quota(3, 7 * 24 * 60, 'Unknown', 'Log') },
     ],
