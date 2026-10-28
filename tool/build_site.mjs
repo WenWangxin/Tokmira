@@ -18,8 +18,8 @@ import { GUIDE_PAGES, guideLinks, renderGuide } from '../site/guides.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = resolve(process.argv[2] || join(root, 'target/site'));
-const repo = process.env.SITE_REPOSITORY || 'WenWangxin/token-audit';
-const siteUrl = (process.env.SITE_URL || 'https://wenwangxin.github.io/token-audit/').replace(/\/*$/, '/');
+const repo = process.env.SITE_REPOSITORY || 'WenWangxin/Tokmira';
+const siteUrl = (process.env.SITE_URL || 'https://wenwangxin.github.io/Tokmira/').replace(/\/*$/, '/');
 const repoUrl = `https://github.com/${repo}`;
 
 /** Published packages and the platform tab each belongs to, in display order. */

@@ -51,7 +51,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIwQ0ZEMzAzQzcxNTU0Q0IKUldUTFZCWEhBOVBQc0NueFVVUmdHRm5hQlQ3TmZybDU1Q2NaY3ZNbmsrTjYrMEk4WEF3Rng5dVgK",
-      "endpoints": ["https://github.com/WenWangxin/token-audit/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/WenWangxin/Tokmira/releases/latest/download/latest.json"],
       "windows": { "installMode": "passive" },
       "requireSignedVersion": true
     }

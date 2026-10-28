@@ -8,12 +8,12 @@ See where your Claude Code and Codex quota goes, and why it runs out. Your data 
 
 [简体中文](README.md) · **English**
 
-[![Release](https://img.shields.io/github/v/release/WenWangxin/token-audit?style=flat-square&label=release)](https://github.com/WenWangxin/token-audit/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/WenWangxin/token-audit/total?style=flat-square&logo=github)](https://github.com/WenWangxin/token-audit/releases)
+[![Release](https://img.shields.io/github/v/release/WenWangxin/Tokmira?style=flat-square&label=release)](https://github.com/WenWangxin/Tokmira/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/WenWangxin/Tokmira/total?style=flat-square&logo=github)](https://github.com/WenWangxin/Tokmira/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square)](#download)
 
-[Website](https://wenwangxin.github.io/token-audit/en/) · [Download](#download) · [Changelog](https://github.com/WenWangxin/token-audit/releases) · [Privacy](#privacy) · [Build from source](#build-from-source)
+[Website](https://wenwangxin.github.io/Tokmira/en/) · [Download](#download) · [Changelog](https://github.com/WenWangxin/Tokmira/releases) · [Privacy](#privacy) · [Build from source](#build-from-source)
 
 </div>
 
@@ -41,7 +41,7 @@ See where your Claude Code and Codex quota goes, and why it runs out. Your data 
 
 ## Download
 
-Get the latest version from [GitHub Releases](https://github.com/WenWangxin/token-audit/releases/latest).
+Get the latest version from [GitHub Releases](https://github.com/WenWangxin/Tokmira/releases/latest).
 
 | Platform | Package | Notes |
 | --- | --- | --- |
@@ -49,7 +49,7 @@ Get the latest version from [GitHub Releases](https://github.com/WenWangxin/toke
 | Windows 10 / 11 (x64) | `tokmira-<version>-windows-amd64-setup.exe` | Most PCs |
 | Windows 10 / 11 (ARM64) | `tokmira-<version>-windows-arm64-setup.exe` | Snapdragon and other ARM laptops |
 
-Version 1.3.0 introduces the Tokmira name and the `tokmira-` package prefix; v1.2.0 and earlier packages use `token-audit-`. Repository and update URLs retain their original addresses. The `token-audit` CLI command, existing data and settings remain compatible.
+Version 1.3.0 introduces the Tokmira name and the `tokmira-` package prefix; v1.2.0 and earlier packages use `token-audit-`. The repository is now `WenWangxin/Tokmira`; GitHub redirects the former repository address. The `token-audit` CLI command, existing data and settings remain compatible.
 
 The packages are not code-signed or notarized yet:
 
@@ -96,8 +96,8 @@ Every command supports `--json`. Run `token-audit` without arguments for the ful
 You need [Rust](https://rustup.rs/) stable, [Node.js](https://nodejs.org/) 22 and [pnpm](https://pnpm.io/).
 
 ```bash
-git clone https://github.com/WenWangxin/token-audit.git
-cd token-audit
+git clone https://github.com/WenWangxin/Tokmira.git
+cd Tokmira
 pnpm install
 cargo build -p token-audit-cli   # the development desktop app calls it
 pnpm tauri dev                   # start the desktop app
@@ -122,7 +122,7 @@ Prices and diagnosis thresholds live in [`config/`](config). Costs are estimates
 
 ## Feedback
 
-Please report bugs and ideas in [GitHub Issues](https://github.com/WenWangxin/token-audit/issues). If you find it useful, a star is the easiest way to support it.
+Please report bugs and ideas in [GitHub Issues](https://github.com/WenWangxin/Tokmira/issues). If you find it useful, a star is the easiest way to support it.
 
 ## License
 

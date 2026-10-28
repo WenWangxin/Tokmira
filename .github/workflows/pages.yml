@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.repository == 'WenWangxin/token-audit'
+    if: github.repository == 'WenWangxin/Tokmira'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

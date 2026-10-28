@@ -19,13 +19,14 @@ mod tests {
         assert_eq!(config["bundle"]["externalBin"][0], "binaries/token-audit");
         assert_eq!(
             config["plugins"]["updater"]["endpoints"][0],
-            "https://github.com/WenWangxin/token-audit/releases/latest/download/latest.json"
+            "https://github.com/WenWangxin/Tokmira/releases/latest/download/latest.json"
         );
         assert_eq!(config["plugins"]["updater"]["requireSignedVersion"], true);
         assert_eq!(
             config["bundle"]["windows"]["nsis"]["template"],
             "windows/installer.nsi"
         );
+        // The old repository URL redirects to Tokmira for released updater clients.
         // Windows must detect the old installation before choosing an install path.
         let installer = include_str!("../windows/installer.nsi");
         let package: serde_json::Value =

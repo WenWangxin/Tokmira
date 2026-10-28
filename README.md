@@ -8,12 +8,12 @@
 
 **简体中文** · [English](README_en.md)
 
-[![Release](https://img.shields.io/github/v/release/WenWangxin/token-audit?style=flat-square&label=release)](https://github.com/WenWangxin/token-audit/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/WenWangxin/token-audit/total?style=flat-square&logo=github)](https://github.com/WenWangxin/token-audit/releases)
+[![Release](https://img.shields.io/github/v/release/WenWangxin/Tokmira?style=flat-square&label=release)](https://github.com/WenWangxin/Tokmira/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/WenWangxin/Tokmira/total?style=flat-square&logo=github)](https://github.com/WenWangxin/Tokmira/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square)](#下载)
 
-[官网](https://wenwangxin.github.io/token-audit/) · [下载](#下载) · [更新日志](https://github.com/WenWangxin/token-audit/releases) · [隐私](#隐私) · [从源码构建](#从源码构建)
+[官网](https://wenwangxin.github.io/Tokmira/) · [下载](#下载) · [更新日志](https://github.com/WenWangxin/Tokmira/releases) · [隐私](#隐私) · [从源码构建](#从源码构建)
 
 </div>
 
@@ -41,7 +41,7 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/WenWangxin/token-audit/releases/latest) 下载最新版本。
+从 [GitHub Releases](https://github.com/WenWangxin/Tokmira/releases/latest) 下载最新版本。
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
@@ -49,7 +49,7 @@
 | Windows 10 / 11（x64） | `tokmira-<版本>-windows-amd64-setup.exe` | 大多数电脑选这个 |
 | Windows 10 / 11（ARM64） | `tokmira-<版本>-windows-arm64-setup.exe` | 骁龙等 ARM 架构笔记本 |
 
-v1.3.0 起正式更名为 Tokmira，安装包使用 `tokmira-` 前缀；v1.2.0 及更早版本仍使用 `token-audit-`。仓库地址与更新入口保留原地址，命令行仍用 `token-audit`，已有数据和配置沿用。
+v1.3.0 起正式更名为 Tokmira，安装包使用 `tokmira-` 前缀；v1.2.0 及更早版本仍使用 `token-audit-`。仓库现为 `WenWangxin/Tokmira`，原仓库地址由 GitHub 跳转；命令行仍用 `token-audit`，已有数据和配置沿用。
 
 安装包目前没有系统代码签名，也没有经过公证：
 
@@ -96,8 +96,8 @@ token-audit quota codex               # 通过 Codex 本地接口读取官方额
 需要 [Rust](https://rustup.rs/) stable、[Node.js](https://nodejs.org/) 22 和 [pnpm](https://pnpm.io/)。
 
 ```bash
-git clone https://github.com/WenWangxin/token-audit.git
-cd token-audit
+git clone https://github.com/WenWangxin/Tokmira.git
+cd Tokmira
 pnpm install
 cargo build -p token-audit-cli   # 开发版桌面程序会调用它
 pnpm tauri dev                   # 启动桌面应用
@@ -122,7 +122,7 @@ pnpm -C ui test
 
 ## 反馈
 
-Bug 和功能建议请提交到 [GitHub Issues](https://github.com/WenWangxin/token-audit/issues)。觉得有用的话，点一个 Star 是最简单的支持方式。
+Bug 和功能建议请提交到 [GitHub Issues](https://github.com/WenWangxin/Tokmira/issues)。觉得有用的话，点一个 Star 是最简单的支持方式。
 
 ## 许可证
 
