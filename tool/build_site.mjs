@@ -259,6 +259,8 @@ function render(lang, data) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escape(t.title)}</title>
   <meta name="description" content="${escape(t.description)}">
+  <meta name="google-site-verification" content="0ffw6JqwWNVPYhtNVF7zFx32Qv9TGC2RQ79tnhEMn1c">
+  <meta name="msvalidate.01" content="78F3F454DD693D0BC6140179E3384C85">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f6f9">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#131316">
