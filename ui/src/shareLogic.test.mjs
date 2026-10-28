@@ -86,7 +86,7 @@ test('tool labels use the plan only when it has a price', () => {
 test('markdown follows the toggles and never invents a path', () => {
   const data = summary()
   const markdown = shareMarkdown(data, defaultShareOptions())
-  assert.match(markdown, /^# token-audit · 10 月用量报告/)
+  assert.match(markdown, /^# Tokmira · 10 月用量报告/)
   assert.match(markdown, /两份订阅共 \$40，折合 API 费用：\$187\.40/)
   assert.match(markdown, /Claude Pro：\$121\.80/)
   assert.match(markdown, /ChatGPT Plus · Codex：\$65\.60/)
@@ -109,7 +109,7 @@ test('markdown follows the toggles and never invents a path', () => {
     topProject: true,
   })
   assert.match(emptyProject, /消耗最高的项目：暂无/)
-  assert.equal(shareTitle(data), 'token-audit · 10 月用量报告')
+  assert.equal(shareTitle(data), 'Tokmira · 10 月用量报告')
   assert.equal(formatPercent(null), '—')
   assert.equal(projectLine({ name: '这是一个很长的项目目录名称用于截断', estimated_cost_usd: 1 }, 8), '消耗最高的项目：这是一个很长的… · $1.00')
 })
@@ -122,8 +122,8 @@ test('bar segments use cost share and export names are dated', () => {
   assert.equal(segments[1].width, 216)
   assert.deepEqual(costBarSegments([tool('Codex', 'plus', 20, 3)], 616), [{ tool: 'Codex', width: 616 }])
   assert.deepEqual(costBarSegments([tool('Claude', 'pro', 20, 0)], 616), [])
-  assert.equal(exportFileName(summary(), 'png'), 'token-audit-2026-10.png')
-  assert.equal(exportFileName(summary({ month: 1 }), 'md'), 'token-audit-2026-01.md')
+  assert.equal(exportFileName(summary(), 'png'), 'tokmira-2026-10.png')
+  assert.equal(exportFileName(summary({ month: 1 }), 'md'), 'tokmira-2026-01.md')
   const uri = svgDataUri('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>')
   assert.equal(uri.startsWith('data:image/svg+xml'), true)
   assert.equal(uri.includes('http://') || uri.includes('https://'), false)

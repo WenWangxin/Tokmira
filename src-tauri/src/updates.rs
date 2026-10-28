@@ -193,13 +193,13 @@ fn announce(app: &AppHandle, data_dir: &Path, found: &UpdateInfo) {
             app,
             &token_audit_core::tr!(
                 lang,
-                "token-audit {} 可以更新了",
-                "token-audit {} is available",
+                "Tokmira {} 可以更新了",
+                "Tokmira {} is available",
                 found.version
             ),
             lang.pick(
-                "打开 token-audit，在“设置 → 关于与更新”中查看更新说明并安装。",
-                "Open token-audit and go to Settings → About & updates to review and install it.",
+                "打开 Tokmira，在“设置 → 关于与更新”中查看更新说明并安装。",
+                "Open Tokmira and go to Settings → About & updates to review and install it.",
             ),
         );
     }

@@ -220,7 +220,7 @@ pub fn format_menu(
         .filter(|(tool, _, _)| shown.contains(tool))
         .filter_map(|(tool, overview, on)| current(*overview, *on).map(|value| (*tool, value)))
         .collect();
-    let mut tooltip_parts = vec!["token-audit".to_owned()];
+    let mut tooltip_parts = vec![crate::identity::DISPLAY_NAME.to_owned()];
     for (tool, overview, on) in &tools {
         if let Some(value) = current(*overview, *on) {
             tooltip_parts.push(format!("{} {value}", tool_name(*tool)));

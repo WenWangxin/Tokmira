@@ -94,11 +94,17 @@ input {
   width: 28px;
   height: 28px;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 23.4375%;
   background: var(--primary);
   color: var(--on-primary);
   pointer-events: none;
   transition: opacity 100ms ease;
+}
+
+.brand-icon img {
+  display: block;
+  width: 87.5%;
+  height: 87.5%;
 }
 
 .brand-copy {

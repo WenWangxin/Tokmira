@@ -332,6 +332,7 @@ async function developmentOverview(): Promise<Overview> {
   const { mockOverview } = await import('./mocks/overview')
   const variant = new URLSearchParams(window.location.search).get('mock')
   if (variant === 'empty' || variant === 'nodata') return mockOverview(variant)
+  if (variant === 'demo') return mockOverview('default')
   const files = import.meta.glob<{ default: Overview }>('../.local/overview.json')
   const local = files['../.local/overview.json']
   return local ? (await local()).default : mockOverview('default')

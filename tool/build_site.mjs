@@ -50,7 +50,7 @@ async function github(path) {
   const response = await fetch(`https://api.github.com/${path}`, {
     headers: {
       accept: 'application/vnd.github+json',
-      'user-agent': 'token-audit-site-build',
+      'user-agent': 'tokmira-site-build',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
   });
@@ -95,7 +95,7 @@ function parseNotes(body) {
   let current = null;
   for (const raw of (body || '').split(/\r?\n/)) {
     const line = raw.trim();
-    if (!line || /^token-audit\b/i.test(line) || /^#+\s*token-audit\b/i.test(line)) continue;
+    if (!line || /^(?:token-audit|Tokmira)\b/i.test(line) || /^#+\s*(?:token-audit|Tokmira)\b/i.test(line)) continue;
     const heading = line.replace(/^#+\s*/, '').match(/^(.+?)[：:]$/);
     if (heading) {
       const match = HEADINGS.find(([pattern]) => pattern.test(heading[1].trim()));
@@ -238,7 +238,7 @@ function render(lang, data) {
   const structured = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
-    name: 'token-audit',
+    name: 'Tokmira',
     url: pageUrl,
     description: t.description,
     inLanguage: t.htmlLang,
@@ -297,7 +297,7 @@ function render(lang, data) {
   <a class="skip" href="#download">${escape(t.skip)}</a>
   <header class="top">
     <div class="wrap top-row">
-      <a class="brand" href="./"><img src="${base}icon.svg" width="26" height="26" alt=""><span>token-audit</span></a>
+      <a class="brand" href="./"><img src="${base}icon.svg" width="26" height="26" alt=""><span>Tokmira</span></a>
       <nav class="nav" aria-label="${escape(t.navDownload)}">
         <a href="#download">${escape(t.navDownload)}</a>
         <a href="#guides">${escape(t.navGuides)}</a>
@@ -319,10 +319,11 @@ function render(lang, data) {
         ${heroCards(t)}
         ${version ? `<a class="release-pill" href="#changelog"><span class="pulse" aria-hidden="true"></span>${escape(t.released(version))}${ICONS.chevron}</a>` : ''}
         <h1>
-          <span class="name">token-audit</span>
+          <span class="name">Tokmira</span>
           <span class="line">${escape(t.heroBefore)} <span class="reel" data-tool="0"><span class="reel-text">${escape(t.client.tools[0])}</span></span> <span class="after">${escape(t.heroAfter)}</span></span>
         </h1>
         <p class="lede">${escape(t.heroLede)}</p>
+        ${version && !packages.some((pkg) => pkg.asset.name.startsWith('tokmira-')) ? `<p class="meta">${escape(t.legacyBrandNotice(version))}</p>` : ''}
         <div class="cta-row">
           <a class="cta" id="cta" href="#download">${ICONS.download}<span><b id="cta-title">${escape(t.client.cta.other)}</b><small id="cta-sub">${version ? `v${escape(version)}` : escape(t.client.ctaFallback)}</small></span></a>
           <a class="quiet" href="#download">${escape(t.other)}</a>
@@ -333,7 +334,7 @@ function render(lang, data) {
           <div class="titlebar" aria-hidden="true"><i></i><i></i><i></i></div>
           <picture>
             <source media="(prefers-color-scheme: dark)" srcset="${base}preview-dark.png">
-            <img class="shot" src="${base}preview.png" data-light="${base}preview.png" data-dark="${base}preview-dark.png" width="2880" height="1800" alt="${escape(t.previewAlt)}" decoding="async">
+            <img class="shot" src="${base}preview.png" data-light="${base}preview.png" data-dark="${base}preview-dark.png" width="1280" height="720" alt="${escape(t.previewAlt)}" decoding="async">
           </picture>
         </div>
         <div class="menubar" aria-hidden="true">
@@ -412,7 +413,7 @@ function render(lang, data) {
 
   <footer class="foot">
     <div class="wrap foot-row">
-      <div class="foot-brand"><img src="${base}icon.svg" width="22" height="22" alt=""><div><b>token-audit</b><small>${escape(t.footer)}</small></div></div>
+      <div class="foot-brand"><img src="${base}icon.svg" width="22" height="22" alt=""><div><b>Tokmira</b><small>${escape(t.footer)}</small></div></div>
       <nav class="foot-links" aria-label="GitHub">
         <a href="${repoUrl}">GitHub</a>
         <a href="${repoUrl}/releases">Releases</a>

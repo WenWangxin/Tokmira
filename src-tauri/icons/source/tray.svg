@@ -1,8 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- macOS menu bar template: the app logo's Lucide gauge alone, black on transparent.
-       macOS tints it for light/dark menu bars; drawn at 18pt, so 36px covers @2x. -->
-  <g fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="m12 14 4-4"/>
-    <path d="M3.34 19a10 10 0 1 1 17.32 0"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="16 16 96 96">
+<!-- Monochrome mirror-M, cropped to a square with balanced vertical padding; macOS applies the tint. -->
+<path d="M24 104C19.582 104 16 100.418 16 96V32C16 24.873 24.617 21.304 29.657 26.343L60 56.686V80L36 56V96C36 100.418 32.418 104 28 104H24Z" fill="#000000"/>
+<path d="M104 104C108.418 104 112 100.418 112 96V32C112 24.873 103.383 21.304 98.343 26.343L68 56.686V80L92 56V96C92 100.418 95.582 104 100 104H104Z" fill="#000000"/>
 </svg>

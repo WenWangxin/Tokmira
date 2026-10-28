@@ -20,6 +20,7 @@ let checkedLinks = 0;
 for (const path of paths) {
   const html = htmlAt(path);
   const url = new URL(path, siteUrl);
+  assert.match(html, /<title>[^<]*Tokmira[^<]*<\/title>/, `${path}: current product brand`);
   assert.equal(canonical(html), url.href);
   assert.equal([...html.matchAll(/<h1(?:\s|>)/g)].length, 1, `${path}: exactly one page heading`);
   assert.match(html, /<meta name="description" content="[^\"]+"/);

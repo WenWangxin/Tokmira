@@ -45,7 +45,7 @@ printf '%s\n' '{"id":3,"result":{"summary":{"lifetimeTokens":1000},"dailyUsageBu
         assert!(text.contains("套餐"));
         assert!(text.contains("30.0%"));
         assert!(text.contains("每周已用"));
-        assert!(text.contains("token-audit 不读取你的令牌"));
+        assert!(text.contains("Tokmira 不读取你的令牌"));
 
         let json = Command::new(executable)
             .args(["quota", "codex", "--codex"])

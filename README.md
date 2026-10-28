@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="src-tauri/icons/128x128@2x.png" alt="token-audit" width="88">
+<img src="src-tauri/icons/128x128@2x.png" alt="Tokmira" width="88">
 
-# token-audit
+# Tokmira
 
 看清 Claude Code 和 Codex 的额度用在了哪里，以及为什么用得快。数据只留在本机。
 
@@ -20,11 +20,11 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="snapshots/preview-dark.png">
-    <img alt="token-audit 仪表盘：Claude 与 Codex 的 5 小时和每周额度、今日用量、额度走势和省额度建议" src="snapshots/preview.png" width="92%">
+    <img alt="Tokmira 仪表盘：Claude 与 Codex 的 5 小时和每周额度、今日用量、额度走势和省额度建议" src="snapshots/preview.png" width="92%">
   </picture>
 </p>
 
-> 截图使用的是内置的演示数据。
+> 原名 token-audit，现更名为 Tokmira。截图使用内置演示数据。
 
 ## 功能
 
@@ -45,9 +45,11 @@
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
-| macOS | `token-audit-<版本>-macos-universal.dmg` | Apple 芯片与 Intel 通用 |
-| Windows 10 / 11（x64） | `token-audit-<版本>-windows-amd64-setup.exe` | 大多数电脑选这个 |
-| Windows 10 / 11（ARM64） | `token-audit-<版本>-windows-arm64-setup.exe` | 骁龙等 ARM 架构笔记本 |
+| macOS | `tokmira-<版本>-macos-universal.dmg` | Apple 芯片与 Intel 通用 |
+| Windows 10 / 11（x64） | `tokmira-<版本>-windows-amd64-setup.exe` | 大多数电脑选这个 |
+| Windows 10 / 11（ARM64） | `tokmira-<版本>-windows-arm64-setup.exe` | 骁龙等 ARM 架构笔记本 |
+
+v1.3.0 起正式更名为 Tokmira，安装包使用 `tokmira-` 前缀；v1.2.0 及更早版本仍使用 `token-audit-`。仓库地址与更新入口保留原地址，命令行仍用 `token-audit`，已有数据和配置沿用。
 
 安装包目前没有系统代码签名，也没有经过公证：
 
@@ -58,7 +60,7 @@
 
 ## 隐私
 
-token-audit 靠信任才有用，所以有三条不会改的原则：
+Tokmira 靠信任才有用，所以有三条不会改的原则：
 
 1. **默认数据不出本机。** 用量分析只取本机日志里的用量与事件元数据，不上传对话内容。主动开启 Claude 官方额度查询时，登录令牌才会在内存中短暂使用，并且只发送给 Anthropic。
 2. **核心逻辑开源。** 统计、归属和诊断的算法都在这个仓库里，可以自己复现结论。
@@ -67,7 +69,7 @@ token-audit 靠信任才有用，所以有三条不会改的原则：
 官方额度查询和检查更新需要你主动开启或操作：
 
 - **Claude 官方额度查询**：读取本机 Claude 的登录令牌，只发往 Anthropic，令牌只在内存里使用，不保存、不刷新。
-- **Codex 官方额度查询**：由本机 Codex 接口使用已登录账号向 OpenAI 查询；token-audit 不读取登录令牌，本机日志分析可独立使用。
+- **Codex 官方额度查询**：由本机 Codex 接口使用已登录账号向 OpenAI 查询；Tokmira 不读取登录令牌，本机日志分析可独立使用。
 - **检查更新**：只从这个仓库的 GitHub Releases 下载更新清单和安装包，不附带版本号、设备信息或任何使用数据。
 
 可选的 Claude Code 记录器（状态栏和 hooks）只记录额度百分比和提示时间，不记录提示内容。安装前会列出要改动的配置，并完整备份原文件；卸载时恢复原样。
@@ -78,7 +80,7 @@ token-audit 靠信任才有用，所以有三条不会改的原则：
 2. Codex 的额度直接来自它的本地日志，不需要额外设置。
 3. Claude 的精确额度二选一：在设置里开启「Claude 官方额度查询」，或者安装状态栏记录器（只适用于命令行版 Claude Code）。都不想开的话，也可以在设置里手动校准。
 
-**命令行版**随安装包一起分发：macOS 在 `token-audit.app/Contents/MacOS/token-audit`，Windows 在安装目录下的 `token-audit.exe`。常用命令：
+**命令行版**随安装包一起分发：macOS 在 `Tokmira.app/Contents/MacOS/token-audit`，Windows 在安装目录下的 `token-audit.exe`。常用命令：
 
 ```bash
 token-audit scan --since 2026-10-01   # 汇总本机 Claude Code 与 Codex 的用量
@@ -124,4 +126,4 @@ Bug 和功能建议请提交到 [GitHub Issues](https://github.com/WenWangxin/to
 
 ## 许可证
 
-token-audit 以 [MIT 协议](LICENSE)发布。
+Tokmira 以 [MIT 协议](LICENSE)发布。

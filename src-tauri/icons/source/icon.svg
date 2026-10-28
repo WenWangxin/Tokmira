@@ -1,9 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Figma v2/Sidebar Logo (20:28): 28px tile, 8px radius, 17px Lucide gauge with a 2px stroke.
-       Scaled onto the macOS icon grid: 824px tile inset 100px, so radius 824*8/28 and glyph 824*17/28. -->
-  <rect x="100" y="100" width="824" height="824" rx="235.43" fill="#5b8cff"/>
-  <g transform="translate(262 262) scale(20.8333)" fill="none" stroke="#fff" stroke-width="2.8235" stroke-linecap="round" stroke-linejoin="round">
-    <path d="m12 14 4-4"/>
-    <path d="M3.34 19a10 10 0 1 1 17.32 0"/>
+  <!-- Tokmira Figma 57:1447; preserve the desktop icon grid with a 100px inset. -->
+  <g transform="translate(100 100) scale(6.4375)">
+<rect width="128" height="128" rx="30" fill="#2F6AE0"/>
+<path d="M29 98.9999C25.1342 98.9999 22 95.8656 22 91.9999V35.9999C22 29.7638 29.5399 26.6409 33.9499 31.05L60.5 57.6001V77.9999L39.5 56.9999V91.9999C39.5 95.8656 36.3658 98.9999 32.5 98.9999H29Z" fill="white"/>
+<path d="M99 98.9999C102.866 98.9999 106 95.8656 106 91.9999V35.9999C106 29.7638 98.4601 26.6409 94.0501 31.05L67.5 57.6001V77.9999L88.5 56.9999V91.9999C88.5 95.8656 91.6342 98.9999 95.5 98.9999H99Z" fill="white"/>
   </g>
 </svg>

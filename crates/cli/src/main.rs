@@ -546,7 +546,7 @@ fn print_codex_quota(quota: &CodexQuota) {
     } else {
         println!("最近 7 天官方 token 数    未提供");
     }
-    println!("\n数据来自 Codex 官方本地接口（codex app-server），由 Codex 用你已登录的账号向 OpenAI 查询；token-audit 不读取你的令牌");
+    println!("\n数据来自 Codex 官方本地接口（codex app-server），由 Codex 用你已登录的账号向 OpenAI 查询；Tokmira 不读取你的令牌");
 }
 
 fn run_quota(args: impl Iterator<Item = OsString>) -> Result<(), String> {

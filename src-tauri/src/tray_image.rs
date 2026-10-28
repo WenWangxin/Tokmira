@@ -1,4 +1,4 @@
-//! The macOS menu bar item drawn as one template image: the app's gauge, then each shown
+//! The macOS menu bar item drawn as one template image: the app's mirror-M, then each shown
 //! tool's logo and 5-hour percent. Two tools stack in two rows. macOS tints template
 //! images for light and dark menu bars, so everything is black with alpha.
 
@@ -16,7 +16,7 @@ use token_audit_core::model::Tool;
 /// tray-icon shows the image 18pt tall; drawing at 2x keeps it sharp on Retina.
 const HEIGHT: f64 = 18.0;
 const SCALE: f64 = 2.0;
-const GAUGE: &[u8] = include_bytes!("../icons/tray-template.png");
+const BRAND_MARK: &[u8] = include_bytes!("../icons/tray-template.png");
 
 fn logo(tool: Tool) -> &'static [u8] {
     match tool {
@@ -55,7 +55,7 @@ fn image(bytes: &[u8]) -> Option<objc2::rc::Retained<NSImage>> {
 }
 
 /// RGBA pixels with their width and height, or `None` for an empty selection, which
-/// keeps the plain gauge icon.
+/// keeps the plain brand icon.
 pub fn render(badges: &[(Tool, String)]) -> Option<(Vec<u8>, u32, u32)> {
     if badges.is_empty() {
         return None;
@@ -94,8 +94,8 @@ pub fn render(badges: &[(Tool, String)]) -> Option<(Vec<u8>, u32, u32)> {
     NSGraphicsContext::saveGraphicsState_class();
     NSGraphicsContext::setCurrentContext(Some(&context));
     context.setImageInterpolation(NSImageInterpolation::High);
-    if let Some(gauge) = image(GAUGE) {
-        gauge.drawInRect(NSRect::new(
+    if let Some(brand_mark) = image(BRAND_MARK) {
+        brand_mark.drawInRect(NSRect::new(
             NSPoint::new(0.0, 0.0),
             NSSize::new(HEIGHT, HEIGHT),
         ));

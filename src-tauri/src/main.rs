@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod identity;
 mod login_item;
 mod notifications;
 mod quota_follow;
@@ -75,7 +76,7 @@ fn current_lang(data_dir: &std::path::Path) -> Lang {
 
 fn desktop_lang() -> Lang {
     dirs::data_dir()
-        .map(|dir| current_lang(&dir.join("token-audit")))
+        .map(|dir| current_lang(&dir.join(identity::LEGACY_NAME)))
         .unwrap_or_else(|| {
             token_audit_core::settings::Language::System.resolve(sys_locale::get_locale)
         })
@@ -1130,7 +1131,7 @@ fn main() -> tauri::Result<()> {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
-                .app_name("token-audit")
+                .app_name(identity::LEGACY_NAME)
                 .build(),
         )
         .setup(|app| {
@@ -1148,7 +1149,7 @@ fn main() -> tauri::Result<()> {
                         "Could not locate the application data folder",
                     ))
                 })?
-                .join("token-audit");
+                .join(identity::LEGACY_NAME);
             let scans = Arc::new(Mutex::new(ScanCache::default()));
             let alerts = spawn_alerts(
                 app.handle().clone(),

@@ -33,7 +33,7 @@ test('English quota units, source rows, setup summary and share export', () => {
       recognized_subscriptions: 1, subscription_total_usd: 20, subscription_value_multiple: 9.37,
       unrecognized_tools: [], cache_hit_rate: 0.68, requests: 1284, top_project: null,
     }, defaultShareOptions())
-    assert.match(markdown, /^# token-audit · October usage report/m)
+    assert.match(markdown, /^# Tokmira · October usage report/m)
     assert.match(markdown, /Requests this month: 1,284/)
     assert.match(markdown, /data never left this device/)
     assert.doesNotMatch(markdown, /[一-龥]/)

@@ -181,7 +181,7 @@ pub fn run(args: impl Iterator<Item = OsString>) -> Result<(), String> {
         keychain_timeout: args.keychain_timeout,
     };
     let quota = query_claude_quota(&SystemSecretStore::default(), &home, &UreqTransport, &options).map_err(|error| match error {
-        ClaudeQuotaError::TokenExpired { source } => format!("{}的登录令牌已过期。请打开一次 Claude 桌面版 / 在终端运行一次 claude，让它自己刷新后再试；token-audit 不会自行刷新令牌。", source.label()),
+        ClaudeQuotaError::TokenExpired { source } => format!("{}的登录令牌已过期。请打开一次 Claude 桌面版 / 在终端运行一次 claude，让它自己刷新后再试；Tokmira 不会自行刷新令牌。", source.label()),
         other => other.to_string(),
     })?;
     if args.json {

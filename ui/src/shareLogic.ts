@@ -131,7 +131,7 @@ export function projectLine(project: ShareProject | null, maxName?: number): str
 }
 
 export function exportFileName(summary: Pick<ShareSummary, 'year' | 'month'>, extension: 'png' | 'md'): string {
-  return `token-audit-${summary.year}-${String(summary.month).padStart(2, '0')}.${extension}`
+  return `tokmira-${summary.year}-${String(summary.month).padStart(2, '0')}.${extension}`
 }
 
 /** Widths sum to `width`. Tools with no positive cost are omitted. */

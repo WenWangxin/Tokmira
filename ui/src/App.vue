@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ChartColumn, Gauge, LayoutDashboard, Lightbulb, List, PanelLeftClose, PanelLeftOpen, Settings2, ShieldCheck } from 'lucide-vue-next'
+import { ChartColumn, LayoutDashboard, Lightbulb, List, PanelLeftClose, PanelLeftOpen, Settings2, ShieldCheck } from 'lucide-vue-next'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { listen } from '@tauri-apps/api/event'
 import { getSettings, refreshQuotas, type AdviceAlert, type UpdateInfo } from './api'
 import OnboardingDialog from './components/OnboardingDialog.vue'
 import ToastHost from './components/ToastHost.vue'
+import tokmiraLogo from './assets/logos/tokmira.svg'
 import { showToast } from './toast'
 import { previewOnboardingForced } from './onboardingLogic'
 import { onboardingOpen, openOnboarding } from './onboardingState'
@@ -161,10 +162,9 @@ onUnmounted(() => { cancelAnimationFrame(indicatorFrame); stopRealtime?.(); void
     <aside class="sidebar" :aria-label="t.app.mainNav">
       <div v-if="macOverlay" class="sidebar-titlebar" data-tauri-drag-region />
       <div class="brand" data-tauri-drag-region>
-        <!-- Figma Logo (20:28): 17px gauge with a 2px stroke, so 2 * 24 / 17 in Lucide's 24-unit box. -->
-        <span class="brand-icon" aria-hidden="true"><Gauge :size="17" :stroke-width="2 * 24 / 17" /></span>
+        <span class="brand-icon" aria-hidden="true"><img :src="tokmiraLogo" alt="" width="24.5" height="24.5" /></span>
         <div class="brand-copy">
-          <strong class="brand-name">token-audit</strong>
+          <strong class="brand-name">Tokmira</strong>
           <span class="brand-subtitle">{{ t.app.brandSubtitle }}</span>
         </div>
         <button type="button" class="sidebar-toggle" :aria-label="expanded ? t.app.collapse : t.app.expand" :aria-expanded="expanded" @click="toggleSidebar">

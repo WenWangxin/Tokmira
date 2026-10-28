@@ -34,7 +34,7 @@ fn fixed_label(id: &str, lang: Lang) -> &'static str {
         "menubar-off" => ("只显示图标", "Icon only"),
         "menubar-menu" => ("菜单栏显示", "Quota in menu bar"),
         "settings" => ("设置…", "Settings…"),
-        "quit" => ("退出 token-audit", "Quit token-audit"),
+        "quit" => ("退出 Tokmira", "Quit Tokmira"),
         _ => unreachable!("unknown fixed menu item: {id}"),
     };
     lang.pick(zh, en)
@@ -164,7 +164,7 @@ fn indent() -> Image<'static> {
 }
 
 #[cfg(target_os = "macos")]
-fn gauge() -> tauri::Result<Image<'static>> {
+fn brand_icon() -> tauri::Result<Image<'static>> {
     Image::from_bytes(include_bytes!("../icons/tray-template.png"))
 }
 
@@ -308,11 +308,11 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     )?;
     let quit = MenuItem::with_id(app, "quit", fixed_label("quit", lang), true, None::<&str>)?;
     let tray = TrayIconBuilder::with_id("main")
-        .tooltip("token-audit")
+        .tooltip(crate::identity::DISPLAY_NAME)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| menu_event(app, event.id().as_ref()));
     #[cfg(target_os = "macos")]
-    let tray = tray.icon(gauge()?).icon_as_template(true);
+    let tray = tray.icon(brand_icon()?).icon_as_template(true);
     #[cfg(not(target_os = "macos"))]
     let tray = {
         use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -497,7 +497,7 @@ fn update(app: &AppHandle) {
         let _ = menu.update.set_text(token_audit_core::tr!(
             lang,
             "新版本 {} 可以更新…",
-            "token-audit {} is available…",
+            "Tokmira {} is available…",
             update.version
         ));
     }
@@ -530,7 +530,7 @@ fn update(app: &AppHandle) {
                 // hands the result to it.
                 let icon = match crate::tray_image::render(&text.badges) {
                     Some((rgba, width, height)) => Ok(Image::new_owned(rgba, width, height)),
-                    None => gauge(),
+                    None => brand_icon(),
                 };
                 if let Ok(icon) = icon {
                     if menu
@@ -606,13 +606,13 @@ pub fn hide_main(window: &tauri::Window, data_dir: &Path) {
     let body = token_audit_core::tr!(
         lang,
         "关闭窗口后会继续检测并发送省额度提醒。可以从{}的图标重新打开或退出。",
-        "token-audit keeps checking and sending savings alerts after you close the window. Use the icon in the {} to reopen or quit.",
+        "Tokmira keeps checking and sending savings alerts after you close the window. Use the icon in the {} to reopen or quit.",
         place
     );
     crate::notifications::post_later(
         window.app_handle(),
         Duration::from_millis(1500),
-        lang.pick("token-audit 仍在运行", "token-audit is still running")
+        lang.pick("Tokmira 仍在运行", "Tokmira is still running")
             .to_owned(),
         body,
     );

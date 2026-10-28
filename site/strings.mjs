@@ -5,7 +5,7 @@ export const STRINGS = {
   zh: {
     htmlLang: 'zh-CN',
     ogLocale: 'zh_CN',
-    title: 'token-audit：看清 Claude Code 和 Codex 的额度用在哪里',
+    title: 'Tokmira：看清 Claude Code 和 Codex 的额度用在哪里',
     description:
       '免费开源的桌面工具。读取本机 Claude Code 与 Codex 日志，显示 5 小时和每周额度、额度去向和省额度建议，数据只留在本机。支持 macOS 和 Windows。',
     skip: '跳到下载',
@@ -20,6 +20,7 @@ export const STRINGS = {
     themeToggle: '切换浅色或深色',
     stars: '在 GitHub 上的 Star 数',
     released: (version) => `v${version} 已发布 · 查看更新`,
+    legacyBrandNotice: (version) => `Tokmira 是 token-audit 的新名称。当前 v${version} 下载包仍显示旧名称，新品牌将在下一版应用中提供。`,
     heroBefore: '看清',
     heroAfter: '的额度',
     heroLede:
@@ -34,7 +35,7 @@ export const STRINGS = {
       promptMeta: '一次提示 +4.2% 额度 · 18 万 token',
       weeklyTitle: 'Codex · 本周额度',
     },
-    previewAlt: 'token-audit 仪表盘：Claude 与 Codex 的额度、今日用量、额度走势和省额度建议',
+    previewAlt: 'Tokmira 仪表盘：Claude 与 Codex 的额度、今日用量、额度走势和省额度建议',
     facts: [
       ['额度现状', '5 小时与每周额度、重置时间和触顶预测。'],
       ['额度去哪了', '按会话、项目、模型和单次提示拆分消耗。'],
@@ -78,7 +79,7 @@ export const STRINGS = {
     networkTitle: '只在你开启时联网',
     network: [
       ['Claude 官方额度查询', '只发往 Anthropic。登录令牌只在内存里使用，不保存、不刷新。'],
-      ['Codex 官方额度查询', '开启后由本机 Codex 接口使用已登录账号向 OpenAI 查询；token-audit 不读取登录令牌。日志分析可独立使用。'],
+      ['Codex 官方额度查询', '开启后由本机 Codex 接口使用已登录账号向 OpenAI 查询；Tokmira 不读取登录令牌。日志分析可独立使用。'],
       ['检查更新', '只从 GitHub Releases 下载更新清单和安装包，不附带版本号、设备信息或使用数据。'],
     ],
     siteNote: '这个网站本身也不使用统计脚本、cookie 或外部字体。',
@@ -102,7 +103,7 @@ export const STRINGS = {
   en: {
     htmlLang: 'en',
     ogLocale: 'en_US',
-    title: 'token-audit: see where your Claude Code and Codex quota goes',
+    title: 'Tokmira: see where your Claude Code and Codex quota goes',
     description:
       'A free, open-source desktop app. It reads your local Claude Code and Codex logs to show your 5-hour and weekly quota, where it went and how to save it. Your data stays on your machine. For macOS and Windows.',
     skip: 'Skip to downloads',
@@ -117,6 +118,7 @@ export const STRINGS = {
     themeToggle: 'Switch between light and dark',
     stars: 'Stars on GitHub',
     released: (version) => `v${version} is out · See what's new`,
+    legacyBrandNotice: (version) => `Tokmira is the new name of token-audit. Current v${version} downloads still use the previous name; the new branding will ship in the next app release.`,
     heroBefore: 'Know your',
     heroAfter: 'quota',
     heroLede:
@@ -131,7 +133,7 @@ export const STRINGS = {
       promptMeta: 'One prompt +4.2% quota · 180K tokens',
       weeklyTitle: 'Codex · this week',
     },
-    previewAlt: 'token-audit dashboard: Claude and Codex quota, today\'s usage, the quota trend and saving advice',
+    previewAlt: 'Tokmira dashboard: Claude and Codex quota, today\'s usage, the quota trend and saving advice',
     facts: [
       ['Quota at a glance', '5-hour and weekly quota, reset times and a forecast.'],
       ['Where it went', 'Usage by session, project, model and single prompt.'],
@@ -177,7 +179,7 @@ export const STRINGS = {
     networkTitle: 'Online only when you turn it on',
     network: [
       ['Claude official quota query', 'Sent only to Anthropic. Your login token is kept in memory only, never saved or refreshed.'],
-      ['Codex official quota query', 'When enabled, the local Codex interface queries OpenAI using your signed-in account. token-audit does not read the login token. Local log analysis works independently.'],
+      ['Codex official quota query', 'When enabled, the local Codex interface queries OpenAI using your signed-in account. Tokmira does not read the login token. Local log analysis works independently.'],
       ['Checking for updates', 'Downloads the manifest and packages only from GitHub Releases, without your version, device details or usage data.'],
     ],
     siteNote: 'This website uses no analytics, cookies or external fonts either.',
@@ -193,7 +195,7 @@ export const STRINGS = {
       date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }),
     client: {
       tools: ['Claude Code', 'Codex'],
-      cta: { macos: 'Download for macOS', windows: 'Download for Windows', other: 'Get token-audit' },
+      cta: { macos: 'Download for macOS', windows: 'Download for Windows', other: 'Get Tokmira' },
       ctaFallback: 'GitHub Releases',
       copied: 'Copied',
       copySha: 'Copy SHA-256',
@@ -204,6 +206,22 @@ export const STRINGS = {
 // Release bodies are authored in Chinese on GitHub. Keep the English page complete by
 // translating each published release here before the Pages workflow deploys it.
 export const EN_RELEASE_NOTES = {
+  'v1.3.0': `Tokmira 1.3.0
+
+Improvements:
+- token-audit is now Tokmira. The interface, tray menu, notifications, share cards, website and documentation use the new name.
+- A new mirror-M logo appears in the sidebar, macOS menu bar and application icons, with light and dark theme support.
+- The Windows installer retains the existing installation identity and detects previous installations. Shortcuts are renamed only after confirming that they belong to this application.
+- Chinese and English website content and demo screenshots are updated. New package names use the tokmira- prefix.
+
+Notes:
+- Existing data directories, application identifiers, the token-audit CLI command and update URLs remain compatible.
+- Usage counting, quota attribution and diagnosis calculations are unchanged. Local analysis does not upload conversation content.
+
+Installation:
+- The packages are not code signed or notarized.
+- macOS: Right-click the app in Finder and choose Open, or allow it in System Settings → Privacy & Security.
+- Windows: If SmartScreen appears, choose More info → Run anyway.`,
   'v1.2.0': `token-audit 1.2.0
 
 New:
