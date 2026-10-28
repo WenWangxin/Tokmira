@@ -13,7 +13,7 @@ See where your Claude Code and Codex quota goes, and why it runs out. Your data 
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square)](#download)
 
-[Download](#download) · [Changelog](https://github.com/WenWangxin/token-audit/releases) · [Privacy](#privacy) · [Build from source](#build-from-source)
+[Website](https://wenwangxin.github.io/token-audit/en/) · [Download](#download) · [Changelog](https://github.com/WenWangxin/token-audit/releases) · [Privacy](#privacy) · [Build from source](#build-from-source)
 
 </div>
 

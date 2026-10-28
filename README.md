@@ -13,7 +13,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square)](#下载)
 
-[下载](#下载) · [更新日志](https://github.com/WenWangxin/token-audit/releases) · [隐私](#隐私) · [从源码构建](#从源码构建)
+[官网](https://wenwangxin.github.io/token-audit/) · [下载](#下载) · [更新日志](https://github.com/WenWangxin/token-audit/releases) · [隐私](#隐私) · [从源码构建](#从源码构建)
 
 </div>
 
