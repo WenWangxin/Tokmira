@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::attribution::EventAttribution;
 use crate::environment::EnvironmentSnapshot;
 use crate::forecast::{forecast, Forecast, WindowKind};
+use crate::i18n::Lang;
 use crate::model::{CompactEvent, PromptEvent, TokenCounts, Tool, UsageEvent};
 use crate::pricing::{ModelPrices, Pricing};
 use crate::quota_store::{normalize_claude_plan, ClaudeSnapshot, CodexSnapshot};
@@ -481,6 +482,20 @@ pub fn format_tokens(value: u64) -> String {
     }
 }
 
+/// Token units for diagnostics and notifications in the selected language.
+pub fn format_tokens_lang(value: u64, lang: Lang) -> String {
+    if lang == Lang::Zh {
+        return format_tokens(value);
+    }
+    for (threshold, suffix) in [(1_000_000_000, "B"), (1_000_000, "M"), (10_000, "K")] {
+        if value >= threshold {
+            let divisor = if suffix == "K" { 1_000 } else { threshold };
+            return format!("{:.1}{suffix}", value as f64 / divisor as f64);
+        }
+    }
+    value.to_string()
+}
+
 /// Linear-interpolated percentile of a sorted slice (`q` in 0..=1).
 pub fn percentile(sorted: &[f64], q: f64) -> Option<f64> {
     if sorted.is_empty() {
@@ -620,6 +635,7 @@ fn cache_rebuild<'a>(
     main: &BTreeMap<&'a str, Vec<&'a EventAttribution>>,
     since: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let config = &input.config.cache_rebuild;
     let mut hits = Vec::new();
@@ -676,27 +692,42 @@ fn cache_rebuild<'a>(
     let high = percentile(&gaps, 0.75).unwrap_or(0.0).round();
     let total: u64 = hits.iter().map(|hit| hit.overhead_tokens).sum();
     let description = match tool {
-        Tool::Claude if hour_ttl * 2 >= hits.len() as u64 => "订阅版缓存的有效期为 1 小时。间隔超过 1 小时再继续对话时，之前的上下文需要整段重新写入缓存。建议在过期前继续，或开启新会话并只保留必要上下文。",
-        Tool::Claude => "缓存的有效期为 5 分钟。间隔超过 5 分钟再继续对话时，之前的上下文需要整段重新写入缓存。连续的工作尽量一次完成，长时间离开后可开启新会话并只保留必要上下文。",
-        Tool::Codex => "Codex 未公开缓存时长。间隔较久再继续对话时，之前的上下文通常需要重新计入输入。长时间离开后可开启新会话并只保留必要上下文。",
+        Tool::Claude if hour_ttl * 2 >= hits.len() as u64 => lang.pick("订阅版缓存的有效期为 1 小时。间隔超过 1 小时再继续对话时，之前的上下文需要整段重新写入缓存。建议在过期前继续，或开启新会话并只保留必要上下文。", "The recorded cache lifetime is 1 hour. Resuming after more than an hour rewrites the previous context. Continue before it expires, or start a new session with only the context you need."),
+        Tool::Claude => lang.pick("缓存的有效期为 5 分钟。间隔超过 5 分钟再继续对话时，之前的上下文需要整段重新写入缓存。连续的工作尽量一次完成，长时间离开后可开启新会话并只保留必要上下文。", "The recorded cache lifetime is 5 minutes. Resuming after more than 5 minutes rewrites the previous context. Keep related work together, or start a new session with only the context you need after a long break."),
+        Tool::Codex => lang.pick("Codex 未公开缓存时长。间隔较久再继续对话时，之前的上下文通常需要重新计入输入。长时间离开后可开启新会话并只保留必要上下文。", "Codex does not publish a cache lifetime. After a long break, previous context may count as uncached input again. Consider a new session with only the context you need."),
     };
     Some(RuleOutput {
         id: "cache_rebuild",
-        title: "缓存过期后的整段重建".to_owned(),
+        title: lang
+            .pick("缓存过期后的整段重建", "Context rebuilt after cache expiry")
+            .to_owned(),
         facts: vec![
-            format!("发生 {} 次", hits.len()),
-            format!("累计重建 {} token", format_tokens(total)),
+            crate::tr!(lang, "发生 {} 次", "{} occurrences", hits.len()),
+            crate::tr!(
+                lang,
+                "累计重建 {} token",
+                "{} tokens rebuilt in total",
+                format_tokens_lang(total, lang)
+            ),
             if low == high {
-                format!("间隔约 {low:.0} 分钟")
+                crate::tr!(
+                    lang,
+                    "间隔约 {low:.0} 分钟",
+                    "About {low:.0} minutes between requests"
+                )
             } else {
-                format!("间隔多为 {low:.0}–{high:.0} 分钟")
+                crate::tr!(
+                    lang,
+                    "间隔多为 {low:.0}–{high:.0} 分钟",
+                    "Most gaps were {low:.0}–{high:.0} minutes"
+                )
             },
         ],
         description: description.to_owned(),
         occurrences: hits.len() as u64,
         hits,
         avoidable: true,
-        tag: "缓存已过期",
+        tag: lang.pick("缓存已过期", "Cache expired"),
     })
 }
 
@@ -704,6 +735,7 @@ fn session_startup<'a>(
     main: &BTreeMap<&'a str, Vec<&'a EventAttribution>>,
     since: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let mut hits = Vec::new();
     for events in main.values() {
@@ -738,11 +770,18 @@ fn session_startup<'a>(
     starts.sort_by(f64::total_cmp);
     let baseline = percentile(&starts, 0.1).unwrap_or(0.0) as u64;
     let mut facts = vec![
-        format!("{} 个新会话", hits.len()),
-        format!("单次约 {} token", format_tokens(average)),
-        format!(
+        crate::tr!(lang, "{} 个新会话", "{} new sessions", hits.len()),
+        crate::tr!(
+            lang,
+            "单次约 {} token",
+            "About {} tokens per session",
+            format_tokens_lang(average, lang)
+        ),
+        crate::tr!(
+            lang,
             "比最低一批（p10）多约 {} token",
-            format_tokens(average.saturating_sub(baseline))
+            "About {} tokens above the lowest group (p10)",
+            format_tokens_lang(average.saturating_sub(baseline), lang)
         ),
     ];
     if let Some(environment) = input.environment {
@@ -761,14 +800,21 @@ fn session_startup<'a>(
                 &environment.codex_project_instruction_bytes,
             ),
         };
-        let shown = names.iter().take(5).cloned().collect::<Vec<_>>().join("、");
-        facts.push(format!(
+        let shown = names
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(lang.pick("、", ", "));
+        facts.push(crate::tr!(
+            lang,
             "本机配置的全局 MCP 服务器 {} 个{}",
+            "{} globally configured MCP servers{}",
             names.len(),
             if shown.is_empty() {
                 String::new()
             } else {
-                format!("：{shown}")
+                crate::tr!(lang, "：{shown}", ": {shown}")
             }
         ));
         if let Some(project_names) = project_names {
@@ -779,11 +825,21 @@ fn session_startup<'a>(
                 .flat_map(|names| names.iter().map(String::as_str))
                 .collect();
             if !names.is_empty() {
-                facts.push(format!("项目级 MCP 服务器 {} 个", names.len()));
+                facts.push(crate::tr!(
+                    lang,
+                    "项目级 MCP 服务器 {} 个",
+                    "{} project MCP servers",
+                    names.len()
+                ));
             }
         }
         if tool == Tool::Claude && environment.claude_plugins > 0 {
-            facts.push(format!("启用 {} 个插件", environment.claude_plugins));
+            facts.push(crate::tr!(
+                lang,
+                "启用 {} 个插件",
+                "{} plugins enabled",
+                environment.claude_plugins
+            ));
         }
         let average_project_bytes = hits
             .iter()
@@ -798,33 +854,39 @@ fn session_startup<'a>(
             })
             .sum::<u64>()
             / hits.len() as u64;
-        facts.push(format!(
+        facts.push(crate::tr!(
+            lang,
             "说明文件约 {} token",
-            format_tokens(
+            "About {} tokens in instruction files",
+            format_tokens_lang(
                 global_bytes.saturating_add(average_project_bytes)
-                    / input.config.session_startup.bytes_per_token.max(1)
+                    / input.config.session_startup.bytes_per_token.max(1),
+                lang
             )
         ));
     }
     Some(RuleOutput {
         id: "session_startup",
-        title: "新会话的启动开销".to_owned(),
+        title: lang
+            .pick("新会话的启动开销", "New session startup overhead")
+            .to_owned(),
         facts,
         description: if input.environment.is_some() {
-            "每个新会话都会加载配置、工具定义和说明文件。这里只统计本机配置文件；桌面端或账号同步的插件与工具不在其中。可检查不常用的 MCP 服务器和插件，连续的小任务可以在同一会话完成。".to_owned()
+            lang.pick("每个新会话都会加载配置、工具定义和说明文件。这里只统计本机配置文件；桌面端或账号同步的插件与工具不在其中。可检查不常用的 MCP 服务器和插件，连续的小任务可以在同一会话完成。", "Each new session loads configuration, tool definitions and instruction files. Only local configuration is counted here; desktop or account-synced tools and plugins are excluded. Review unused MCP servers and plugins, and keep related small tasks in one session.").to_owned()
         } else {
-            "每个新会话都需要先把系统提示和工具定义写入缓存。频繁新开会话会反复支付这部分开销；连续的小任务可以在同一会话里完成。".to_owned()
+            lang.pick("每个新会话都需要先把系统提示和工具定义写入缓存。频繁新开会话会反复支付这部分开销；连续的小任务可以在同一会话里完成。", "Each new session first writes system instructions and tool definitions to the cache. Starting sessions repeatedly incurs this overhead again. Related small tasks can share a session.").to_owned()
         },
         occurrences: hits.len() as u64,
         hits,
         avoidable: false,
-        tag: "新会话启动开销",
+        tag: lang.pick("新会话启动开销", "Session startup"),
     })
 }
 
 fn long_context<'a>(
     main: &[&'a EventAttribution],
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let config = &input.config.long_context;
     let mut hits = Vec::new();
@@ -858,17 +920,17 @@ fn long_context<'a>(
     }
     Some(RuleOutput {
         id: "long_context",
-        title: "上下文过长".to_owned(),
+        title: lang.pick("上下文过长", "Long context").to_owned(),
         facts: vec![
-            format!("{} 次请求", hits.len()),
-            format!("平均上下文 {}", format_tokens(sum / hits.len() as u64)),
-            format!("最长 {}", format_tokens(longest)),
+            crate::tr!(lang, "{} 次请求", "{} requests", hits.len()),
+            crate::tr!(lang, "平均上下文 {}", "Average context: {}", format_tokens_lang(sum / hits.len() as u64, lang)),
+            crate::tr!(lang, "最长 {}", "Largest context: {}", format_tokens_lang(longest, lang)),
         ],
-        description: "上下文越长，每次请求都要重新读取越多缓存。任务阶段完成后可执行 /compact，或开启新会话。".to_owned(),
+        description: lang.pick("上下文越长，每次请求都要重新读取越多缓存。任务阶段完成后可执行 /compact，或开启新会话。", "Longer context means more cached tokens are read on every request. After a task stage, use /compact or start a new session.").to_owned(),
         occurrences: hits.len() as u64,
         hits,
         avoidable: true,
-        tag: "上下文过长",
+        tag: lang.pick("上下文过长", "Long context"),
     })
 }
 
@@ -900,6 +962,7 @@ fn expensive_light_task<'a>(
     prompts: &[PromptEvent],
     since: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let config = &input.config.light_task;
     let (patterns, alternative) = match tool {
@@ -986,28 +1049,38 @@ fn expensive_light_task<'a>(
     };
     let alternative_name = alternative_family(alternative);
     let description = match tool {
-        Tool::Claude => format!("重命名、补注释、运行测试等短小任务，换用 {alternative_name} 效果相近、额度消耗更低。Claude Code 中可执行 /model sonnet。"),
-        Tool::Codex => format!("短小任务换用 {alternative_name} 效果相近、额度消耗更低。可在 Codex 中切换模型后再执行这类任务。"),
+        Tool::Claude => crate::tr!(lang, "重命名、补注释、运行测试等短小任务，换用 {alternative_name} 效果相近、额度消耗更低。Claude Code 中可执行 /model sonnet。", "For short tasks such as renaming, adding comments or running tests, consider {alternative_name} to reduce usage. In Claude Code, use /model sonnet and check that the result meets your needs."),
+        Tool::Codex => crate::tr!(lang, "短小任务换用 {alternative_name} 效果相近、额度消耗更低。可在 Codex 中切换模型后再执行这类任务。", "Consider {alternative_name} for short tasks to reduce usage. Switch models in Codex before starting the task, and check that the result meets your needs."),
     };
     Some(RuleOutput {
         id: "expensive_light_task",
-        title: format!("轻量任务使用了 {family}"),
+        title: crate::tr!(lang, "轻量任务使用了 {family}", "Light tasks used {family}"),
         facts: vec![
-            format!("{prompts_hit} 次提示"),
-            format!("平均输出 {} token", output_sum / prompts_hit),
-            format!("改用 {alternative_name} 约省 {share:.0}%"),
+            crate::tr!(lang, "{prompts_hit} 次提示", "{prompts_hit} prompts"),
+            crate::tr!(
+                lang,
+                "平均输出 {} token",
+                "Average output: {} tokens",
+                output_sum / prompts_hit
+            ),
+            crate::tr!(
+                lang,
+                "改用 {alternative_name} 约省 {share:.0}%",
+                "About {share:.0}% lower API-equivalent cost with {alternative_name}"
+            ),
         ],
         description,
         occurrences: prompts_hit,
         hits,
         avoidable: true,
-        tag: "轻量任务用了高价模型",
+        tag: lang.pick("轻量任务用了高价模型", "Expensive model for a light task"),
     })
 }
 
 fn many_subagents<'a>(
     period: &[&'a EventAttribution],
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let config = &input.config.subagents;
     let mut by_session: BTreeMap<&str, Vec<&EventAttribution>> = BTreeMap::new();
@@ -1057,22 +1130,21 @@ fn many_subagents<'a>(
     }
     Some(RuleOutput {
         id: "many_subagents",
-        title: "子代理使用过多".to_owned(),
+        title: lang.pick("子代理使用过多", "Heavy subagent usage").to_owned(),
         facts: vec![
-            format!("{sessions} 个会话"),
-            format!("子代理请求 {} 次", hits.len()),
-            format!(
-                "平均每次读入 {} token",
-                format_tokens(context_sum / hits.len() as u64)
+            crate::tr!(lang, "{sessions} 个会话", "{sessions} sessions"),
+            crate::tr!(lang, "子代理请求 {} 次", "{} subagent requests", hits.len()),
+            crate::tr!(lang, "平均每次读入 {} token", "Average input per request: {} tokens",
+                format_tokens_lang(context_sum / hits.len() as u64, lang)
             ),
         ],
         description:
-            "每个子代理都会重新读取一遍上下文。目标明确的小范围搜索，直接在主对话中完成更为经济。"
+            lang.pick("每个子代理都会重新读取一遍上下文。目标明确的小范围搜索，直接在主对话中完成更为经济。", "Each subagent reads its own context. A small, well-defined search may use less quota in the main session.")
                 .to_owned(),
         occurrences: hits.len() as u64,
         hits,
         avoidable: false,
-        tag: "子代理",
+        tag: lang.pick("子代理", "Subagents"),
     })
 }
 
@@ -1256,6 +1328,7 @@ fn tool_rules<'a>(
     input: &AdviceInput<'a>,
     since: DateTime<Utc>,
     now: DateTime<Utc>,
+    lang: Lang,
 ) -> Option<ToolRules<'a>> {
     let mut all: Vec<&EventAttribution> = input
         .events
@@ -1268,7 +1341,7 @@ fn tool_rules<'a>(
         .copied()
         .filter(|item| item.event.timestamp >= since && item.event.timestamp <= now)
         .collect();
-    let quota_rules = rules_m12::quota_rules(tool, input);
+    let quota_rules = rules_m12::quota_rules(tool, input, lang);
     if period.is_empty() && quota_rules.is_empty() {
         return None;
     }
@@ -1285,11 +1358,11 @@ fn tool_rules<'a>(
         .collect();
     let sessions = sessions_in_order(&main_all);
     let mut rules: Vec<RuleOutput<'a>> = [
-        cache_rebuild(tool, &sessions, since, input),
-        session_startup(&sessions, since, input),
-        long_context(&main_period, input),
-        expensive_light_task(tool, &main_period, input.prompts, since, input),
-        many_subagents(&period, input),
+        cache_rebuild(tool, &sessions, since, input, lang),
+        session_startup(&sessions, since, input, lang),
+        long_context(&main_period, input, lang),
+        expensive_light_task(tool, &main_period, input.prompts, since, input, lang),
+        many_subagents(&period, input, lang),
     ]
     .into_iter()
     .flatten()
@@ -1302,12 +1375,23 @@ fn tool_rules<'a>(
         since,
         now,
         input,
+        lang,
     ));
     rules.extend(quota_rules);
     Some(ToolRules { period, rules })
 }
 
 pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc>) -> AdviceReport {
+    build_advice_lang(input, period_days, now, Lang::Zh)
+}
+
+/// Localized presentation of the same diagnosis; amounts, keys and rule decisions are unchanged.
+pub fn build_advice_lang(
+    input: &AdviceInput<'_>,
+    period_days: u32,
+    now: DateTime<Utc>,
+    lang: Lang,
+) -> AdviceReport {
     let since = now - Duration::days(i64::from(period_days));
     let mut tools = Vec::new();
     let mut tags = BTreeMap::new();
@@ -1319,7 +1403,7 @@ pub fn build_advice(input: &AdviceInput<'_>, period_days: u32, now: DateTime<Utc
         .map(|(index, event)| (std::ptr::from_ref(event), index))
         .collect();
     for tool in [Tool::Claude, Tool::Codex] {
-        let Some(ToolRules { period, rules }) = tool_rules(tool, input, since, now) else {
+        let Some(ToolRules { period, rules }) = tool_rules(tool, input, since, now, lang) else {
             continue;
         };
         let has_quota = period.iter().any(|item| item.weekly_delta > 0.0);

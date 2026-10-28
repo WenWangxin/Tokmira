@@ -1,4 +1,34 @@
 import type { AdviceItem, AdviceReport, Tool } from '../api'
+import { locale } from '../i18n/index.ts'
+
+// Handwritten translations of the demo cases, not a second diagnosis engine.
+const english: Record<string, Pick<AdviceItem, 'title' | 'facts' | 'description'>> = {
+  cache_rebuild: {
+    title: 'Full cache rebuild after expiry',
+    facts: ['9 occurrences', '389K tokens rebuilt in total', 'Gaps mostly 62–95 minutes'],
+    description: 'After a gap longer than the recorded cache lifetime, the context needs to be written again. Consider continuing related work before expiry, or start a new session with only the context you need.',
+  },
+  expensive_light_task: {
+    title: 'Light tasks used Opus', facts: ['48 prompts', 'Average output: 310 tokens', 'Estimated cost reduction with Sonnet: 62%'],
+    description: 'For short tasks such as renaming, adding comments or running tests, consider Sonnet and check the result. In Claude Code, use /model sonnet.',
+  },
+  session_startup: {
+    title: 'New-session startup overhead', facts: ['21 new sessions', 'About 45K tokens per session'],
+    description: 'New sessions write system instructions and tool definitions into the cache. Related small tasks can share a session to avoid repeating that overhead.',
+  },
+  model_switch: { title: 'Model switches rebuilt the cache', facts: ['Synthetic preview only'], description: 'Switch between task phases, or start a new session.' },
+  context_spike: { title: 'A large amount of context at once', facts: ['Synthetic preview only'], description: 'Read only the relevant parts of large files and split large diffs.' },
+  runaway_prompt: { title: 'Too many turns from one prompt', facts: ['Synthetic preview only'], description: 'Define completion criteria before running the task.' },
+  expensive_subagent: { title: 'Subagents used an expensive model', facts: ['Synthetic preview only'], description: 'Consider Sonnet for simple subtasks.' },
+  fast_mode: { title: 'Fast mode was used', facts: ['Synthetic preview only'], description: 'Turn off /fast when the task is not urgent.' },
+  high_effort_light_task: { title: 'Light tasks used high reasoning effort', facts: ['Synthetic preview only'], description: 'Consider lower reasoning effort for light tasks.' },
+  frequent_compaction: { title: 'Frequent context compaction', facts: ['Synthetic preview only'], description: 'Consider a fresh session when a task phase is complete.' },
+  web_search: { title: 'Frequent web searches', facts: ['Synthetic preview only'], description: 'Check local documentation first when it can answer the question.' },
+  quota_rebalance: { title: "Use the other tool's available quota", facts: ['Synthetic preview only'], description: 'Move suitable tasks to the tool with more quota available.' },
+  plan_fit: { title: 'Check your plan fit', facts: ['Last 4 complete weeks: 35%, 42%, 39%, 31%', 'Estimated monthly fee reduction: $80'], description: 'Evaluate the last four complete weeks.' },
+  long_context: { title: 'Long context', facts: ['80 requests', 'Average context: 331K', 'Largest context: 480K'], description: 'Longer context means reading more cached tokens on each request. Consider /compact or a fresh session after completing a task phase.' },
+  heavy_reasoning: { title: 'High reasoning-token share', facts: ['3 matching prompts', '12K reasoning tokens'], description: 'Consider lower reasoning effort via /model for simpler tasks.' },
+}
 
 // Synthetic browser preview only; no user logs or credentials.
 const item = (tool: Tool, id: string, partial: Partial<AdviceItem>): AdviceItem => ({
@@ -74,6 +104,12 @@ export function mockAdvice(periodDays: number, variant: string | null): AdviceRe
       overhead_cost_usd: 0.09, avoidable_cost_usd: 0.09,
     }),
   ]
+  if (locale.value === 'en') {
+    for (const advice of [...claude, ...codex]) {
+      Object.assign(advice, english[advice.id])
+      if (advice.link) advice.link.label = 'Understanding cache hits — demo link'
+    }
+  }
   const summary = (items: AdviceItem[]) => ({
     avoidable_weekly_pct: noQuota ? null : items.reduce((sum, advice) => sum + (advice.avoidable_weekly_pct ?? 0), 0),
     avoidable_cost_usd: items.reduce((sum, advice) => sum + advice.avoidable_cost_usd, 0),

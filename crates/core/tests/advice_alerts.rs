@@ -3,6 +3,7 @@ use token_audit_core::advice::{
     AdviceAlert, AdviceConfig, AdviceInput, AlertTracker, QuotaAdviceState,
 };
 use token_audit_core::attribution::EventAttribution;
+use token_audit_core::i18n::Lang;
 use token_audit_core::model::{CompactEvent, PromptEvent, Source, TokenCounts, Tool, UsageEvent};
 use token_audit_core::pricing::Pricing;
 
@@ -75,6 +76,15 @@ impl Logs {
     }
 
     fn check(&self, tracker: &mut AlertTracker, minutes: i64) -> Option<AdviceAlert> {
+        self.check_lang(tracker, minutes, Lang::Zh)
+    }
+
+    fn check_lang(
+        &self,
+        tracker: &mut AlertTracker,
+        minutes: i64,
+        lang: Lang,
+    ) -> Option<AdviceAlert> {
         let pricing = Pricing::bundled().expect("bundled pricing");
         let config = AdviceConfig::bundled().expect("bundled advice config");
         let input = AdviceInput {
@@ -87,14 +97,30 @@ impl Logs {
             environment: None,
             quotas: &self.quotas,
         };
-        tracker.check(&input, at(minutes))
+        tracker.check_lang(&input, at(minutes), lang)
     }
 }
 
 fn m12_alert(logs: &Logs, minute: i64) -> Option<AdviceAlert> {
     let mut tracker = AlertTracker::default();
     Logs::new().check(&mut tracker, 0);
-    logs.check(&mut tracker, minute)
+    let zh = logs.check(&mut tracker, minute);
+    let mut english = AlertTracker::default();
+    Logs::new().check_lang(&mut english, 0, Lang::En);
+    let en = logs.check_lang(&mut english, minute, Lang::En);
+    assert_eq!(
+        zh.as_ref().map(|alert| (&alert.key, &alert.session_id)),
+        en.as_ref().map(|alert| (&alert.key, &alert.session_id))
+    );
+    if let Some(alert) = en {
+        assert!(
+            !format!("{}{}", alert.title, alert.body)
+                .chars()
+                .any(|c| ('\u{3400}'..='\u{9fff}').contains(&c)),
+            "untranslated alert: {alert:?}"
+        );
+    }
+    zh
 }
 
 #[test]
@@ -402,4 +428,24 @@ fn new_sessions_are_never_reported() {
         tokens(0, 30_000, 2_000),
     ));
     assert_eq!(logs.check(&mut tracker, 10), None);
+}
+
+#[test]
+fn language_switch_preserves_seen_alerts_and_uses_the_new_language() {
+    let mut logs = Logs::new();
+    let mut tracker = AlertTracker::default();
+    assert!(logs.check_lang(&mut tracker, 0, Lang::En).is_none());
+    long_session(&mut logs, "english", 1);
+    let alert = logs
+        .check_lang(&mut tracker, 2, Lang::En)
+        .expect("English alert");
+    assert_eq!(alert.title, "Claude Code · Long context");
+    assert!(alert.body.contains("400.0K tokens"));
+    assert!(logs.check_lang(&mut tracker, 20, Lang::Zh).is_none());
+    long_session(&mut logs, "chinese", 21);
+    let alert = logs
+        .check_lang(&mut tracker, 21, Lang::Zh)
+        .expect("Chinese alert");
+    assert_eq!(alert.title, "Claude Code · 上下文过长");
+    assert!(alert.body.contains("40.0 万 token"));
 }

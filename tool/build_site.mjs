@@ -1,5 +1,5 @@
-// Builds the website into a folder: the Chinese page at the root and the English one in
-// en/. Release data (versions, packages, notes, stars) is fetched here, at build time, so
+// Builds localized homepages and usage guides into a folder. Release data
+// (versions, packages, notes, stars) is fetched here, at build time, so
 // visitors' browsers never call the GitHub API. Without network access the page still
 // builds, with a link to GitHub Releases instead of the package list.
 //
@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { EN_RELEASE_NOTES, STRINGS } from '../site/strings.mjs';
+import { GUIDE_PAGES, guideLinks, renderGuide } from '../site/guides.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = resolve(process.argv[2] || join(root, 'target/site'));
@@ -280,18 +281,14 @@ function render(lang, data) {
   <link rel="stylesheet" href="${base}assets/style.css">
   <noscript><style>.tabs,.search,.theme{display:none}.panel[hidden],.panel-heading{display:block}</style></noscript>
   <script>
-    // Before the first paint: the saved theme, and the language page for visitors who
-    // never picked one (Chinese at the root, everyone else in en/).
+    // Apply the theme before the first paint. Language URLs remain stable; visitors
+    // can switch explicitly without being redirected away from a search result.
     (function () {
       var store = {};
       try { store = window.localStorage; } catch (e) {}
       var theme = store.getItem && store.getItem('site-theme');
       if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
       document.documentElement.classList.add('js');
-      var picked = store.getItem && store.getItem('site-lang');
-      var browserZh = /^zh\\b/i.test(navigator.language || '');
-      var wanted = picked || (browserZh ? 'zh' : 'en');
-      if (!/[?&]lang=/.test(location.search) && wanted !== '${lang}') location.replace('${otherHref}' + location.hash);
     })();
   </script>
   <script type="application/ld+json">${JSON.stringify(structured)}</script>
@@ -303,6 +300,7 @@ function render(lang, data) {
       <a class="brand" href="./"><img src="${base}icon.svg" width="26" height="26" alt=""><span>token-audit</span></a>
       <nav class="nav" aria-label="${escape(t.navDownload)}">
         <a href="#download">${escape(t.navDownload)}</a>
+        <a href="#guides">${escape(t.navGuides)}</a>
         <a href="#privacy">${escape(t.navPrivacy)}</a>
         <a href="#changelog">${escape(t.navChangelog)}</a>
       </nav>
@@ -386,10 +384,21 @@ function render(lang, data) {
       </div>
     </section>
 
-    <section class="section" id="changelog" aria-labelledby="changelog-title">
+    <section class="section" id="guides" aria-labelledby="guides-title">
       <div class="wrap split">
         <div class="side reveal">
           <p class="num"><i class="cap" aria-hidden="true"></i>03</p>
+          <h2 id="guides-title">${escape(t.guidesTitle)}</h2>
+          <p class="meta">${escape(t.guidesIntro)}</p>
+        </div>
+        <nav class="main guide-links reveal" aria-label="${escape(t.navGuides)}">${guideLinks(lang)}</nav>
+      </div>
+    </section>
+
+    <section class="section" id="changelog" aria-labelledby="changelog-title">
+      <div class="wrap split">
+        <div class="side reveal">
+          <p class="num"><i class="cap" aria-hidden="true"></i>04</p>
           <h2 id="changelog-title">${escape(t.changelogTitle)}</h2>
           ${data.releases.length ? `<p class="meta">${escape(t.changelogMeta(data.releases.length))}</p>
           <label class="search">${ICONS.search}<input id="search" type="search" placeholder="${escape(t.search)}" aria-label="${escape(t.search)}"><kbd>/</kbd></label>` : ''}
@@ -429,10 +438,14 @@ cpSync(join(root, 'src-tauri/icons/source/icon.svg'), join(out, 'icon.svg'));
 cpSync(join(root, 'src-tauri/icons/128x128@2x.png'), join(out, 'icon.png'));
 writeFileSync(join(out, 'index.html'), render('zh', data));
 writeFileSync(join(out, 'en/index.html'), render('en', data));
+for (const page of GUIDE_PAGES) {
+  mkdirSync(join(out, page.path), { recursive: true });
+  writeFileSync(join(out, page.path, 'index.html'), renderGuide(page, { siteUrl, repoUrl, strings: STRINGS[page.lang] }));
+}
 writeFileSync(join(out, '.nojekyll'), '');
 writeFileSync(
   join(out, 'sitemap.xml'),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${siteUrl}</loc></url>\n  <url><loc>${siteUrl}en/</loc></url>\n</urlset>\n`,
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${['', 'en/', ...GUIDE_PAGES.map((page) => page.path)].map((path) => `  <url><loc>${escape(`${siteUrl}${path}`)}</loc></url>`).join('\n')}\n</urlset>\n`,
 );
 writeFileSync(join(out, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${siteUrl}sitemap.xml\n`);
 console.log(`site built in ${out} (${data.releases.length} releases)`);

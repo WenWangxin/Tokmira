@@ -13,9 +13,10 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 
 use super::{
-    alternative_family, context_tokens, format_tokens, model_family, tool_key, tool_rules,
+    alternative_family, context_tokens, format_tokens_lang, model_family, tool_key, tool_rules,
     AdviceInput, Hit, RuleOutput,
 };
+use crate::i18n::Lang;
 use crate::model::{Tool, UsageEvent};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -61,7 +62,7 @@ struct Candidate {
 impl AlertTracker {
     /// Marks every problem currently in the logs as seen without reporting it.
     pub fn seed(&mut self, input: &AdviceInput<'_>, now: DateTime<Utc>) {
-        for candidate in candidates(input, now) {
+        for candidate in candidates(input, now, Lang::Zh) {
             self.seen.insert(candidate.id);
         }
         self.seeded = true;
@@ -69,11 +70,21 @@ impl AlertTracker {
 
     /// The reminder for problems that appeared since the last check, if one is due.
     pub fn check(&mut self, input: &AdviceInput<'_>, now: DateTime<Utc>) -> Option<AdviceAlert> {
+        self.check_lang(input, now, Lang::Zh)
+    }
+
+    /// Uses the active display language without resetting deduplication or cooldown.
+    pub fn check_lang(
+        &mut self,
+        input: &AdviceInput<'_>,
+        now: DateTime<Utc>,
+        lang: Lang,
+    ) -> Option<AdviceAlert> {
         if !self.seeded {
             self.seed(input, now);
             return None;
         }
-        let mut fresh: Vec<Candidate> = candidates(input, now)
+        let mut fresh: Vec<Candidate> = candidates(input, now, lang)
             .into_iter()
             .filter(|candidate| candidate.settled && !self.seen.contains(&candidate.id))
             .collect();
@@ -92,11 +103,11 @@ impl AlertTracker {
     }
 }
 
-fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>) -> Vec<Candidate> {
+fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>, lang: Lang) -> Vec<Candidate> {
     let since = now - Duration::hours(input.config.alerts.lookback_hours);
     let mut found = Vec::new();
     for tool in [Tool::Claude, Tool::Codex] {
-        let Some(rules) = tool_rules(tool, input, since, now) else {
+        let Some(rules) = tool_rules(tool, input, since, now, lang) else {
             continue;
         };
         for rule in &rules.rules {
@@ -117,14 +128,12 @@ fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>) -> Vec<Candidate> {
                         rank,
                         settled: true,
                         alert: alert(tool, &key, rule, event, match rule.id {
-                            "cache_rebuild" => cache_rebuild_body(input, hit),
-                            "model_switch" => format!(
-                                "切换模型后重写了 {} token。换模型可放在任务阶段之间，或开启新会话。",
-                                format_tokens(hit.overhead_tokens)
+                            "cache_rebuild" => cache_rebuild_body(input, hit, lang),
+                            "model_switch" => crate::tr!(lang, "切换模型后重写了 {} token。换模型可放在任务阶段之间，或开启新会话。", "Switching models rewrote {} tokens. Switch between task stages, or start a new session.",
+                                format_tokens_lang(hit.overhead_tokens, lang)
                             ),
-                            _ => format!(
-                                "这次约有 {} token 可以少写入。日志先截取相关段落，大文件只读相关部分。",
-                                format_tokens(hit.overhead_tokens)
+                            _ => crate::tr!(lang, "这次约有 {} token 可以少写入。日志先截取相关段落，大文件只读相关部分。", "About {} tokens could have been left out. Select relevant log sections and read only the parts of a file you need.",
+                                format_tokens_lang(hit.overhead_tokens, lang)
                             ),
                         }),
                     });
@@ -140,35 +149,33 @@ fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>) -> Vec<Candidate> {
             }
             for (session, hits) in by_session {
                 let (settled, body) = match rule.id {
-                    "long_context" => (true, long_context_body(&hits)),
-                    "expensive_light_task" => light_task(input, tool, session, &hits, now),
+                    "long_context" => (true, long_context_body(&hits, lang)),
+                    "expensive_light_task" => light_task(input, tool, session, &hits, now, lang),
                     "runaway_prompt" | "heavy_reasoning" | "high_effort_light_task" => {
                         let total: u64 = hits.iter().map(|hit| hit.overhead_tokens).sum();
                         let next = match rule.id {
-                            "runaway_prompt" => "下次先明确完成条件；反复修同一错误时及时打断。",
-                            "heavy_reasoning" => "简单任务可调低推理强度。",
-                            _ => "下次可调低推理强度。",
+                            "runaway_prompt" => lang.pick("下次先明确完成条件；反复修同一错误时及时打断。", "Set completion criteria first; interrupt if the same error is being fixed repeatedly."),
+                            "heavy_reasoning" => lang.pick("简单任务可调低推理强度。", "Reduce reasoning effort for simple tasks."),
+                            _ => lang.pick("下次可调低推理强度。", "Consider a lower reasoning effort next time."),
                         };
                         (
                             prompt_settled(input, tool, session, &hits, now),
-                            format!("本次涉及 {} token。{next}", format_tokens(total)),
+                            crate::tr!(lang, "本次涉及 {} token。{next}", "This involved {} tokens. {next}", format_tokens_lang(total, lang)),
                         )
                     }
                     "fast_mode" => (
                         true,
-                        format!(
-                            "快速模式涉及 {} token。不赶时间时可用 /fast 关闭。",
-                            format_tokens(hits.iter().map(|hit| hit.overhead_tokens).sum())
+                        crate::tr!(lang, "快速模式涉及 {} token。不赶时间时可用 /fast 关闭。", "Fast mode involved {} tokens. Turn it off with /fast when speed is not essential.",
+                            format_tokens_lang(hits.iter().map(|hit| hit.overhead_tokens).sum(), lang)
                         ),
                     ),
                     "expensive_subagent" => (
                         true,
-                        format!(
-                            "高价子代理涉及 {} token。简单子任务可选用较低价模型。",
-                            format_tokens(hits.iter().map(|hit| hit.overhead_tokens).sum())
+                        crate::tr!(lang, "高价子代理涉及 {} token。简单子任务可选用较低价模型。", "Expensive subagents used {} tokens. Consider a lower-cost model for simple subtasks.",
+                            format_tokens_lang(hits.iter().map(|hit| hit.overhead_tokens).sum(), lang)
                         ),
                     ),
-                    _ => (true, subagents_body(&hits)),
+                    _ => (true, subagents_body(&hits, lang)),
                 };
                 found.push(Candidate {
                     id: format!("{key}:{session}"),
@@ -246,19 +253,18 @@ fn alert(
     }
 }
 
-fn long_context_body(hits: &[&Hit<'_>]) -> String {
+fn long_context_body(hits: &[&Hit<'_>], lang: Lang) -> String {
     let longest = hits
         .iter()
         .map(|hit| context_tokens(&hit.item.event.tokens))
         .max()
         .unwrap_or(0);
-    format!(
-        "当前上下文 {} token，每次请求都要整段重读。告一段落后可执行 /compact，或开启新会话。",
-        format_tokens(longest)
+    crate::tr!(lang, "当前上下文 {} token，每次请求都要整段重读。告一段落后可执行 /compact，或开启新会话。", "The current context is {} tokens and is read again with each request. After a task stage, use /compact or start a new session.",
+        format_tokens_lang(longest, lang)
     )
 }
 
-fn cache_rebuild_body(input: &AdviceInput<'_>, hit: &Hit<'_>) -> String {
+fn cache_rebuild_body(input: &AdviceInput<'_>, hit: &Hit<'_>, lang: Lang) -> String {
     let event = &hit.item.event;
     let previous = input
         .events
@@ -273,11 +279,17 @@ fn cache_rebuild_body(input: &AdviceInput<'_>, hit: &Hit<'_>) -> String {
         .map(|other| other.timestamp)
         .max();
     let gap = previous
-        .map(|at| format!("隔了 {} 分钟才继续，", (event.timestamp - at).num_minutes()))
+        .map(|at| {
+            crate::tr!(
+                lang,
+                "隔了 {} 分钟才继续，",
+                "After a {}-minute break, ",
+                (event.timestamp - at).num_minutes()
+            )
+        })
         .unwrap_or_default();
-    format!(
-        "{gap}缓存已过期，上下文重新写入了 {} token。连续的工作尽量一次做完，离开较久后可开启新会话。",
-        format_tokens(hit.overhead_tokens)
+    crate::tr!(lang, "{gap}缓存已过期，上下文重新写入了 {} token。连续的工作尽量一次做完，离开较久后可开启新会话。", "{gap}the cache expired and {} context tokens were rewritten. Keep related work together, or start a new session after a long break.",
+        format_tokens_lang(hit.overhead_tokens, lang)
     )
 }
 
@@ -289,6 +301,7 @@ fn light_task(
     session: &str,
     hits: &[&Hit<'_>],
     now: DateTime<Utc>,
+    lang: Lang,
 ) -> (bool, String) {
     let prompts: Vec<DateTime<Utc>> = input
         .prompts
@@ -329,21 +342,31 @@ fn light_task(
         .map(|hit| model_family(&hit.item.event.model))
         .unwrap_or_default();
     let advice = match tool {
-        Tool::Claude => "这类任务先执行 /model sonnet 更省额度。".to_owned(),
-        Tool::Codex => format!(
+        Tool::Claude => lang
+            .pick(
+                "这类任务先执行 /model sonnet 更省额度。",
+                "Use /model sonnet first for this type of task to reduce usage.",
+            )
+            .to_owned(),
+        Tool::Codex => crate::tr!(
+            lang,
             "这类任务换用 {} 更省额度。",
+            "Consider {} for this type of task to reduce usage.",
             alternative_family(&input.config.light_task.codex_alternative)
         ),
     };
     (
         settled,
-        format!("刚才的短任务只输出了 {output} token，却用了 {family}。{advice}"),
+        crate::tr!(
+            lang,
+            "刚才的短任务只输出了 {output} token，却用了 {family}。{advice}",
+            "The short task produced only {output} output tokens using {family}. {advice}"
+        ),
     )
 }
 
-fn subagents_body(hits: &[&Hit<'_>]) -> String {
-    format!(
-        "已发起 {} 次子代理请求，每个子代理都要重读一遍上下文。目标明确的小范围搜索，直接在主对话里做更省。",
+fn subagents_body(hits: &[&Hit<'_>], lang: Lang) -> String {
+    crate::tr!(lang, "已发起 {} 次子代理请求，每个子代理都要重读一遍上下文。目标明确的小范围搜索，直接在主对话里做更省。", "There have been {} subagent requests, each reading its own context. Small, well-defined searches may use less quota in the main session.",
         hits.len()
     )
 }

@@ -3,10 +3,11 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Duration, Utc};
 
 use super::{
-    context_tokens, event_cost, format_tokens, rebuild_cost, rebuild_tokens, AdviceInput, Hit,
+    context_tokens, event_cost, format_tokens_lang, rebuild_cost, rebuild_tokens, AdviceInput, Hit,
     RuleOutput,
 };
 use crate::attribution::EventAttribution;
+use crate::i18n::Lang;
 use crate::model::{PromptEvent, Tool};
 
 type SessionMap<'a> = BTreeMap<&'a str, Vec<&'a EventAttribution>>;
@@ -58,6 +59,7 @@ fn model_switch<'a>(
     sessions: &SessionMap<'a>,
     since: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let config = &input.config.cache_rebuild;
     let mut hits = Vec::new();
@@ -127,16 +129,16 @@ fn model_switch<'a>(
     }
     Some(RuleOutput {
         id: "model_switch",
-        title: "中途换模型导致缓存重建".into(),
+        title: lang.pick("中途换模型导致缓存重建", "Cache rebuilt after a model switch").into(),
         facts: vec![
-            format!("发生 {} 次", hits.len()),
-            format!("累计重写 {} token", format_tokens(hits.iter().map(|hit| hit.overhead_tokens).sum())),
+            crate::tr!(lang, "发生 {} 次", "{} occurrences", hits.len()),
+            crate::tr!(lang, "累计重写 {} token", "{} tokens rewritten in total", format_tokens_lang(hits.iter().map(|hit| hit.overhead_tokens).sum(), lang)),
         ],
-        description: "同一会话中途换模型后，热缓存被重新写入。换模型可放在任务阶段之间，或换模型后开启新会话继续。".into(),
+        description: lang.pick("同一会话中途换模型后，热缓存被重新写入。换模型可放在任务阶段之间，或换模型后开启新会话继续。", "Switching models within a session rewrote a warm cache. Switch between task stages, or continue in a new session after switching.").into(),
         occurrences: hits.len() as u64,
         hits,
         avoidable: true,
-        tag: "换模型重建缓存",
+        tag: lang.pick("换模型重建缓存", "Model switch rebuilt cache"),
     })
 }
 
@@ -145,6 +147,7 @@ fn context_spike<'a>(
     sessions: &SessionMap<'a>,
     since: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let mut hits = Vec::new();
     let mut repeats = 0_u64;
@@ -210,17 +213,17 @@ fn context_spike<'a>(
     }
     Some(RuleOutput {
         id: "context_spike",
-        title: "一次塞入大量内容".into(),
+        title: lang.pick("一次塞入大量内容", "Large context added at once").into(),
         facts: vec![
-            format!("发生 {} 次", hits.len()),
-            format!("后续重复读取 {repeats} 次"),
-            format!("可缩减 {} token", format_tokens(hits.iter().map(|hit| hit.overhead_tokens).sum())),
+            crate::tr!(lang, "发生 {} 次", "{} occurrences", hits.len()),
+            crate::tr!(lang, "后续重复读取 {repeats} 次", "Read again in {repeats} later requests"),
+            crate::tr!(lang, "可缩减 {} token", "Potential reduction: {} tokens", format_tokens_lang(hits.iter().map(|hit| hit.overhead_tokens).sum(), lang)),
         ],
-        description: "大量内容会在后续请求中重复读取。日志先用 grep 或 tail 截取相关段落，大文件只读相关部分，大 diff 分批查看。".into(),
+        description: lang.pick("大量内容会在后续请求中重复读取。日志先用 grep 或 tail 截取相关段落，大文件只读相关部分，大 diff 分批查看。", "Large inputs are read again in later requests. Use grep or tail to select relevant log sections, read only the parts of a file you need, and review large diffs in batches.").into(),
         occurrences: hits.len() as u64,
         hits,
         avoidable: true,
-        tag: "一次读入过多",
+        tag: lang.pick("一次读入过多", "Large context increase"),
     })
 }
 
@@ -230,6 +233,7 @@ fn runaway_prompt<'a>(
     prompts: &[PromptEvent],
     since: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let groups = prompt_groups(tool, period, prompts, since, true);
     let mut counts = Vec::new();
@@ -262,19 +266,19 @@ fn runaway_prompt<'a>(
     let maximum = counts.into_iter().reduce(f64::max).unwrap_or(0.0);
     Some(RuleOutput {
         id: "runaway_prompt",
-        title: "一次提示跑了太多轮".into(),
+        title: lang.pick("一次提示跑了太多轮", "Many requests from one prompt").into(),
         facts: vec![
-            format!("命中 {prompts_hit} 次提示"),
-            format!("平均每次提示 {average:.1} 次请求"),
-            format!("最多一次 {maximum:.0} 次"),
+            crate::tr!(lang, "命中 {prompts_hit} 次提示", "{prompts_hit} matching prompts"),
+            crate::tr!(lang, "平均每次提示 {average:.1} 次请求", "Average: {average:.1} requests per matching prompt"),
+            crate::tr!(lang, "最多一次 {maximum:.0} 次", "Maximum: {maximum:.0} requests"),
         ],
         description:
-            "给出明确完成条件，先让工具列出计划；如果反复修同一个错误，可以打断并重新限定范围。"
+            lang.pick("给出明确完成条件，先让工具列出计划；如果反复修同一个错误，可以打断并重新限定范围。", "Set clear completion criteria and ask for a plan first. If the same error is being fixed repeatedly, interrupt and narrow the scope.")
                 .into(),
         occurrences: prompts_hit,
         hits,
         avoidable: false,
-        tag: "提示轮数过多",
+        tag: lang.pick("提示轮数过多", "Many requests per prompt"),
     })
 }
 
@@ -282,6 +286,7 @@ fn expensive_subagent<'a>(
     tool: Tool,
     period: &[&'a EventAttribution],
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let (patterns, alternative) = match tool {
         Tool::Claude => (
@@ -331,20 +336,33 @@ fn expensive_subagent<'a>(
     }
     Some(RuleOutput {
         id: "expensive_subagent",
-        title: "子代理用了高价模型".into(),
+        title: lang
+            .pick("子代理用了高价模型", "Expensive models used by subagents")
+            .into(),
         facts: vec![
-            format!("涉及 {sessions} 个会话"),
-            format!("高价模型请求 {} 次", hits.len()),
+            crate::tr!(lang, "涉及 {sessions} 个会话", "Across {sessions} sessions"),
+            crate::tr!(
+                lang,
+                "高价模型请求 {} 次",
+                "{} requests on expensive models",
+                hits.len()
+            ),
         ],
         description: match tool {
-            Tool::Claude => "简单子任务可在子代理定义里写 model: sonnet。",
-            Tool::Codex => "简单子任务可选用较低价的模型。",
+            Tool::Claude => lang.pick(
+                "简单子任务可在子代理定义里写 model: sonnet。",
+                "For simple subtasks, set model: sonnet in the subagent definition.",
+            ),
+            Tool::Codex => lang.pick(
+                "简单子任务可选用较低价的模型。",
+                "Consider a lower-cost model for simple subtasks.",
+            ),
         }
         .into(),
         occurrences: hits.len() as u64,
         hits,
         avoidable: true,
-        tag: "子代理高价模型",
+        tag: lang.pick("子代理高价模型", "Expensive subagent model"),
     })
 }
 
@@ -354,6 +372,7 @@ fn heavy_reasoning<'a>(
     prompts: &[PromptEvent],
     since: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let mut hits = Vec::new();
     let mut prompts_hit = 0;
@@ -400,20 +419,19 @@ fn heavy_reasoning<'a>(
     }
     Some(RuleOutput {
         id: "heavy_reasoning",
-        title: "推理 token 占比过高".into(),
+        title: lang.pick("推理 token 占比过高", "High reasoning token share").into(),
         facts: vec![
-            format!("命中 {prompts_hit} 次提示"),
-            format!(
-                "推理 {} token",
-                format_tokens(hits.iter().map(|hit| hit.overhead_tokens).sum())
+            crate::tr!(lang, "命中 {prompts_hit} 次提示", "{prompts_hit} matching prompts"),
+            crate::tr!(lang, "推理 {} token", "{} reasoning tokens",
+                format_tokens_lang(hits.iter().map(|hit| hit.overhead_tokens).sum(), lang)
             ),
         ],
-        description: "简单任务可通过 Codex 的 model_reasoning_effort 或 /model 调低推理强度。"
+        description: lang.pick("简单任务可通过 Codex 的 model_reasoning_effort 或 /model 调低推理强度。", "For simple tasks, reduce reasoning effort with Codex model_reasoning_effort or /model.")
             .into(),
         occurrences: prompts_hit,
         hits,
         avoidable: true,
-        tag: "推理占比过高",
+        tag: lang.pick("推理占比过高", "High reasoning share"),
     })
 }
 
@@ -421,6 +439,7 @@ fn fast_mode<'a>(
     tool: Tool,
     period: &[&'a EventAttribution],
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     if tool != Tool::Claude {
         return None;
@@ -459,26 +478,25 @@ fn fast_mode<'a>(
     let avoidable = hits.iter().any(|hit| hit.avoidable_cost > 0.0);
     Some(RuleOutput {
         id: "fast_mode",
-        title: "使用了快速模式".into(),
+        title: lang.pick("使用了快速模式", "Fast mode enabled").into(),
         facts: vec![
-            format!("快速请求 {} 次", hits.len()),
-            format!(
-                "合计 {} token",
-                format_tokens(hits.iter().map(|hit| hit.overhead_tokens).sum())
+            crate::tr!(lang, "快速请求 {} 次", "{} fast-mode requests", hits.len()),
+            crate::tr!(lang, "合计 {} token", "{} tokens in total",
+                format_tokens_lang(hits.iter().map(|hit| hit.overhead_tokens).sum(), lang)
             ),
         ],
         description: if multiplier == 0.0 {
-            "不赶时间时可以用 /fast 关闭快速模式。价格倍率尚待核实，当前不估算溢价。"
+            lang.pick("不赶时间时可以用 /fast 关闭快速模式。价格倍率尚待核实，当前不估算溢价。", "Turn off fast mode with /fast when speed is not essential. The price multiplier is unverified, so no premium is estimated.")
         } else if !avoidable {
-            "不赶时间时可以用 /fast 关闭快速模式。当前请求模型没有已核实的快速模式倍率，因此不估算溢价。"
+            lang.pick("不赶时间时可以用 /fast 关闭快速模式。当前请求模型没有已核实的快速模式倍率，因此不估算溢价。", "Turn off fast mode with /fast when speed is not essential. This model has no verified fast-mode multiplier, so no premium is estimated.")
         } else {
-            "不赶时间时可以用 /fast 关闭快速模式；额外费用按配置倍率估算。"
+            lang.pick("不赶时间时可以用 /fast 关闭快速模式；额外费用按配置倍率估算。", "Turn off fast mode with /fast when speed is not essential. Extra cost is estimated using the configured multiplier.")
         }
         .into(),
         occurrences: hits.len() as u64,
         hits,
         avoidable,
-        tag: "快速模式",
+        tag: lang.pick("快速模式", "Fast mode"),
     })
 }
 
@@ -488,6 +506,7 @@ fn high_effort_light_task<'a>(
     prompts: &[PromptEvent],
     since: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let efforts = match tool {
         Tool::Claude => &input.config.high_effort_light_task.claude_high_efforts,
@@ -525,20 +544,35 @@ fn high_effort_light_task<'a>(
     }
     Some(RuleOutput {
         id: "high_effort_light_task",
-        title: "轻量任务用了高推理强度".into(),
+        title: lang
+            .pick(
+                "轻量任务用了高推理强度",
+                "High reasoning effort on light tasks",
+            )
+            .into(),
         facts: vec![
-            format!("命中 {prompts_hit} 次提示"),
-            format!("涉及 {} 次请求", hits.len()),
+            crate::tr!(
+                lang,
+                "命中 {prompts_hit} 次提示",
+                "{prompts_hit} matching prompts"
+            ),
+            crate::tr!(lang, "涉及 {} 次请求", "Across {} requests", hits.len()),
         ],
         description: match tool {
-            Tool::Claude => "轻量任务可通过 /effort 或 /model 调到 high、medium。",
-            Tool::Codex => "轻量任务可通过 model_reasoning_effort 或 /model 调低推理强度。",
+            Tool::Claude => lang.pick(
+                "轻量任务可通过 /effort 或 /model 调到 high、medium。",
+                "For light tasks, use /effort or /model to select high or medium effort.",
+            ),
+            Tool::Codex => lang.pick(
+                "轻量任务可通过 model_reasoning_effort 或 /model 调低推理强度。",
+                "For light tasks, reduce effort with model_reasoning_effort or /model.",
+            ),
         }
         .into(),
         occurrences: prompts_hit,
         hits,
         avoidable: false,
-        tag: "轻量任务高推理",
+        tag: lang.pick("轻量任务高推理", "High effort on a light task"),
     })
 }
 
@@ -548,6 +582,7 @@ fn frequent_compaction<'a>(
     since: DateTime<Utc>,
     now: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     let mut groups = BTreeMap::<&str, Vec<_>>::new();
     for compact in input.compactions.iter().filter(|compact| {
@@ -605,21 +640,20 @@ fn frequent_compaction<'a>(
     }
     Some(RuleOutput {
         id: "frequent_compaction",
-        title: "频繁压缩上下文".into(),
+        title: lang.pick("频繁压缩上下文", "Frequent context compaction").into(),
         facts: vec![
-            format!("涉及 {sessions} 个会话"),
-            format!("自动 {auto} 次、手动 {manual} 次、未标注 {unknown} 次"),
-            format!(
-                "平均压缩前 {} token",
-                format_tokens(pre_sum / pre_count.max(1))
+            crate::tr!(lang, "涉及 {sessions} 个会话", "Across {sessions} sessions"),
+            crate::tr!(lang, "自动 {auto} 次、手动 {manual} 次、未标注 {unknown} 次", "{auto} automatic, {manual} manual, {unknown} unspecified"),
+            crate::tr!(lang, "平均压缩前 {} token", "Average before compaction: {} tokens",
+                format_tokens_lang(pre_sum / pre_count.max(1), lang)
             ),
         ],
-        description: "一个会话只做一件事，阶段完成后可以开启新会话，避免反复压缩同一段上下文。"
+        description: lang.pick("一个会话只做一件事，阶段完成后可以开启新会话，避免反复压缩同一段上下文。", "Keep one task per session. Start a new session after a task stage to avoid compacting the same context repeatedly.")
             .into(),
         occurrences: auto + manual + unknown,
         hits,
         avoidable: false,
-        tag: "频繁压缩",
+        tag: lang.pick("频繁压缩", "Frequent compaction"),
     })
 }
 
@@ -627,6 +661,7 @@ fn web_search<'a>(
     tool: Tool,
     period: &[&'a EventAttribution],
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Option<RuleOutput<'a>> {
     if tool != Tool::Claude {
         return None;
@@ -654,18 +689,18 @@ fn web_search<'a>(
         .collect();
     Some(RuleOutput {
         id: "web_search",
-        title: "联网搜索次数较多".into(),
-        facts: vec![format!("联网搜索 {searches} 次")],
+        title: lang.pick("联网搜索次数较多", "Frequent web searches").into(),
+        facts: vec![crate::tr!(lang, "联网搜索 {searches} 次", "{searches} web searches")],
         description: if input.pricing.server_tools.web_search_per_1k == 0.0 {
-            "已知网址可以直接提供；文档类问题可优先查询本地文件。搜索单价尚待核实。"
+            lang.pick("已知网址可以直接提供；文档类问题可优先查询本地文件。搜索单价尚待核实。", "Provide known URLs directly and check local files first for documentation questions. The search unit price is unverified.")
         } else {
-            "已知网址可以直接提供；文档类问题可优先查询本地文件。搜索费用按配置单价估算。"
+            lang.pick("已知网址可以直接提供；文档类问题可优先查询本地文件。搜索费用按配置单价估算。", "Provide known URLs directly and check local files first for documentation questions. Search cost is estimated at the configured rate.")
         }
         .into(),
         occurrences: searches,
         hits,
         avoidable: false,
-        tag: "联网搜索较多",
+        tag: lang.pick("联网搜索较多", "Frequent web searches"),
     })
 }
 
@@ -678,31 +713,39 @@ pub(super) fn usage_rules<'a>(
     since: DateTime<Utc>,
     now: DateTime<Utc>,
     input: &AdviceInput<'_>,
+    lang: Lang,
 ) -> Vec<RuleOutput<'a>> {
     [
-        model_switch(tool, sessions, since, input),
-        context_spike(tool, sessions, since, input),
-        runaway_prompt(tool, period, prompts, since, input),
-        expensive_subagent(tool, period, input),
-        heavy_reasoning(tool, period, prompts, since, input),
-        fast_mode(tool, period, input),
-        high_effort_light_task(tool, period, prompts, since, input),
-        frequent_compaction(tool, period, since, now, input),
-        web_search(tool, period, input),
+        model_switch(tool, sessions, since, input, lang),
+        context_spike(tool, sessions, since, input, lang),
+        runaway_prompt(tool, period, prompts, since, input, lang),
+        expensive_subagent(tool, period, input, lang),
+        heavy_reasoning(tool, period, prompts, since, input, lang),
+        fast_mode(tool, period, input, lang),
+        high_effort_light_task(tool, period, prompts, since, input, lang),
+        frequent_compaction(tool, period, since, now, input, lang),
+        web_search(tool, period, input, lang),
     ]
     .into_iter()
     .flatten()
     .collect()
 }
 
-pub(super) fn quota_rules<'a>(tool: Tool, input: &AdviceInput<'_>) -> Vec<RuleOutput<'a>> {
-    [quota_rebalance(tool, input), plan_fit(tool, input)]
-        .into_iter()
-        .flatten()
-        .collect()
+pub(super) fn quota_rules<'a>(
+    tool: Tool,
+    input: &AdviceInput<'_>,
+    lang: Lang,
+) -> Vec<RuleOutput<'a>> {
+    [
+        quota_rebalance(tool, input, lang),
+        plan_fit(tool, input, lang),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
-fn quota_rebalance<'a>(tool: Tool, input: &AdviceInput<'_>) -> Option<RuleOutput<'a>> {
+fn quota_rebalance<'a>(tool: Tool, input: &AdviceInput<'_>, lang: Lang) -> Option<RuleOutput<'a>> {
     let busy = input.quotas.iter().find(|state| state.tool == Some(tool))?;
     let idle = input.quotas.iter().find(|state| {
         state.tool
@@ -725,20 +768,20 @@ fn quota_rebalance<'a>(tool: Tool, input: &AdviceInput<'_>) -> Option<RuleOutput
     }
     Some(RuleOutput {
         id: "quota_rebalance",
-        title: "两个额度池可以分流".into(),
+        title: lang.pick("两个额度池可以分流", "Use the other tool's available quota").into(),
         facts: vec![
-            format!("当前周额度已用 {busy_pct:.0}%"),
-            format!("另一工具已用 {idle_pct:.0}%"),
+            crate::tr!(lang, "当前周额度已用 {busy_pct:.0}%", "Current tool: {busy_pct:.0}% of weekly quota used"),
+            crate::tr!(lang, "另一工具已用 {idle_pct:.0}%", "Other tool: {idle_pct:.0}% of weekly quota used"),
         ],
-        description: "当前工具预计在重置前触顶，另一工具近 30 天有使用且额度较空。适合的任务可以分流到另一工具。".into(),
+        description: lang.pick("当前工具预计在重置前触顶，另一工具近 30 天有使用且额度较空。适合的任务可以分流到另一工具。", "The current tool is forecast to hit its limit before reset. The other tool was used in the last 30 days and has more quota available. Consider moving suitable tasks to it.").into(),
         occurrences: 1,
         hits: Vec::new(),
         avoidable: false,
-        tag: "额度池分流",
+        tag: lang.pick("额度池分流", "Quota balancing"),
     })
 }
 
-fn plan_fit<'a>(tool: Tool, input: &AdviceInput<'_>) -> Option<RuleOutput<'a>> {
+fn plan_fit<'a>(tool: Tool, input: &AdviceInput<'_>, lang: Lang) -> Option<RuleOutput<'a>> {
     let state = input.quotas.iter().find(|state| state.tool == Some(tool))?;
     let config = &input.config.plan_fit;
     if state.completed_weekly_max.len() < config.min_weeks {
@@ -770,7 +813,7 @@ fn plan_fit<'a>(tool: Tool, input: &AdviceInput<'_>) -> Option<RuleOutput<'a>> {
         .min_by(|a, b| a.1.total_cmp(&b.1));
     let capped = weeks.iter().filter(|max| **max >= 100.0).count();
     let result = if let Some((candidate, price)) = cheaper {
-        ("降档", candidate.as_str(), current_price - price)
+        (true, candidate.as_str(), current_price - price)
     } else if capped >= config.min_capped_weeks {
         let next = capacities
             .iter()
@@ -781,13 +824,13 @@ fn plan_fit<'a>(tool: Tool, input: &AdviceInput<'_>) -> Option<RuleOutput<'a>> {
             })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((candidate, price)) = next {
-            ("升档", candidate.as_str(), price - current_price)
+            (false, candidate.as_str(), price - current_price)
         } else if tool == Tool::Codex && plan == "plus" {
             let price = input.pricing.subscription_usd(tool, "pro")?;
             if price <= current_price {
                 return None;
             }
-            ("升档", "pro", price - current_price)
+            (false, "pro", price - current_price)
         } else {
             return None;
         }
@@ -796,35 +839,33 @@ fn plan_fit<'a>(tool: Tool, input: &AdviceInput<'_>) -> Option<RuleOutput<'a>> {
     };
     Some(RuleOutput {
         id: "plan_fit",
-        title: "套餐是否合适".into(),
+        title: lang.pick("套餐是否合适", "Check your plan fit").into(),
         facts: vec![
-            format!(
-                "最近 {} 个完整周最高用量：{}",
+            crate::tr!(lang, "最近 {} 个完整周最高用量：{}", "Peak usage over the last {} complete weeks: {}",
                 config.min_weeks,
                 weeks
                     .iter()
                     .map(|max| format!("{max:.0}%"))
                     .collect::<Vec<_>>()
-                    .join("、")
+                    .join(lang.pick("、", ", "))
             ),
-            format!(
-                "{}到 {}，月费{}约 ${:.0}",
-                result.0,
+            crate::tr!(lang, "{}到 {}，月费{}约 ${:.0}", "{} to {}; monthly fee {} by about ${:.0}",
+                if result.0 { lang.pick("降档", "Downgrade") } else { lang.pick("升档", "Upgrade") },
                 plan_display_name(result.1),
-                if result.0 == "降档" {
-                    "减少"
+                if result.0 {
+                    lang.pick("减少", "decreases")
                 } else {
-                    "增加"
+                    lang.pick("增加", "increases")
                 },
                 result.2
             ),
         ],
         description:
-            "根据已记录的周额度最高值与公开月费估算。实际套餐容量、税费和地区价格可能不同。".into(),
+            lang.pick("根据已记录的周额度最高值与公开月费估算。实际套餐容量、税费和地区价格可能不同。", "Estimated from recorded weekly peaks and published monthly fees. Actual plan capacity, taxes and regional prices may differ.").into(),
         occurrences: 1,
         hits: Vec::new(),
         avoidable: false,
-        tag: "套餐评估",
+        tag: lang.pick("套餐评估", "Plan fit"),
     })
 }
 

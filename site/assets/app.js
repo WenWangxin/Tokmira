@@ -118,7 +118,7 @@
     syncShot();
   });
 
-  // --- Language: remember an explicit switch so the page does not redirect back. ---
+  // --- Language: remember an explicit switch. URLs never force a language redirect. ---
   document.querySelectorAll('[data-lang]').forEach(function (link) {
     link.addEventListener('click', function () { store('site-lang', link.dataset.lang); });
   });

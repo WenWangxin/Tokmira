@@ -30,12 +30,14 @@ See where your Claude Code and Codex quota goes, and why it runs out. Your data 
 
 - **Quota at a glance**: 5-hour and weekly quota for Claude and Codex, reset times and a forecast of when you hit the limit. Between two official readings, the current quota is estimated from new local usage and marked with ≈.
 - **Where the quota went**: usage split by session, project, model, subagent and single prompt, so you can see which prompt used it up.
-- **Saving advice**: 16 kinds of waste found in your local logs, such as a cache rebuilt after it expired, an overlong context, a light task on an expensive model, or a prompt that ran far too many turns, each with what it cost and how to avoid it next time. Advice text is in Chinese for now.
+- **Saving advice**: 16 kinds of waste found in your local logs, such as a cache rebuilt after it expired, an overlong context, a light task on an expensive model, or a prompt that ran far too many turns, each with what it cost and how to avoid it next time.
 - **Background reminders**: with the window closed, the app keeps running in the menu bar or tray and notifies you as soon as a costly pattern shows up.
 - **Quota in the menu bar**: the 5-hour quota on the macOS menu bar, or in the Windows tray tooltip, without opening the window.
 - **Sessions and timelines**: each session's requests, prompts and diagnosis tags laid out in time.
 - **Is the subscription worth it**: this month's usage at API prices, as a card you can share.
 - **English and Chinese interface**, launch at login, silent start and optional in-app updates.
+
+> Since v1.2.0, diagnosis text, session tags and background advice notifications follow the selected language. The CLI continues to output Chinese by default.
 
 ## Download
 
@@ -58,13 +60,14 @@ The packages are not code-signed or notarized yet:
 
 token-audit is only useful if you can trust it, so three principles do not change:
 
-1. **Your data stays on your machine by default.** Only usage fields in the logs (token counts, model, time) are read. Conversation content, tokens and keys are never read, stored or uploaded.
+1. **Your data stays on your machine by default.** Usage analysis selects usage and event metadata from local logs without uploading conversation content. A login token is used briefly in memory only if you enable the Claude official quota query, and is sent only to Anthropic.
 2. **The core logic is open source.** The counting, attribution and diagnosis code is all in this repository, so you can reproduce every result.
 3. **Results cannot be bought.** Nobody can pay to change a diagnosis.
 
-The app goes online on its own in only two cases, and you must turn each on in Settings:
+Official quota queries and update checks require you to enable or initiate them:
 
 - **Claude official quota query**: reads your local Claude login token and sends it only to Anthropic. The token is kept in memory only, never saved or refreshed.
+- **Codex official quota query**: the local Codex interface queries OpenAI using your signed-in account. token-audit does not read the login token, and local log analysis works independently.
 - **Checking for updates**: downloads the update manifest and packages only from this repository's GitHub Releases, without your version, device details or any usage data.
 
 The optional Claude Code recorder (status line and hooks) records only quota percentages and prompt times, never prompt content. Before installing, it lists the settings it will change and backs up the original file; uninstalling restores it.

@@ -4,6 +4,7 @@ import type { ShareSummary } from './shareLogic'
 import { mockEnvironment, mockRecorderStatus, mockSettings, previewRecorderPlan } from './mocks/settings'
 import { clonePreview } from './settingsLogic'
 import { noteQuotaResult } from './realtime'
+import { locale } from './i18n'
 
 const isPreview = () => import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)
 let previewSettings: AppSettings = clonePreview(mockSettings)
@@ -517,7 +518,8 @@ async function developmentAdvice(periodDays: number): Promise<AdviceReport> {
   const { mockAdvice } = await import('./mocks/advice')
   const variant = new URLSearchParams(window.location.search).get('mock')
   const local = adviceFiles[`../.local/advice-${periodDays}.json`]
-  const report = variant === 'empty' || variant === 'nodata' || !local ? mockAdvice(periodDays, variant) : (await local()).default
+  // Local snapshots predate localization; use the synthetic bilingual cases in English.
+  const report = variant === 'demo' || variant === 'empty' || variant === 'nodata' || !local || locale.value === 'en' ? mockAdvice(periodDays, variant) : (await local()).default
   const dismissed = new Set(previewSettings.dismissed_advice)
   // Mirror the backend: dismissed items are hidden and counted.
   return {
@@ -607,6 +609,7 @@ async function developmentSessions(): Promise<SessionRow[]> {
   const { mockSessions } = await import('./mocks/sessions')
   const variant = new URLSearchParams(window.location.search).get('mock')
   if (variant === 'empty' || variant === 'nodata') return []
+  if (variant === 'demo') return mockSessions()
   const local = sessionListFiles['../.local/sessions.json']
   return local ? (await local()).default : mockSessions()
 }
@@ -614,8 +617,8 @@ async function developmentSessionDetail(tool: Tool, sessionId: string): Promise<
   const variant = new URLSearchParams(window.location.search).get('mock')
   if (variant === 'empty' || variant === 'nodata') throw new Error('未找到该会话')
   const file = sessionDetailFiles[`../.local/session-${sessionId}.json`]
-  if (file) return (await file()).default
-  if (sessionListFiles['../.local/sessions.json']) {
+  if (file && variant !== 'demo') return (await file()).default
+  if (sessionListFiles['../.local/sessions.json'] && variant !== 'demo') {
     throw new Error('浏览器预览没有这份会话详情。请用 token-audit session --json 生成 ui/.local/session-<id>.json')
   }
   const { mockSessionDetail } = await import('./mocks/sessions')

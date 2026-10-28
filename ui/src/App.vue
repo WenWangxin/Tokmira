@@ -18,7 +18,7 @@ const icons = [LayoutDashboard, ChartColumn, Lightbulb, List, Settings2]
 const t = messages
 watch(locale, () => {
   lastQuotaResult.value = null
-  invalidatePageCache('usageDetail')
+  invalidatePageCache('usageDetail', 'advice', 'sessionDetail')
   usageRevision.value += 1
 })
 // On macOS the window uses an overlay title bar, so the traffic lights sit on

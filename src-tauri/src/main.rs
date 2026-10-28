@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tauri::{Emitter, State};
 use token_audit_core::advice::{
-    build_advice, quota_advice_states, AdviceAlert, AdviceConfig, AdviceInput, AdviceReport,
+    build_advice_lang, quota_advice_states, AdviceAlert, AdviceConfig, AdviceInput, AdviceReport,
     AlertTracker,
 };
 use token_audit_core::attribution::{attribute, Attribution, WindowKind};
@@ -868,7 +868,7 @@ fn advice_report(context: &UsageContext<'_>, period_days: u32) -> Result<AdviceR
         context.now,
         config.plan_fit.max_end_gap_hours,
     );
-    Ok(build_advice(
+    Ok(build_advice_lang(
         &AdviceInput {
             events: &context.input.attribution.events,
             prompts: context.prompts,
@@ -881,6 +881,7 @@ fn advice_report(context: &UsageContext<'_>, period_days: u32) -> Result<AdviceR
         },
         period_days,
         context.now,
+        context.settings.language.resolve(sys_locale::get_locale),
     ))
 }
 
@@ -916,7 +917,7 @@ async fn get_session_detail(
     tauri::async_runtime::spawn_blocking(move || {
         with_usage(&home, &data_dir, &cached, |context| {
             let config = AdviceConfig::bundled().map_err(config_error)?;
-            let tags = build_advice(
+            let tags = build_advice_lang(
                 &AdviceInput {
                     events: &context.input.attribution.events,
                     prompts: context.prompts,
@@ -929,6 +930,7 @@ async fn get_session_detail(
                 },
                 30,
                 context.now,
+                context.settings.language.resolve(sys_locale::get_locale),
             )
             .event_tags;
             session_detail(
@@ -1032,7 +1034,11 @@ fn spawn_alerts(
                     return Ok(None);
                 }
                 // Checked even when switched off, so turning it on later does not report old problems.
-                let alert = tracker.check(&input, context.now);
+                let alert = tracker.check_lang(
+                    &input,
+                    context.now,
+                    context.settings.language.resolve(sys_locale::get_locale),
+                );
                 Ok(alert.filter(|_| context.settings.advice_notifications))
             });
             if let Ok(Some(alert)) = alert {

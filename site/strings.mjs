@@ -10,6 +10,9 @@ export const STRINGS = {
       '免费开源的桌面工具。读取本机 Claude Code 与 Codex 日志，显示 5 小时和每周额度、额度去向和省额度建议，数据只留在本机。支持 macOS 和 Windows。',
     skip: '跳到下载',
     navDownload: '下载',
+    navGuides: '用量指南',
+    guidesTitle: '看懂用量，再调整用法',
+    guidesIntro: '从额度查询到会话诊断，按你使用的工具逐步了解。',
     navPrivacy: '隐私',
     navChangelog: '更新日志',
     otherLang: 'EN',
@@ -68,13 +71,14 @@ export const STRINGS = {
     privacyTitle: '隐私',
     privacyLede: '这个工具靠信任才有用，所以有三条不会改的原则。',
     principles: [
-      ['默认数据不出本机', '只读取日志里的 token 数、模型和时间。对话内容、令牌和密钥不读、不存、不上传。'],
+      ['默认数据不出本机', '用量分析只取日志里的用量与事件元数据，不上传对话内容。主动开启 Claude 官方查询时，登录令牌才会在内存中短暂使用。'],
       ['核心逻辑开源', '统计、归属和诊断的算法都在 GitHub 上，结论可以自己复现。'],
       ['结论不受付费影响', '任何人付费都不能改变诊断结果。'],
     ],
     networkTitle: '只在你开启时联网',
     network: [
       ['Claude 官方额度查询', '只发往 Anthropic。登录令牌只在内存里使用，不保存、不刷新。'],
+      ['Codex 官方额度查询', '开启后由本机 Codex 接口使用已登录账号向 OpenAI 查询；token-audit 不读取登录令牌。日志分析可独立使用。'],
       ['检查更新', '只从 GitHub Releases 下载更新清单和安装包，不附带版本号、设备信息或使用数据。'],
     ],
     siteNote: '这个网站本身也不使用统计脚本、cookie 或外部字体。',
@@ -103,6 +107,9 @@ export const STRINGS = {
       'A free, open-source desktop app. It reads your local Claude Code and Codex logs to show your 5-hour and weekly quota, where it went and how to save it. Your data stays on your machine. For macOS and Windows.',
     skip: 'Skip to downloads',
     navDownload: 'Download',
+    navGuides: 'Usage guides',
+    guidesTitle: 'Understand your usage',
+    guidesIntro: 'From checking quota to inspecting sessions. Start with the tool you use.',
     navPrivacy: 'Privacy',
     navChangelog: 'Changelog',
     otherLang: '中文',
@@ -163,13 +170,14 @@ export const STRINGS = {
     privacyTitle: 'Privacy',
     privacyLede: 'A tool like this is only useful if you can trust it, so three principles do not change.',
     principles: [
-      ['Your data stays on your machine', 'Only token counts, models and times are read. Conversation content, tokens and keys are never read, stored or uploaded.'],
+      ['Your data stays on your machine', 'Usage analysis selects usage and event metadata from local logs, without uploading conversation content. A login token is used briefly in memory only if you enable the Claude official query.'],
       ['The core is open source', 'The counting, attribution and diagnosis code is on GitHub, so you can reproduce every result.'],
       ['Results cannot be bought', 'Nobody can pay to change a diagnosis.'],
     ],
     networkTitle: 'Online only when you turn it on',
     network: [
       ['Claude official quota query', 'Sent only to Anthropic. Your login token is kept in memory only, never saved or refreshed.'],
+      ['Codex official quota query', 'When enabled, the local Codex interface queries OpenAI using your signed-in account. token-audit does not read the login token. Local log analysis works independently.'],
       ['Checking for updates', 'Downloads the manifest and packages only from GitHub Releases, without your version, device details or usage data.'],
     ],
     siteNote: 'This website uses no analytics, cookies or external fonts either.',
@@ -196,6 +204,28 @@ export const STRINGS = {
 // Release bodies are authored in Chinese on GitHub. Keep the English page complete by
 // translating each published release here before the Pages workflow deploys it.
 export const EN_RELEASE_NOTES = {
+  'v1.2.0': `token-audit 1.2.0
+
+New:
+- All 16 diagnosis rules now support English titles, facts, advice and timeline tags. Background savings alerts also follow the selected language.
+- The website now has Chinese and English guides for Claude Code usage monitoring and Codex usage tracking, covering setup, data sources, coverage limits and frequently asked questions.
+
+Fixes:
+- Switching languages refreshes cached diagnoses and session details. Alert deduplication and cooldown remain unchanged.
+
+Improvements:
+- Usage guides are linked from both homepages and included in the sitemap, with canonical URLs and matching language alternatives.
+- Language pages keep their own URLs instead of redirecting visitors based on browser language. Privacy copy explains optional official quota queries.
+- Website deployment checks internal links, assets, anchors and the sitemap before publishing.
+
+Notes:
+- Diagnosis decisions, token counts and cost calculations are unchanged. The command line interface still defaults to Chinese.
+- Local usage analysis continues to work without uploading conversation content.
+
+Installation:
+- The packages are not code signed or notarized.
+- macOS: Right-click the app in Finder and choose Open, or allow it in System Settings → Privacy & Security.
+- Windows: If SmartScreen appears, choose More info → Run anyway.`,
   'v1.1.0': `token-audit 1.1.0
 
 New:

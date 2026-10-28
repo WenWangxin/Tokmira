@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use token_audit_core::advice::{
-    build_advice, percentile, quota_advice_states, AdviceConfig, AdviceInput, AdviceReport,
-    QuotaAdviceState, Severity,
+    build_advice, build_advice_lang, percentile, quota_advice_states, AdviceConfig, AdviceInput,
+    AdviceReport, QuotaAdviceState, Severity,
 };
 use token_audit_core::attribution::EventAttribution;
 use token_audit_core::environment::EnvironmentSnapshot;
+use token_audit_core::i18n::Lang;
 use token_audit_core::model::{CompactEvent, PromptEvent, Source, TokenCounts, Tool, UsageEvent};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::quota_store::{
@@ -72,7 +73,7 @@ fn report(
 ) -> AdviceReport {
     let pricing = Pricing::bundled().expect("bundled pricing");
     let config = AdviceConfig::bundled().expect("bundled advice config");
-    build_advice(
+    checked_report(
         &AdviceInput {
             events,
             prompts,
@@ -86,6 +87,70 @@ fn report(
         7,
         now(),
     )
+}
+
+// Every existing rule scenario also checks that language changes presentation only.
+fn checked_report(input: &AdviceInput<'_>, days: u32, at: DateTime<Utc>) -> AdviceReport {
+    let zh = build_advice(input, days, at);
+    let en = build_advice_lang(input, days, at, Lang::En);
+    fn strip_text(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for key in ["title", "facts", "description", "tag"] {
+                    fields.remove(key);
+                }
+                for child in fields.values_mut() {
+                    strip_text(child);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    strip_text(item);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut a = serde_json::to_value(&zh).expect("Chinese report");
+    let mut b = serde_json::to_value(&en).expect("English report");
+    strip_text(&mut a);
+    strip_text(&mut b);
+    assert_eq!(
+        a, b,
+        "language must not affect diagnoses, amounts, keys or ordering"
+    );
+    for item in en.tools.iter().flat_map(|tool| &tool.items) {
+        assert_ne!(
+            item.title,
+            zh.tools
+                .iter()
+                .flat_map(|tool| &tool.items)
+                .find(|other| other.key == item.key)
+                .expect("same rule")
+                .title
+        );
+        for text in std::iter::once(&item.title)
+            .chain(std::iter::once(&item.description))
+            .chain(item.facts.iter())
+        {
+            assert!(
+                !text.chars().any(|c| ('\u{3400}'..='\u{9fff}').contains(&c)),
+                "untranslated text: {text}"
+            );
+        }
+    }
+    for tag in en
+        .event_tags
+        .iter()
+        .map(|tag| &tag.tag)
+        .chain(en.prompt_tags.iter().map(|tag| &tag.tag))
+    {
+        assert!(
+            !tag.chars().any(|c| ('\u{3400}'..='\u{9fff}').contains(&c)),
+            "untranslated tag: {tag}"
+        );
+    }
+    zh
 }
 
 fn ids(report: &AdviceReport, tool: Tool) -> Vec<String> {
@@ -106,7 +171,7 @@ fn m12_report(
 ) -> AdviceReport {
     let pricing = Pricing::bundled().expect("prices");
     let config = AdviceConfig::bundled().expect("config");
-    build_advice(
+    checked_report(
         &AdviceInput {
             events,
             prompts,

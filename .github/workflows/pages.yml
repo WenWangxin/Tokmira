@@ -7,6 +7,7 @@ on:
     paths:
       - 'site/**'
       - 'tool/build_site.mjs'
+      - 'tool/check_site.mjs'
       - 'snapshots/**'
       - '.github/workflows/pages.yml'
   release:
@@ -44,6 +45,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           SITE_REQUIRE_RELEASES: '1'
         run: node tool/build_site.mjs _site
+
+      - name: Check website routes and sitemap
+        run: node tool/check_site.mjs _site
 
       - name: Configure Pages
         uses: actions/configure-pages@v6.0.0

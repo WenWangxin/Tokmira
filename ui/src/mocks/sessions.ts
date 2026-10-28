@@ -1,4 +1,5 @@
 import type { SessionDetail, SessionRow, Source, TimelineEntry, TokenCounts, Tool } from '../api'
+import { locale } from '../i18n/index.ts'
 
 // Synthetic browser preview only. No user logs, prompts, or credentials.
 const counts = (partial: Partial<TokenCounts>): TokenCounts => ({
@@ -55,7 +56,7 @@ function featured(base: SessionRow): SessionDetail {
     {
       kind: 'Request', at: first, index: 1, is_subagent: false, model: base.model, weekly_delta: 4,
       tokens: counts({ cache_write_1h: 45_315, output: 412 }),
-      tag: { tag: '新会话启动开销', severity: 'Warning' },
+      tag: { tag: locale.value === 'en' ? 'Session startup' : '新会话启动开销', severity: 'Warning' },
     },
     { kind: 'Prompt', at: secondPrompt, gap_minutes_from_previous_prompt: 6 },
     {
@@ -66,12 +67,12 @@ function featured(base: SessionRow): SessionDetail {
     {
       kind: 'Request', at: third, index: 3, is_subagent: false, model: base.model, weekly_delta: 3.6,
       tokens: counts({ cache_write_1h: 61_504, output: 956 }),
-      tag: { tag: '缓存已过期', severity: 'Error' },
+      tag: { tag: locale.value === 'en' ? 'Cache expired' : '缓存已过期', severity: 'Error' },
     },
     {
       kind: 'Request', at: fourth, index: 4, is_subagent: true, model: base.model, weekly_delta: 1.1,
       tokens: counts({ cache_write_5m: 22_140, cache_read: 8_770, output: 530 }),
-      tag: { tag: '子代理', severity: 'Warning' },
+      tag: { tag: locale.value === 'en' ? 'Subagent' : '子代理', severity: 'Warning' },
     },
   ]
   return { ...base, entries }
@@ -86,7 +87,7 @@ function generic(base: SessionRow): SessionDetail {
     {
       kind: 'Request', at: prompt, index: 1, is_subagent: false, model: base.model, weekly_delta: 0.4,
       tokens: claude ? counts({ cache_write_1h: 12_000, output: 180 }) : counts({ input: 9_400, cache_read: 200, output: 180 }),
-      tag: { tag: '新会话启动开销', severity: 'Warning' },
+      tag: { tag: locale.value === 'en' ? 'Session startup' : '新会话启动开销', severity: 'Warning' },
     },
     { kind: 'Prompt', at: again, gap_minutes_from_previous_prompt: 42 },
     {
