@@ -65,10 +65,16 @@ test('precision pills', () => {
 test('first run defaults; reopening keeps current switches', () => {
   const enabled = { claude_official_query: true, codex_app_server: true }
   const disabled = { claude_official_query: false, codex_app_server: false }
+  // First run: status line on, both official queries off, whatever the stored settings say.
   assert.deepEqual(initialOnboardingChoices(false, disabled, false), {
     statusline: true,
-    claudeOfficial: true,
-    codexOfficial: true,
+    claudeOfficial: false,
+    codexOfficial: false,
+  })
+  assert.deepEqual(initialOnboardingChoices(false, enabled, false), {
+    statusline: true,
+    claudeOfficial: false,
+    codexOfficial: false,
   })
   assert.deepEqual(initialOnboardingChoices(true, enabled, false), {
     statusline: false,

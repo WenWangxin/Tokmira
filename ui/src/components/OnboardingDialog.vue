@@ -45,7 +45,7 @@ const tools = ref<DetectedTool[] | null>(null)
 const detecting = ref(true)
 const detectError = ref('')
 const choicesReady = ref(false)
-const selection = ref<OnboardingSelection>({ statusline: true, claudeOfficial: true, codexOfficial: true })
+const selection = ref<OnboardingSelection>({ statusline: true, claudeOfficial: false, codexOfficial: false })
 // Background reminders: applied on 完成 and on 暂不开启 alike, which only skips quota sources.
 const reminders = ref({ notifications: true, autostart: true })
 const autostartAvailable = ref(true)

@@ -14,13 +14,16 @@ export interface OnboardingSettingsFlags {
   codex_app_server: boolean
 }
 
-/** First run uses the guide defaults. Reopening keeps the switches the user already chose. */
+/**
+ * First run uses the guide defaults: the status line (local only) is on, official queries stay off
+ * until the user turns them on. Reopening keeps the switches the user already chose.
+ */
 export function initialOnboardingChoices(
   onboardingCompleted: boolean,
   settings: OnboardingSettingsFlags,
   statuslineOn: boolean,
 ): OnboardingSelection {
-  if (!onboardingCompleted) return { statusline: true, claudeOfficial: true, codexOfficial: true }
+  if (!onboardingCompleted) return { statusline: true, claudeOfficial: false, codexOfficial: false }
   return {
     statusline: statuslineOn,
     claudeOfficial: settings.claude_official_query,
