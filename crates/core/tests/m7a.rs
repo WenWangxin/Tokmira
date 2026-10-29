@@ -555,6 +555,7 @@ fn overview_uses_fixed_local_day_and_attribution() {
     );
     assert_eq!(overview.subscription_total_usd, None);
     assert_eq!(overview.subscription_value_multiple, None);
+    assert_eq!(overview.quota_hit_threshold_pct, Some(95.0));
     assert_eq!(overview.recent_high_prompts.len(), 1);
     assert_eq!(overview.recent_high_prompts[0].source, Source::ClaudeCli);
     assert!(overview.month_estimated_cost_usd > 0.0);

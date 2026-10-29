@@ -133,6 +133,11 @@ pub struct AlertConfig {
     pub light_task_settle_minutes: i64,
     pub lookback_hours: i64,
 }
+#[derive(Clone, Debug, Deserialize)]
+pub struct QuotaHitConfig {
+    /// The latest real reading, without any estimate on top, must reach this percent.
+    pub threshold_pct: f64,
+}
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdviceLink {
     pub label: String,
@@ -159,6 +164,7 @@ pub struct AdviceConfig {
     pub quota_rebalance: QuotaRebalanceConfig,
     pub plan_fit: PlanFitConfig,
     pub alerts: AlertConfig,
+    pub quota_hit: QuotaHitConfig,
     #[serde(default)]
     pub links: BTreeMap<String, AdviceLink>,
 }

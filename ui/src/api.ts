@@ -150,6 +150,8 @@ export interface Overview {
   recent_sessions: SessionOverview[]
   recent_high_prompts: (Omit<SessionOverview, 'requests' | 'first_at' | 'last_at'> & { at: string })[]
   summary: { sessions: number; requests: number; high_prompts: number }
+  /** `[quota_hit] threshold_pct` from `config/advice.toml`; older caches lack it. */
+  quota_hit_threshold_pct?: number | null
 }
 
 export type WindowKind = 'FiveHour' | 'Weekly'
@@ -331,7 +333,7 @@ export async function refreshQuotas(automatic = false): Promise<RefreshResult> {
 async function developmentOverview(): Promise<Overview> {
   const { mockOverview } = await import('./mocks/overview')
   const variant = new URLSearchParams(window.location.search).get('mock')
-  if (variant === 'empty' || variant === 'nodata') return mockOverview(variant)
+  if (variant === 'empty' || variant === 'nodata' || variant === 'hit' || variant === 'hit-estimated') return mockOverview(variant)
   if (variant === 'demo') return mockOverview('default')
   const files = import.meta.glob<{ default: Overview }>('../.local/overview.json')
   const local = files['../.local/overview.json']
@@ -347,6 +349,7 @@ async function developmentUsage(tool: Tool): Promise<UsageResponse> {
   const { mockUsage } = await import('./mocks/usage')
   const variant = new URLSearchParams(window.location.search).get('mock')
   if (variant === 'empty' || variant === 'nodata' || variant === 'unattributed') return mockUsage(tool, variant)
+  if (variant === 'hit' || variant === 'hit-estimated') return mockUsage(tool, 'default')
   const local = usageFiles[`../.local/usage-${tool.toLowerCase()}.json`]
   return local ? (await local()).default : mockUsage(tool, 'default')
 }
@@ -523,7 +526,7 @@ async function developmentAdvice(periodDays: number): Promise<AdviceReport> {
   const variant = new URLSearchParams(window.location.search).get('mock')
   const local = adviceFiles[`../.local/advice-${periodDays}.json`]
   // Local snapshots predate localization; use the synthetic bilingual cases in English.
-  const report = variant === 'demo' || variant === 'empty' || variant === 'nodata' || !local || locale.value === 'en' ? mockAdvice(periodDays, variant) : (await local()).default
+  const report = variant === 'demo' || variant === 'empty' || variant === 'nodata' || variant === 'hit' || variant === 'hit-estimated' || !local || locale.value === 'en' ? mockAdvice(periodDays, variant) : (await local()).default
   const dismissed = new Set(previewSettings.dismissed_advice)
   // Mirror the backend: dismissed items are hidden and counted.
   return {

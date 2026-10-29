@@ -15,7 +15,9 @@ export function mockUsageDetail(window: UsageWindowRef): UsageDetail {
   const empty = variant === 'empty'
   // `?mock=unattributed`: same used total, but most of it has no local request behind it.
   const unattributed = variant === 'unattributed'
-  const scale = unattributed ? 2 / 3 : 1
+  // `?mock=hit`: the current Claude 5-hour window is at 97%, with unattributed above the third session.
+  const hit = variant === 'hit' && window.tool === 'Claude' && window.kind === 'FiveHour' && window.is_current
+  const scale = unattributed ? 2 / 3 : hit ? 3 : 1
   const share = (delta: number) => Math.round(delta * scale * 10) / 10
   const visibleEnd = Math.min(Date.now(), Date.parse(window.end))
   const range = Math.max(1, visibleEnd - Date.parse(window.start))
@@ -40,9 +42,9 @@ export function mockUsageDetail(window: UsageWindowRef): UsageDetail {
     { at: promptAt(.35), session_id: secondary, title: secondaryTitle, delta: 3.6, requests: 2, tokens: 310000 },
   ]
   return {
-    window, used_percent: 28, remaining_percent: 72, resets_at: window.end,
+    window, used_percent: hit ? 97 : 28, remaining_percent: hit ? 3 : 72, resets_at: window.end,
     origin: window.tool === 'Claude' ? 'Statusline' : 'Log',
-    attributed_total: empty ? 0 : unattributed ? 14 : 21, unattributed_total: empty ? 28 : unattributed ? 14 : 7,
+    attributed_total: empty ? 0 : hit ? 63 : unattributed ? 14 : 21, unattributed_total: empty ? 28 : hit ? 34 : unattributed ? 14 : 7,
     sessions, projects, models, subagents, high_prompts,
     official_weekly_breakdown: window.tool === 'Claude' && window.kind === 'Weekly' ? {
       as_of: at(-10), window_started_at: window.start, rows: [

@@ -1481,6 +1481,16 @@ fn config_override_replaces_values_and_keeps_others() {
 }
 
 #[test]
+fn quota_hit_threshold_comes_from_config() {
+    let bundled = AdviceConfig::bundled().expect("bundled");
+    assert_eq!(bundled.quota_hit.threshold_pct, 95.0);
+    let config = bundled
+        .with_override("[quota_hit]\nthreshold_pct = 90\n")
+        .expect("override");
+    assert_eq!(config.quota_hit.threshold_pct, 90.0);
+}
+
+#[test]
 fn small_overhead_does_not_tag_an_expensive_prompt() {
     let prompts = vec![PromptEvent {
         tool: Tool::Claude,

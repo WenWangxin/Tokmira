@@ -109,6 +109,11 @@ light_task_settle_minutes = 3
 # 只看最近这么多小时内的请求
 lookback_hours = 6
 
+[quota_hit]
+# 仪表盘「刚触顶」置顶卡：最近一次真实读数（官方 / 状态栏 / Codex 日志 / 手动校准）达到这个百分比才显示。
+# 只看读数，不含读数之后的估算部分；5 小时和每周、Claude 和 Codex 各自判断。
+threshold_pct = 95
+
 # 每条建议的「下一步」和可复制命令写在 crates/core/src/advice/next_step.rs，不放在这里：
 # 只有在对应工具上核实过的命令才给复制按钮，覆盖文件不能添加未核实的命令。
 

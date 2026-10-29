@@ -2,6 +2,7 @@
 import { formatInteger, messages, m } from '../i18n/index.ts'
 const t = messages
 import { showToast } from '../toast'
+import { copyCommand } from '../clipboard'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeftRight, Brain, CircleAlert, Clock, Coins, Copy, Cpu, ExternalLink, FileStack, Gauge, GitFork, Layers, Lightbulb, List, Network, Search, Sparkles, TrendingUp, WandSparkles, Zap } from 'lucide-vue-next'
@@ -84,17 +85,6 @@ async function dismiss(item: AdviceItem) {
     else setPageCache(key, fresh)
   } catch (cause) {
     showToast(cause instanceof Error ? cause.message : String(cause), 'error')
-  }
-}
-
-/** Uses the WebView clipboard; no clipboard plugin or extra capability. */
-async function copyCommand(command: string) {
-  try {
-    if (!navigator.clipboard) throw new Error('clipboard unavailable')
-    await navigator.clipboard.writeText(command)
-    showToast(m().advice.copied(command), 'success')
-  } catch {
-    showToast(m().advice.copyFailed, 'warning')
   }
 }
 

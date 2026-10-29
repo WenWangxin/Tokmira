@@ -76,3 +76,18 @@ test('advice next step copy texts and preview commands', async () => {
     }
   }
 })
+
+test('quota hit card names the tool, window, reading source and time', async () => {
+  assert.deepEqual(Object.keys(en.dashboard.hit), Object.keys(zh.dashboard.hit))
+  assert.equal(zh.dashboard.hit.title('Claude', zh.dashboard.hit.fiveHour, '97', '官方数据 · 官方查询', '14:02'),
+    'Claude 5 小时额度已用 97%（官方数据 · 官方查询 · 14:02 读数）')
+  const title = en.dashboard.hit.title('Codex', en.dashboard.hit.weekly, '96', en.origin.log, '10/29 09:15')
+  assert.equal(title, 'Codex weekly quota 96% used (Official · Logs · read at 10/29 09:15)')
+  for (const text of Object.values(en.dashboard.hit).map(value => typeof value === 'function' ? value('Claude', '5-hour', '97', 'Official', '14:02') : value)) assert.doesNotMatch(text, /[一-龥]/)
+  const { mockOverview } = await import('./mocks/overview.ts')
+  const { quotaHits } = await import('./quotaHit.ts')
+  const hit = mockOverview('hit')
+  assert.deepEqual(quotaHits(hit.tools, hit.quota_hit_threshold_pct).map(item => [item.tool, item.kind, item.reading]), [['Claude', 'FiveHour', 97]])
+  const estimated = mockOverview('hit-estimated')
+  assert.deepEqual(quotaHits(estimated.tools, estimated.quota_hit_threshold_pct), [])
+})

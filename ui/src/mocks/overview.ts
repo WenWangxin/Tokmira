@@ -23,7 +23,7 @@ const series = (values: number[], start: number, step: number) => values.map((pe
   at: at(start + index * step), percent,
 }))
 
-export function mockOverview(variant: 'default' | 'empty' | 'nodata'): Overview {
+export function mockOverview(variant: 'default' | 'empty' | 'nodata' | 'hit' | 'hit-estimated'): Overview {
   const noQuota = variant === 'nodata'
   const empty = variant === 'empty'
   const sessions = [
@@ -49,7 +49,10 @@ export function mockOverview(variant: 'default' | 'empty' | 'nodata'): Overview 
     generated_at: now.toISOString(),
     tools: [
       { tool: 'Claude', plan: 'pro', subscription_usd: 20,
-        five_hour: quota(28, 16, 'Ample', 'Official', 2.4), weekly: quota(6, 6 * 24 * 60, 'Unknown', 'Official', 0.3) },
+        // `hit`: a 97% official reading pins the card; `hit-estimated`: a 90% reading plus a 6% estimate does not.
+        five_hour: variant === 'hit' ? quota(97, 16, { WillHit: { at: at(8) } }, 'Official')
+          : variant === 'hit-estimated' ? quota(96, 16, { WillHit: { at: at(8) } }, 'Official', 6)
+          : quota(28, 16, 'Ample', 'Official', 2.4), weekly: quota(6, 6 * 24 * 60, 'Unknown', 'Official', 0.3) },
       { tool: 'Codex', plan: 'plus', subscription_usd: 20,
         five_hour: quota(21, 52, { WillHit: { at: at(100) } }, 'Log'), weekly: quota(3, 7 * 24 * 60, 'Unknown', 'Log') },
     ],
@@ -89,5 +92,6 @@ export function mockOverview(variant: 'default' | 'empty' | 'nodata'): Overview 
       weekly_delta: item.weekly_delta,
     })),
     summary: { sessions: empty ? 0 : 7, requests: empty ? 0 : 1284, high_prompts: empty ? 0 : 5 },
+    quota_hit_threshold_pct: 95,
   }
 }

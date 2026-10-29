@@ -2,7 +2,7 @@
 import { clock, compactText, messages, m, monthDay } from '../i18n/index.ts'
 const t = messages
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Cpu, Folder, GitFork, List, Zap, Database, CircleAlert, CircleHelp } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
@@ -13,6 +13,7 @@ import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSele
 import { usageRevision } from '../realtime'
 
 const router = useRouter()
+const route = useRoute()
 const windowsKey = pageCacheKey('usageWindows', 'all')
 const cachedWindows = getPageCache<Record<Tool, UsageWindowRef[]>>(windowsKey)
 const initialTool = pageSelection.usage.tool ?? (cachedWindows?.Claude.length ? 'Claude' : cachedWindows?.Codex.length ? 'Codex' : 'Claude')
@@ -175,7 +176,8 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
 // Shares outside local Claude Code logs, quoted as-is from the official breakdown.
 const offLogShare = computed(() => detail.value?.official_weekly_breakdown?.rows.filter(row => row.key !== 'claude_code').map(row =>
   `${row.display_name || row.key} ${percent(row.percent)}`).join(' · ') ?? '')
-const helpOpen = ref(false)
+// The dashboard's quota-hit card links here with `?help=unattributed`.
+const helpOpen = ref(route.query.help === 'unattributed')
 const helpVisible = computed(() => helpOpen.value && (detail.value?.unattributed_total ?? 0) > 0)
 </script>
 

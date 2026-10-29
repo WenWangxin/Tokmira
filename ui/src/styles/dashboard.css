@@ -14,6 +14,21 @@
 .spinning { animation: spin var(--motion-spin) linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .card { min-width: 0; border-radius: 20px; background: var(--surface-container); }
+.quota-hit-list { display: grid; gap: 16px; }
+.quota-hit-card { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent); }
+.quota-hit-card .origin-pill { display: inline-flex; flex: none; align-items: center; gap: 4px; }
+.quota-hit-title { min-width: 0; color: var(--on-surface); font-size: 15px; white-space: normal; }
+.quota-hit-title strong { font-weight: 600; }
+.quota-hit-note { margin: 0; color: var(--on-surface-muted); font-size: 12px; }
+.quota-hit-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.quota-hit-section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.quota-hit-section h3 { margin: 0; color: var(--on-surface-variant); font-size: 12px; font-weight: 500; }
+.quota-hit-section .advice-card-rows { gap: 8px; margin-bottom: 0; }
+.quota-hit-section .advice-card-row svg:first-child { flex: none; color: var(--warning); }
+.quota-hit-section .settings-link { margin-top: 0; }
+.quota-hit-help { margin-left: 8px; color: var(--primary); font-size: 11px; }
+.quota-hit-empty { margin: 0; color: var(--on-surface-muted); font-size: 12px; }
+@media (max-width: 900px) { .quota-hit-body { grid-template-columns: minmax(0, 1fr); } }
 .quota-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 16px; }
 .quota-card { display: flex; flex-direction: column; gap: 14px; min-height: 261px; padding: 18px 20px; }
 .quota-body { display: flex; flex-direction: column; gap: 14px; flex: 1; }

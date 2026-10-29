@@ -10,6 +10,8 @@ import Sparkline from '../components/Sparkline.vue'
 import QuotaTrend from '../components/QuotaTrend.vue'
 import { remainingQuotaColor } from '../components/quotaChart'
 import ShareDialog from '../components/ShareDialog.vue'
+import QuotaHitCard from '../components/QuotaHitCard.vue'
+import { DEFAULT_HIT_THRESHOLD, hitAdvice, quotaHits } from '../quotaHit'
 import AnimatedNumber from '../components/AnimatedNumber.vue'
 import { vSelectionSlide } from '../components/selectionSlide'
 import { dashboardRefreshToken, pendingDashboardNotice } from '../onboardingState'
@@ -198,6 +200,10 @@ const adviceHeadline = computed(() => {
 const adviceImpact = (item: AdviceItem) => item.consumed_weekly_pct !== null
   ? `${item.consumed_weekly_pct.toFixed(1)}%` : `$${item.overhead_cost_usd.toFixed(2)}`
 const empty = computed(() => overview.value?.summary.sessions === 0 && overview.value?.summary.requests === 0)
+/** Pinned cards for windows whose latest real reading reached the threshold; `now` re-checks resets. */
+const hits = computed(() => overview.value
+  ? quotaHits(overview.value.tools, overview.value.quota_hit_threshold_pct ?? DEFAULT_HIT_THRESHOLD, now.value)
+  : [])
 const toolsWithData = computed(() => overview.value?.tools.filter(item => item.five_hour.used_percent !== null) ?? [])
 const trendTools = computed(() => toolsWithData.value.map(item => item.tool))
 const tableRows = computed(() => selectedList.value === 'sessions'
@@ -302,6 +308,9 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
     <div v-else-if="error && !overview" class="center-state"><CircleAlert :size="30" /><strong>{{ t.dashboard.loadFailed }}</strong><p>{{ error }}</p><button @click="load()">{{ t.common.retry }}</button></div>
     <div v-else-if="empty" class="center-state"><Database :size="32" /><strong>{{ t.dashboard.emptyTitle }}</strong><p>{{ t.dashboard.emptyBody }}</p><button @click="refresh">{{ t.dashboard.rescan }}</button></div>
     <div v-else-if="overview" class="dashboard-content content-reveal">
+      <section v-if="hits.length" class="quota-hit-list" :aria-label="t.dashboard.hit.section">
+        <QuotaHitCard v-for="hit in hits" :key="`${hit.tool}-${hit.kind}`" :hit="hit" :source="sourceText(hit.tool, hit.origin)" :advice="hitAdvice(advice, hit.tool)" :refresh-key="overview.generated_at" />
+      </section>
       <section class="quota-grid" :aria-label="t.dashboard.quotaSection">
         <article v-for="item in overview.tools" :key="item.tool" class="card quota-card" :class="{ 'first-card': firstContent }">
           <div class="quota-body">

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Timelike, Utc};
 use serde::Serialize;
 
+use crate::advice::AdviceConfig;
 use crate::attribution::{Attribution, WindowKind as AttributionWindowKind};
 use crate::codex::RateLimitSnapshot;
 use crate::estimate;
@@ -175,6 +176,9 @@ pub struct Overview {
     pub recent_sessions: Vec<SessionOverview>,
     pub recent_high_prompts: Vec<HighPromptOverview>,
     pub summary: Summary,
+    /// `[quota_hit] threshold_pct` from `config/advice.toml`: the dashboard pins a card
+    /// once the latest real reading (without the estimate) reaches it.
+    pub quota_hit_threshold_pct: Option<f64>,
 }
 fn cache_hit(tokens: &TokenCounts) -> Option<f64> {
     let denominator = tokens.input as u128
@@ -773,5 +777,8 @@ pub fn build_overview<Tz: TimeZone>(
             requests,
             high_prompts,
         },
+        quota_hit_threshold_pct: AdviceConfig::bundled()
+            .ok()
+            .map(|config| config.quota_hit.threshold_pct),
     }
 }
