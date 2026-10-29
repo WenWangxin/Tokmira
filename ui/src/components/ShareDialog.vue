@@ -4,6 +4,7 @@ const t = messages
 import { onMounted, onUnmounted, reactive, ref, unref } from 'vue'
 import { Share, X } from 'lucide-vue-next'
 import { getShareSummary, saveExport } from '../api'
+import { showToast } from '../toast'
 import ShareCard from './ShareCard.vue'
 import Toggle from './Toggle.vue'
 import {
@@ -19,8 +20,6 @@ const emit = defineEmits<{ close: [] }>()
 const summary = ref<ShareSummary | null>(null)
 const loading = ref(true)
 const loadError = ref('')
-const status = ref('')
-const statusTone = ref<'ok' | 'bad'>('ok')
 const busy = ref(false)
 const options = reactive(defaultShareOptions())
 const card = ref<{ root: SVGSVGElement | null } | null>(null)
@@ -51,18 +50,13 @@ async function exportImage() {
   const data = summary.value
   if (!(svg instanceof SVGSVGElement) || !data || busy.value) return
   busy.value = true
-  status.value = ''
   try {
     const png = await renderSharePng(svg)
     const bytes = new Uint8Array(await png.arrayBuffer())
     const saved = await saveExport(exportFileName(data, 'png'), bytes)
-    if (!alive) return
-    status.value = m().share.savedTo(saved)
-    statusTone.value = 'ok'
+    if (saved) showToast(m().share.savedTo(saved), 'success', 5000)
   } catch (cause) {
-    if (!alive) return
-    status.value = exportErrorText(cause)
-    statusTone.value = 'bad'
+    showToast(exportErrorText(cause), 'error')
   } finally {
     if (alive) busy.value = false
   }
@@ -72,17 +66,12 @@ async function exportMarkdown() {
   const data = summary.value
   if (!data || busy.value) return
   busy.value = true
-  status.value = ''
   try {
     const bytes = new TextEncoder().encode(shareMarkdown(data, options))
     const saved = await saveExport(exportFileName(data, 'md'), bytes)
-    if (!alive) return
-    status.value = m().share.savedTo(saved)
-    statusTone.value = 'ok'
+    if (saved) showToast(m().share.savedTo(saved), 'success', 5000)
   } catch (cause) {
-    if (!alive) return
-    status.value = exportErrorText(cause)
-    statusTone.value = 'bad'
+    showToast(exportErrorText(cause), 'error')
   } finally {
     if (alive) busy.value = false
   }
@@ -131,7 +120,6 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="share-actions">
-          <p v-if="status" class="share-status" :class="statusTone" role="status">{{ status }}</p>
           <button type="button" class="share-primary" :disabled="!summary || busy" @click="exportImage"><Share :size="18" />{{ t.share.exportImage }}</button>
           <button type="button" class="share-secondary" :disabled="!summary || busy" @click="exportMarkdown">{{ t.share.exportMarkdown }}</button>
         </div>

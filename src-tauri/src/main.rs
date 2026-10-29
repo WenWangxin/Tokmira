@@ -21,7 +21,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use token_audit_core::advice::{
     build_advice_lang, quota_advice_states, AdviceAlert, AdviceConfig, AdviceInput, AdviceReport,
     AlertTracker,
@@ -592,21 +593,46 @@ async fn get_share_summary(state: State<'_, AppState>) -> Result<ShareSummary, S
 }
 
 #[tauri::command]
-fn save_export(
+async fn save_export(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     file_name: String,
     bytes: Vec<u8>,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
+    let lang = current_lang(&state.data_dir);
     let directory = dirs::download_dir()
         .or_else(dirs::home_dir)
         .ok_or_else(|| display_text("无法确定下载目录", "Could not locate the Downloads folder"))?;
-    let path = share::save_export_file_lang(
-        &directory,
-        &file_name,
-        &bytes,
-        current_lang(&state.data_dir),
-    )?;
-    Ok(path.to_string_lossy().into_owned())
+    let is_png = file_name.to_ascii_lowercase().ends_with(".png");
+    let title = display_text("另存为", "Save As");
+    tauri::async_runtime::spawn_blocking(move || {
+        let dialog = app
+            .dialog()
+            .file()
+            .set_title(title)
+            .set_directory(directory)
+            .set_file_name(&file_name);
+        let dialog = if let Some(window) = app.get_webview_window("main") {
+            dialog.set_parent(&window)
+        } else {
+            dialog
+        };
+        let dialog = if is_png {
+            dialog.add_filter(display_text("PNG 图片", "PNG image"), &["png"])
+        } else {
+            dialog.add_filter(display_text("Markdown 文档", "Markdown document"), &["md"])
+        };
+        let Some(selected) = dialog.blocking_save_file() else {
+            return Ok(None);
+        };
+        let path = selected
+            .into_path()
+            .map_err(|_| display_text("无法使用所选路径", "Could not use the selected path"))?;
+        share::save_export_path_lang(&path, &file_name, &bytes, lang)
+            .map(|saved| Some(saved.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|_| display_text("保存文件失败", "Could not save the file"))?
 }
 
 #[tauri::command]
@@ -1206,6 +1232,7 @@ fn main() -> tauri::Result<()> {
             tray::show_main(app)
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()

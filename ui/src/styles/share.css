@@ -141,16 +141,6 @@
   font-weight: 500;
 }
 
-.share-status {
-  margin: 0 0 2px;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.share-status.ok { color: var(--success); }
-.share-status.bad { color: var(--error); }
-
 @media (max-width: 800px) {
   .share-dialog {
     grid-template-columns: 1fr;

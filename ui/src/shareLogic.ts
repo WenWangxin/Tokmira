@@ -195,29 +195,24 @@ export async function renderSharePng(svg: SVGSVGElement): Promise<Blob> {
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
   clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
   const xml = new XMLSerializer().serializeToString(clone)
-  const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  try {
-    const image = new Image()
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve()
-      image.onerror = () => reject(new Error(m().share.drawFailed))
-      image.src = url
-    })
-    const width = svg.viewBox.baseVal.width || Number(svg.getAttribute('width'))
-    const height = svg.viewBox.baseVal.height || Number(svg.getAttribute('height'))
-    if (!width || !height) throw new Error(m().share.drawFailed)
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(width * 2)
-    canvas.height = Math.round(height * 2)
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error(m().share.drawFailed)
-    context.drawImage(image, 0, 0, canvas.width, canvas.height)
-    const png = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
-    if (!png) throw new Error(m().share.pngFailed)
-    return png
-  } finally {
-    URL.revokeObjectURL(url)
-  }
+  const image = new Image()
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve()
+    image.onerror = () => reject(new Error(m().share.drawFailed))
+    // The desktop CSP allows `img-src 'self' data:` only, so a blob: URL would be refused.
+    image.src = svgDataUri(xml)
+  })
+  const width = svg.viewBox.baseVal.width || Number(svg.getAttribute('width'))
+  const height = svg.viewBox.baseVal.height || Number(svg.getAttribute('height'))
+  if (!width || !height) throw new Error(m().share.drawFailed)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(width * 2)
+  canvas.height = Math.round(height * 2)
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error(m().share.drawFailed)
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+  const png = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+  if (!png) throw new Error(m().share.pngFailed)
+  return png
 }
 import { m, listJoin, formatInteger } from './i18n/index.ts'

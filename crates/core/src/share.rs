@@ -206,6 +206,44 @@ pub fn save_export_file_lang(
     })
 }
 
+/// Writes to the exact path selected by the native save dialog.
+pub fn save_export_path_lang(
+    path: &Path,
+    expected_file_name: &str,
+    bytes: &[u8],
+    lang: crate::i18n::Lang,
+) -> Result<PathBuf, String> {
+    let (_, expected_ext) = export_name_parts(expected_file_name)
+        .map_err(|error| lang.pick(error, "Invalid file name").to_owned())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| lang.pick("文件名无效", "Invalid file name").to_owned())?;
+    let (_, selected_ext) =
+        export_name_parts(&file_name.to_ascii_lowercase()).map_err(|error| {
+            match error {
+                "只能导出 PNG 或 Markdown 文件" => {
+                    lang.pick(error, "Only PNG or Markdown files can be exported")
+                }
+                _ => lang.pick("文件名无效", "Invalid file name"),
+            }
+            .to_owned()
+        })?;
+    if selected_ext != expected_ext {
+        return Err(lang
+            .pick(
+                "文件扩展名不匹配",
+                "File extension does not match the export format",
+            )
+            .to_owned());
+    }
+    fs::write(path, bytes).map_err(|_| {
+        lang.pick("保存文件失败", "Could not save the file")
+            .to_owned()
+    })?;
+    Ok(path.to_path_buf())
+}
+
 fn export_name_parts(file_name: &str) -> Result<(String, String), &'static str> {
     if file_name.is_empty()
         || file_name
@@ -244,7 +282,7 @@ mod tests {
     use chrono::{FixedOffset, TimeZone, Utc};
     use serde_json::json;
 
-    use super::{save_export_file, share_summary};
+    use super::{save_export_file, save_export_path_lang, share_summary};
     use crate::attribution::attribute;
     use crate::codex::RateLimitSnapshot;
     use crate::dashboard::OverviewInput;
@@ -619,5 +657,32 @@ mod tests {
             save_export_file(&temp.0, ".png", b"x").expect_err("dot"),
             "文件名无效"
         );
+    }
+
+    #[test]
+    fn save_export_path_uses_selected_name_and_checks_format() {
+        let temp = Temp::new();
+        fs::create_dir_all(&temp.0).expect("create selected directory");
+        let path = temp.0.join("renamed.png");
+        save_export_path_lang(&path, "tokmira.png", b"first", crate::i18n::Lang::En)
+            .expect("save selected path");
+        save_export_path_lang(&path, "tokmira.png", b"second", crate::i18n::Lang::En)
+            .expect("replace selected path");
+        assert_eq!(fs::read(&path).expect("read"), b"second");
+        assert!(
+            save_export_path_lang(&path, "tokmira.md", b"text", crate::i18n::Lang::En).is_err()
+        );
+        assert_eq!(fs::read(&path).expect("unchanged"), b"second");
+        let upper = temp.0.join("REPORT.PNG");
+        save_export_path_lang(&upper, "tokmira.png", b"upper", crate::i18n::Lang::En)
+            .expect("case insensitive extension");
+        assert_eq!(fs::read(&upper).expect("read uppercase"), b"upper");
+        assert!(save_export_path_lang(
+            &temp.0.join("bad.txt"),
+            "tokmira.png",
+            b"x",
+            crate::i18n::Lang::En
+        )
+        .is_err());
     }
 }

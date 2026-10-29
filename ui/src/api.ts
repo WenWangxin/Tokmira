@@ -661,4 +661,4 @@ export const getShareSummary = () =>
 export const saveExport = (fileName: string, bytes: Uint8Array) =>
   isPreview()
     ? Promise.resolve(previewDownload(fileName, bytes))
-    : invoke<string>('save_export', { fileName, bytes: Array.from(bytes) })
+    : invoke<string | null>('save_export', { fileName, bytes: Array.from(bytes) })
