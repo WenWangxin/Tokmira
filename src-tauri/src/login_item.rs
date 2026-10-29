@@ -122,6 +122,33 @@ pub fn migrate(app: &AppHandle, home: &std::path::Path) {
     let _ = (app, home);
 }
 
+/// Refreshes the registered path after the main bundle moves. The SDK's
+/// SMAppService.h recommends unregistering before registering when an
+/// executable changes; a move changes the executable's absolute path.
+#[cfg(target_os = "macos")]
+pub fn refresh_after_bundle_move(app: &AppHandle) -> Result<(), String> {
+    if native_available() {
+        use objc2_service_management::{SMAppService, SMAppServiceStatus};
+        let service = unsafe { SMAppService::mainAppService() };
+        let status = unsafe { service.status() };
+        if status == SMAppServiceStatus::Enabled || status == SMAppServiceStatus::RequiresApproval {
+            unsafe { service.unregisterAndReturnError() }
+                .map_err(|_| "Could not unregister the moved login item".to_owned())?;
+        }
+        unsafe { service.registerAndReturnError() }
+            .map_err(|_| "Could not register the moved login item".to_owned())?;
+    } else {
+        let launcher = app.autolaunch();
+        launcher
+            .disable()
+            .map_err(|_| "Could not remove the old login item".to_owned())?;
+        launcher
+            .enable()
+            .map_err(|_| "Could not register the moved login item".to_owned())?;
+    }
+    Ok(())
+}
+
 pub fn open_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

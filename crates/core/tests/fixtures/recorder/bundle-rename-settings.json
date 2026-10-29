@@ -1,0 +1,1 @@
+{"theme":"dark","statusLine":{"type":"command","command":"printf previous","padding":4},"hooks":{"Stop":[{"matcher":"external","hooks":[{"type":"command","command":"printf external"}]}]},"other":{"keep":true}}

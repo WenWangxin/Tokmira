@@ -60,6 +60,74 @@ fn both() -> RecorderParts {
 }
 
 #[test]
+fn bundle_rename_reinstalls_only_our_entries_and_preserves_user_settings() {
+    let temp = TempDir::new();
+    let original = include_str!("fixtures/recorder/bundle-rename-settings.json");
+    temp.put_settings(original);
+    let old = temp.0.join("token-audit.app/Contents/MacOS/token-audit");
+    let new = temp.0.join("Tokmira.app/Contents/MacOS/token-audit");
+    install(&temp.home(), &temp.data(), &old, both()).expect("old install");
+    let before = temp.read_settings();
+    let backups = temp.backups();
+
+    let plan = install(&temp.home(), &temp.data(), &new, both()).expect("new install");
+    assert_eq!(plan.changes.len(), 5);
+    assert_eq!(temp.backups(), backups + 1);
+    assert_eq!(
+        fs::read(plan.backup_path.expect("backup")).expect("backup bytes"),
+        canonical(&before)
+    );
+    let after = temp.read_settings();
+    assert_eq!(after["theme"], before["theme"]);
+    assert_eq!(after["other"], before["other"]);
+    assert_eq!(after["statusLine"]["padding"], 4);
+    assert_eq!(after["hooks"]["Stop"][0], before["hooks"]["Stop"][0]);
+    assert!(after["statusLine"]["command"]
+        .as_str()
+        .expect("command")
+        .contains("Tokmira.app"));
+    for event in ["SessionStart", "UserPromptSubmit", "Stop", "SubagentStop"] {
+        let entries = after["hooks"][event].as_array().expect("entries");
+        let ours = entries.last().expect("our entry");
+        assert!(ours["hooks"][0]["command"]
+            .as_str()
+            .expect("command")
+            .contains("Tokmira.app"));
+    }
+    let installed = status(&temp.home(), &temp.data());
+    assert!(installed.statusline_installed && installed.hooks_installed);
+    assert!(!installed.statusline_modified && !installed.hooks_modified);
+}
+
+#[test]
+fn bundle_rename_keeps_statusline_only_installation() {
+    let temp = TempDir::new();
+    temp.put_settings(include_str!(
+        "fixtures/recorder/bundle-rename-settings.json"
+    ));
+    let old = temp.0.join("token-audit.app/Contents/MacOS/token-audit");
+    let new = temp.0.join("Tokmira.app/Contents/MacOS/token-audit");
+    let parts = RecorderParts {
+        statusline: true,
+        hooks: false,
+    };
+    install(&temp.home(), &temp.data(), &old, parts).expect("old install");
+    let before = temp.read_settings();
+    let plan = install(&temp.home(), &temp.data(), &new, parts).expect("new install");
+    assert_eq!(plan.changes.len(), 1);
+    let after = temp.read_settings();
+    assert_eq!(after["hooks"], before["hooks"]);
+    assert_eq!(after["other"], before["other"]);
+    assert!(after["statusLine"]["command"]
+        .as_str()
+        .expect("command")
+        .contains("Tokmira.app"));
+    let installed = status(&temp.home(), &temp.data());
+    assert!(installed.statusline_installed && !installed.statusline_modified);
+    assert!(!installed.hooks_installed && !installed.hooks_modified);
+}
+
+#[test]
 fn installs_and_restores_existing_configuration_with_order_and_backups() {
     let temp = TempDir::new();
     let original = r#"{"alpha":1,"statusLine":{"type":"command","command":"printf old","padding":0},"hooks":{"Stop":[{"matcher":"x","hooks":[{"type":"command","command":"printf stop"}]}],"SessionStart":[]},"omega":2}"#;

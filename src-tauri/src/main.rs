@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "macos")]
+mod bundle_rename;
 mod identity;
 mod login_item;
 mod notifications;
@@ -1122,6 +1124,82 @@ fn open_login_items_settings() -> Result<(), String> {
     login_item::open_settings()
 }
 
+#[cfg(target_os = "macos")]
+fn open_moved_bundle(app: &tauri::App, bundle: &std::path::Path) -> std::io::Result<()> {
+    // The macOS single-instance plugin uses the bundle identifier for its
+    // socket. Release it before `open -n` so the new process can start.
+    app.handle().remove_plugin("single-instance");
+    tauri_plugin_single_instance::destroy(app.handle());
+    let result = std::process::Command::new("/usr/bin/open")
+        .arg("-n")
+        .arg(bundle)
+        .status()
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(
+                    "open could not launch the renamed app",
+                ))
+            }
+        });
+    if result.is_err() {
+        let _ = app
+            .handle()
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                tray::show_main(app)
+            }));
+    }
+    result
+}
+
+#[cfg(target_os = "macos")]
+fn handle_bundle_rename(
+    app: &tauri::App,
+    home: &std::path::Path,
+    data_dir: &std::path::Path,
+) -> bool {
+    use objc2_foundation::NSBundle;
+
+    let bundle = NSBundle::mainBundle();
+    let path = PathBuf::from(bundle.bundlePath().to_string());
+    let identifier = bundle
+        .bundleIdentifier()
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let marker = bundle_rename::marker(data_dir);
+    if path.file_name().is_some_and(|name| name == "Tokmira.app") {
+        if std::fs::read(&marker).is_ok_and(|bytes| bytes == b"enabled\n") {
+            // One attempt only. Renaming back on failure would repeat the whole
+            // migration on every launch; the user can switch autostart on again.
+            let _ = login_item::refresh_after_bundle_move(app.handle());
+        }
+        let _ = std::fs::remove_file(&marker);
+        return false;
+    }
+
+    if bundle_rename::should_migrate(&path, &identifier, !tauri::is_dev())
+        != bundle_rename::Decision::Migrate
+    {
+        return false;
+    }
+    let status = recorder::status(home, data_dir);
+    let parts = RecorderParts {
+        statusline: status.statusline_installed,
+        hooks: status.hooks_installed,
+    };
+    let autostart = login_item::get(app.handle()).enabled;
+    if bundle_rename::execute(&path, home, data_dir, parts, autostart, |new| {
+        open_moved_bundle(app, new)
+    })
+    .is_ok_and(|launched| launched)
+    {
+        app.handle().exit(0);
+        return true;
+    }
+    false
+}
+
 fn main() -> tauri::Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -1150,6 +1228,10 @@ fn main() -> tauri::Result<()> {
                     ))
                 })?
                 .join(identity::LEGACY_NAME);
+            #[cfg(target_os = "macos")]
+            if handle_bundle_rename(app, &home, &data_dir) {
+                return Ok(());
+            }
             let scans = Arc::new(Mutex::new(ScanCache::default()));
             let alerts = spawn_alerts(
                 app.handle().clone(),
