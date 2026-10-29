@@ -2,7 +2,7 @@
 ; crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
 ; Upstream SHA-256: d00089d3b1a2c4a30d7b6e098079100cb8f25e980f84d4515aca4597b95e967d
 ; Licensed under MIT; see TAURI-LICENSE-MIT.
-; Local changes: keep legacy registry identity and rename owned legacy shortcuts.
+; Local changes: keep legacy registry identity, rename owned legacy shortcuts, and clear legacy autostart on uninstall.
 ; Keep in sync with the pinned @tauri-apps/cli version when upgrading the bundler.
 
 Unicode true
@@ -916,6 +916,9 @@ Section Uninstall
   ; We do this when not updating (to preserve the registry value on updates)
   ${If} $UpdateMode <> 1
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    ; Auto-launch still registers under the legacy installation identity.
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${INSTALLIDENTITY}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${INSTALLIDENTITY}"
   ${EndIf}
 
   ; Delete app data if the checkbox is selected

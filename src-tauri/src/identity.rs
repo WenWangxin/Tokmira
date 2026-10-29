@@ -37,5 +37,39 @@ mod tests {
         assert!(installer.contains("!define MANUPRODUCTKEY \"${MANUKEY}\\${INSTALLIDENTITY}\""));
         assert!(installer
             .contains("WriteRegStr SHCTX \"${UNINSTKEY}\" \"DisplayName\" \"${PRODUCTNAME}\""));
+
+        // Limit the text search to the autostart branch so update mode cannot
+        // accidentally remove either legacy registry value.
+        let autostart = installer
+            .split_once("; Removes the Autostart entry")
+            .expect("autostart uninstall section")
+            .1
+            .split_once("; Delete app data if the checkbox is selected")
+            .expect("end of autostart uninstall section")
+            .0;
+        let guarded = autostart
+            .split_once("${If} $UpdateMode <> 1")
+            .expect("non-update guard")
+            .1
+            .split_once("${EndIf}")
+            .expect("end of non-update guard")
+            .0;
+        assert!(guarded.contains(
+            "DeleteRegValue HKCU \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\" \"${PRODUCTNAME}\""
+        ));
+        assert!(guarded.contains(
+            "DeleteRegValue HKCU \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\" \"${INSTALLIDENTITY}\""
+        ));
+        assert!(guarded.contains(
+            "DeleteRegValue HKCU \"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run\" \"${INSTALLIDENTITY}\""
+        ));
+        let autostart_builder = include_str!("main.rs")
+            .split_once("tauri_plugin_autostart::Builder::new()")
+            .expect("autostart builder")
+            .1
+            .split_once(".build()")
+            .expect("end of autostart builder")
+            .0;
+        assert!(autostart_builder.contains(".app_name(identity::LEGACY_NAME)"));
     }
 }

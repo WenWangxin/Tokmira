@@ -3,7 +3,7 @@
 # Windows SmartScreen 需选择「仍要运行」。
 #
 # 应用内更新（M13）：推送 v* 标签后，先建草稿 Release，三个平台并行打包并上传安装包、
-# 更新包、签名和合并后的 latest.json，最后检查 latest.json 是否四个平台都齐。人工检查草稿
+# 更新包和签名；最后由单个任务生成并检查 latest.json。人工检查草稿
 # 再发布，releases/latest 才会指向新版本。更新说明写在附注标签里：
 #   git tag -a v0.2.0 -m "更新说明"
 # 需要仓库 secrets：TAURI_SIGNING_PRIVATE_KEY、TAURI_SIGNING_PRIVATE_KEY_PASSWORD。
@@ -131,7 +131,7 @@ jobs:
         shell: pwsh
         run: .\scripts\build-sidecar.ps1 -Target ${{ matrix.target }}
 
-      # 有 releaseId 时上传到草稿 Release 并合并 latest.json；没有时只打包。
+      # 有 releaseId 时上传到草稿 Release；没有时只打包。
       - name: Bundle
         uses: tauri-apps/tauri-action@action-v1.0.0
         env:
@@ -147,44 +147,51 @@ jobs:
           releaseBody: ${{ needs.create-release.outputs.notes }}
           # 例如 tokmira-1.3.0-windows-amd64-setup.exe、tokmira-1.3.0-macos-universal.dmg。
           releaseAssetNamePattern: tokmira-[version]-${{ matrix.asset_name }}[setup][ext]
-          uploadUpdaterJson: true
-          updaterJsonPreferNsis: true
+          uploadUpdaterJson: false
           retryAttempts: 2
           uploadWorkflowArtifacts: true
           # macOS 同时出 .app 和 .dmg，名字要带 [bundle] 才不会重名。
           workflowArtifactNamePattern: tokmira-${{ matrix.target }}-[bundle]
 
-  # 三个任务各自合并 latest.json，同时完成时可能互相覆盖；缺平台就失败，重跑缺的任务即可。
+  # Wait for every bundle before building one manifest from the draft's uploaded assets.
   check-updater-json:
     needs: [create-release, bundle]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    # 只读，但草稿 Release 对 contents: read 不可见（403）。
+    # Draft Release assets require contents: write access.
     permissions:
       contents: write
     steps:
-      - name: Check latest.json covers every platform
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4.2.0
+        with:
+          node-version: 22
+
+      - name: Generate and check latest.json
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         run: |
-          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
-            --jq '.[] | select(.name == "latest.json") | .id')
-          if [ -z "$asset" ]; then
-            echo "草稿 Release 里没有 latest.json" >&2
-            exit 1
-          fi
-          gh api -H "Accept: application/octet-stream" \
-            "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > latest.json
-          for platform in darwin-aarch64 darwin-x86_64 windows-x86_64 windows-aarch64; do
-            if ! jq -e --arg p "$platform" '.platforms[$p].url and .platforms[$p].signature' latest.json > /dev/null; then
-              echo "latest.json 缺少 $platform" >&2
-              exit 1
-            fi
-          done
-          # requireSignedVersion 会拒绝版本与签名不一致的更新，这里提前拦住。
-          if [ "$(jq -r .version latest.json)" != "${GITHUB_REF_NAME#v}" ]; then
-            echo "latest.json 的版本 $(jq -r .version latest.json) 与标签 $GITHUB_REF_NAME 不一致" >&2
-            exit 1
-          fi
-          jq '{version, platforms: (.platforms | keys)}' latest.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" > assets.json
+          mkdir signatures
+          jq -r '.[] | select(.name | endswith(".sig")) | [.id, .name] | @tsv' assets.json |
+            while IFS="$(printf '\t')" read -r asset_id asset_name; do
+              gh api -H "Accept: application/octet-stream" \
+                "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "signatures/$asset_name"
+            done
+          node tool/updater_manifest.mjs release.json assets.json signatures latest.json
+
+      - name: Replace draft manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: |
+          jq -r '.[] | select(.name == "latest.json") | .id' assets.json |
+            while read -r asset_id; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done
+          gh release upload "$GITHUB_REF_NAME" latest.json --repo "$GITHUB_REPOSITORY"
