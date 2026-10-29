@@ -3,7 +3,7 @@ import { clock, compactText, messages, m, monthDay } from '../i18n/index.ts'
 const t = messages
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Cpu, Folder, GitFork, List, Zap, Database, CircleAlert } from 'lucide-vue-next'
+import { Cpu, Folder, GitFork, List, Zap, Database, CircleAlert, CircleHelp } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import { vSelectionSlide } from '../components/selectionSlide'
@@ -172,6 +172,11 @@ const chartSegments = computed(() => {
 const chartWidth = (value: number) => `${Math.max(0, Math.min(100, value))}%`
 const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.map(row =>
   `${row.display_name || row.key} ${percent(row.percent)}`).join(' · ') ?? '')
+// Shares outside local Claude Code logs, quoted as-is from the official breakdown.
+const offLogShare = computed(() => detail.value?.official_weekly_breakdown?.rows.filter(row => row.key !== 'claude_code').map(row =>
+  `${row.display_name || row.key} ${percent(row.percent)}`).join(' · ') ?? '')
+const helpOpen = ref(false)
+const helpVisible = computed(() => helpOpen.value && (detail.value?.unattributed_total ?? 0) > 0)
 </script>
 
 <template>
@@ -201,7 +206,21 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
         <section class="card usage-overview content-reveal" :aria-label="t.usage.overview">
           <div class="usage-overview-top"><div class="usage-overview-main"><span>{{ t.usage.windowUsed }}</span><strong>{{ percent(detail.used_percent) }}</strong><span class="origin-pill" :class="detail.origin === 'Manual' ? 'pill-warning' : detail.origin === 'Estimated' ? 'pill-neutral' : 'pill-success'">{{ originText }}</span></div><span class="usage-reset">{{ selected?.is_current ? t.usage.remaining(percent(detail.remaining_percent)) : t.usage.ended }} · {{ t.usage.resetsAt(toTime(detail.resets_at)) }}</span></div>
           <div class="usage-bar" role="img" :aria-label="t.usage.barLabel(percent(detail.used_percent), percent(detail.attributed_total), percent(detail.unattributed_total))"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`" :class="`usage-segment usage-level-${part.level}`" :style="{ width: barsReady ? chartWidth(part.value) : '0%' }" /><span class="usage-remainder" :style="{ width: barsReady ? chartWidth(detail.remaining_percent) : '0%' }" /></div>
-          <div class="usage-legend"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`"><i :class="`usage-level-${part.level}`" />{{ part.name }} {{ percent(part.value) }}</span></div>
+          <div class="usage-legend"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`"><i :class="`usage-level-${part.level}`" />{{ part.name }} {{ percent(part.value) }}<button v-if="part.level === 5" type="button" class="usage-help-toggle" :class="{ active: helpVisible }" :title="t.usage.unattributedHelp.toggle" :aria-label="t.usage.unattributedHelp.toggle" :aria-expanded="helpVisible" aria-controls="usage-unattributed-help" @click="helpOpen = !helpOpen"><CircleHelp :size="13" /></button></span></div>
+          <div v-if="helpVisible" id="usage-unattributed-help" class="usage-help" role="region" :aria-label="t.usage.unattributedHelp.title">
+            <strong>{{ t.usage.unattributedHelp.title }}</strong>
+            <h3>{{ t.usage.unattributedHelp.includesTitle }}</h3>
+            <p class="settings-note">{{ tool === 'Claude' ? t.usage.unattributedHelp.includesClaude : t.usage.unattributedHelp.includesCodex }}<template v-if="tool === 'Claude' && offLogShare"> {{ t.usage.unattributedHelp.officialShare(offLogShare) }}</template></p>
+            <h3>{{ t.usage.unattributedHelp.excludesTitle }}</h3>
+            <p class="settings-note">{{ t.usage.unattributedHelp.excludes }}</p>
+            <h3>{{ t.usage.unattributedHelp.accuracyTitle }}</h3>
+            <ul class="settings-note">
+              <li>{{ tool === 'Claude' ? t.usage.unattributedHelp.shrinkClaude : t.usage.unattributedHelp.shrinkCodex }}</li>
+              <li>{{ tool === 'Claude' ? t.usage.unattributedHelp.denserClaude : t.usage.unattributedHelp.denserCodex }}</li>
+              <li v-if="tool === 'Claude'">{{ t.usage.unattributedHelp.desktopOnly }}</li>
+            </ul>
+            <p class="settings-note usage-help-basis">{{ t.usage.unattributedHelp.basis(percent(detail.used_percent), percent(detail.attributed_total), percent(detail.unattributed_total)) }}</p>
+          </div>
           <p v-if="breakdown" class="usage-breakdown">{{ t.usage.officialBreakdown(breakdown) }}</p>
           <p class="usage-note">{{ breakdown ? t.usage.noteWithBreakdown : t.usage.noteUnattributed }}</p>
         </section>

@@ -20,6 +20,13 @@
 .usage-remainder { flex: none; background: var(--surface-container-high); }
 .usage-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; color: var(--on-surface-variant); font-size: 11px; }
 .usage-legend span { display: flex; align-items: center; gap: 5px; }.usage-legend i { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.usage-help-toggle { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-left: -1px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--on-surface-muted); }
+.usage-help-toggle:hover, .usage-help-toggle.active { background: var(--surface-container-high); color: var(--on-surface); }
+.usage-help { max-width: 640px; margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--surface-container-high); }
+.usage-help > strong { font-size: 13px; font-weight: 600; }
+.usage-help h3 { margin: 10px 0 0; color: var(--on-surface-variant); font-size: 12px; font-weight: 600; }
+.usage-help ul.settings-note { padding-left: 18px; }
+.usage-help-basis { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--outline-variant); }
 .usage-note, .usage-breakdown { margin: 12px 0 0; color: var(--on-surface-muted); font-size: 11px; line-height: 1.5; }
 .usage-breakdown { color: var(--on-surface-variant); }
 .usage-grid { display: grid; grid-template-columns: minmax(0, 584fr) minmax(0, 316fr); align-items: start; gap: 16px; max-width: 916px; }

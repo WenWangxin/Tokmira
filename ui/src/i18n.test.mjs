@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { compactNumber, compactText, locale } from './i18n/index.ts'
+import zh from './i18n/zh.ts'
+import en from './i18n/en.ts'
 import { sourceRows } from './sourceStatus.ts'
 import { onboardingSummary, quotaOutcome } from './onboardingLogic.ts'
 import { defaultShareOptions, shareMarkdown } from './shareLogic.ts'
@@ -40,4 +42,15 @@ test('English quota units, source rows, setup summary and share export', () => {
   } finally {
     locale.value = 'zh'
   }
+})
+
+test('unattributed help says denser readings may make it larger', () => {
+  const texts = help => Object.values(help).map(value => typeof value === 'function' ? value('1%', '2%', '3%') : value)
+  for (const key of ['denserClaude', 'denserCodex']) {
+    assert.match(zh.usage.unattributedHelp[key], /可能因此变大，这是正常的/)
+    assert.match(en.usage.unattributedHelp[key], /may get larger\. This is normal/)
+  }
+  assert.equal(zh.usage.unattributedHelp.accuracyTitle, '怎样更准、怎样变小')
+  for (const text of texts(en.usage.unattributedHelp)) assert.doesNotMatch(text, /[一-龥]/)
+  assert.deepEqual(Object.keys(en.usage.unattributedHelp), Object.keys(zh.usage.unattributedHelp))
 })

@@ -11,19 +11,24 @@ const rank = (key: string, name: string, subtitle: string, tokens: number, delta
   ({ key, name, subtitle, tokens, requests, delta })
 
 export function mockUsageDetail(window: UsageWindowRef): UsageDetail {
-  const empty = new URLSearchParams(location.search).get('mock') === 'empty'
+  const variant = new URLSearchParams(location.search).get('mock')
+  const empty = variant === 'empty'
+  // `?mock=unattributed`: same used total, but most of it has no local request behind it.
+  const unattributed = variant === 'unattributed'
+  const scale = unattributed ? 2 / 3 : 1
+  const share = (delta: number) => Math.round(delta * scale * 10) / 10
   const visibleEnd = Math.min(Date.now(), Date.parse(window.end))
   const range = Math.max(1, visibleEnd - Date.parse(window.start))
   const promptAt = (fraction: number) => new Date(Date.parse(window.start) + range * fraction).toISOString()
   const sessions = empty ? [] : [
-    rank('sample-session-01', '重构登录模块', '示例项目 · 命令行', 1240000, 9.6, 12),
-    rank('sample-session-02', '写对账单元测试', '示例项目 · 桌面端', 760000, 5.8, 8),
-    rank('sample-session-03', '检查缓存逻辑', '审计工具 · 命令行', 510000, 3.9, 5),
-    rank('sample-session-04', '修复报告', '审计工具 · 桌面端', 220000, 1.7, 2),
+    rank('sample-session-01', '重构登录模块', '示例项目 · 命令行', 1240000, share(9.6), 12),
+    rank('sample-session-02', '写对账单元测试', '示例项目 · 桌面端', 760000, share(5.8), 8),
+    rank('sample-session-03', '检查缓存逻辑', '审计工具 · 命令行', 510000, share(3.9), 5),
+    rank('sample-session-04', '修复报告', '审计工具 · 桌面端', 220000, share(1.7), 2),
   ]
-  const projects = empty ? [] : [rank('/sample/project', '示例项目', '2 个会话', 2000000, 15.4, 20), rank('/sample/audit', '审计工具', '2 个会话', 730000, 5.6, 7)]
-  const models = empty ? [] : [rank('sample-model-large', '示例大模型', '19 次请求', 1840000, 14.2, 19), rank('sample-model-small', '示例小模型', '8 次请求', 890000, 6.8, 8)]
-  const subagents = empty ? [] : [rank('main', '主对话', '22 次请求', 2400000, 18.2, 22), rank('subagent', '子代理', '5 次请求', 330000, 2.8, 5)]
+  const projects = empty ? [] : [rank('/sample/project', '示例项目', '2 个会话', 2000000, share(15.4), 20), rank('/sample/audit', '审计工具', '2 个会话', 730000, share(5.6), 7)]
+  const models = empty ? [] : [rank('sample-model-large', '示例大模型', '19 次请求', 1840000, share(14.2), 19), rank('sample-model-small', '示例小模型', '8 次请求', 890000, share(6.8), 8)]
+  const subagents = empty ? [] : [rank('main', '主对话', '22 次请求', 2400000, share(18.2), 22), rank('subagent', '子代理', '5 次请求', 330000, share(2.8), 5)]
   const primary = window.tool === 'Claude' ? 'sample-claude-02' : 'sample-codex-01'
   const secondary = window.tool === 'Claude' ? 'sample-claude-04' : 'sample-codex-03'
   const primaryTitle = window.tool === 'Claude' ? '重构登录模块' : '迁移数据库脚本'
@@ -37,20 +42,20 @@ export function mockUsageDetail(window: UsageWindowRef): UsageDetail {
   return {
     window, used_percent: 28, remaining_percent: 72, resets_at: window.end,
     origin: window.tool === 'Claude' ? 'Statusline' : 'Log',
-    attributed_total: empty ? 0 : 21, unattributed_total: empty ? 28 : 7,
+    attributed_total: empty ? 0 : unattributed ? 14 : 21, unattributed_total: empty ? 28 : unattributed ? 14 : 7,
     sessions, projects, models, subagents, high_prompts,
     official_weekly_breakdown: window.tool === 'Claude' && window.kind === 'Weekly' ? {
       as_of: at(-10), window_started_at: window.start, rows: [
-        { key: 'claude_code', display_name: 'Claude Code', percent: 98 },
-        { key: 'chat', display_name: '聊天', percent: 0 },
-        { key: 'cowork', display_name: 'Cowork', percent: 2 },
+        { key: 'claude_code', display_name: 'Claude Code', percent: unattributed ? 85 : 98 },
+        { key: 'chat', display_name: '聊天', percent: unattributed ? 12 : 0 },
+        { key: 'cowork', display_name: 'Cowork', percent: unattributed ? 3 : 2 },
         { key: 'other', display_name: '其他', percent: 0 },
       ],
     } : null,
   }
 }
 
-export function mockUsage(tool: Tool, variant: 'default' | 'empty' | 'nodata'): UsageResponse {
+export function mockUsage(tool: Tool, variant: 'default' | 'empty' | 'nodata' | 'unattributed'): UsageResponse {
   if (variant === 'nodata') return { windows: [], detail: null }
   const windows = [windowRef(tool, 'FiveHour', -280, 20), windowRef(tool, 'FiveHour', -600, -300),
     windowRef(tool, 'FiveHour', -920, -620), windowRef(tool, 'Weekly', -7500, 2580)]
