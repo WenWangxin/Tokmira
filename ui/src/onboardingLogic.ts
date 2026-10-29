@@ -83,6 +83,19 @@ export interface DetectedSource {
   plan: string | null
 }
 
+/**
+ * What step 2 found. `none`: no source has a local log. `claude_desktop_only`: Claude logs come only
+ * from the desktop app, which never runs the status line. Everything else is `normal`.
+ */
+export type DetectionCase = 'none' | 'claude_desktop_only' | 'normal'
+
+export function detectionCase(detected: readonly DetectedSource[]): DetectionCase {
+  const sessions = (source: string) => detected.find(item => item.source === source)?.sessions ?? 0
+  if (!detected.some(item => item.sessions > 0)) return 'none'
+  if (sessions('ClaudeDesktop') > 0 && sessions('ClaudeCli') <= 0) return 'claude_desktop_only'
+  return 'normal'
+}
+
 export interface ToolRow {
   source: string
   name: string
@@ -136,16 +149,19 @@ export interface QuotaSourceInfo {
   key: keyof OnboardingSelection
   title: string
   description: string
-  /** Shown under the description, e.g. a system prompt the user will see. */
+  /** Shown under the description while the switch is on, e.g. a system prompt the user will see. */
   hint?: string
+  /** Always shown: why the source is worth turning on and what turning it on does. */
+  notes: string[]
 }
 
-export function quotaSources(): readonly QuotaSourceInfo[] {
+export function quotaSources(kind: DetectionCase = 'normal'): readonly QuotaSourceInfo[] {
   const t = m().onboarding
+  const statuslineNotes = kind === 'claude_desktop_only' ? [t.statuslineNeedsCli, t.statuslineEffect] : [t.statuslineEffect]
   return [
-    { key: 'statusline', title: t.statuslineTitle, description: t.statuslineDesc },
-    { key: 'claudeOfficial', title: t.claudeTitle, description: t.claudeDesc, hint: t.claudeHint },
-    { key: 'codexOfficial', title: t.codexTitle, description: t.codexDesc },
+    { key: 'statusline', title: t.statuslineTitle, description: t.statuslineDesc, notes: statuslineNotes },
+    { key: 'claudeOfficial', title: t.claudeTitle, description: t.claudeDesc, hint: t.claudeHint, notes: [t.claudeWorth, t.claudeEffect] },
+    { key: 'codexOfficial', title: t.codexTitle, description: t.codexDesc, notes: [t.codexWorth, t.codexEffect] },
   ]
 }
 

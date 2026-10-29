@@ -45,6 +45,7 @@
 .quota-facts strong.forecast-text { font-size: 13px; }
 .quota-facts small { overflow: hidden; margin-top: 2px; color: var(--on-surface-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .success-text { color: var(--success) !important; }.warning-text { color: var(--warning) !important; }.error-text { color: var(--error) !important; }
+.quota-links { display: flex; flex-wrap: wrap; column-gap: 14px; }
 .settings-link { display: flex; align-items: center; gap: 4px; max-width: 100%; margin-top: 6px; padding: 0; border: 0; background: none; color: var(--primary); font-size: 12px; text-align: left; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .metric-card { display: flex; flex-direction: column; min-height: 173px; padding: 16px 20px 18px; }

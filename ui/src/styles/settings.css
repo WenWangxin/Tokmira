@@ -13,6 +13,8 @@
 .settings-card-head > svg { width: 26px; height: 26px; padding: 5px; border-radius: 8px; background: var(--surface-container-high); }
 .settings-row { display: flex; gap: 14px; align-items: center; min-height: 68px; padding: 12px 0; border-top: 1px solid var(--outline-variant); }
 .settings-card-head + .settings-row { border-top: 0; }
+/* Deep-link target (/settings?section=…): the focus outline, shown briefly. */
+.settings-target { border-radius: 12px; outline: 2px solid var(--primary); outline-offset: 4px; }
 .settings-icon { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 10px; background: var(--surface-container-high); color: var(--on-surface-variant); }
 .settings-main { flex: 1; min-width: 0; }
 .settings-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--on-surface); font-size: 15px; font-weight: 600; line-height: 1.4; }

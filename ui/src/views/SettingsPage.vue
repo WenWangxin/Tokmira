@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { showToast } from '../toast'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { listen } from '@tauri-apps/api/event'
 import { BellRing, CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Info, Languages, LogIn, MonitorOff, Palette, Power, RefreshCw, Scale, SlidersHorizontal, Tag, Terminal, Trash2 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -94,6 +94,7 @@ const menuBarTools: Tool[] = ['Claude', 'Codex']
 /** The menu bar has room for two quotas, stacked. */
 const MENU_BAR_TOOLS_MAX = 2
 const router = useRouter()
+const route = useRoute()
 const parsedPercent = computed(() => parsePercent(percentText.value))
 const locked = computed(() => confirming.value || dialog.value !== null)
 const recorderDialog = computed(() => (dialog.value?.kind === 'recorder' ? dialog.value : null))
@@ -279,6 +280,37 @@ async function load() {
     loading.value = false
   }
 }
+
+// Deep links such as /settings?section=calibration scroll to one row and briefly outline it.
+const SECTIONS = ['calibration', 'sources', 'recorder', 'about'] as const
+type Section = typeof SECTIONS[number]
+const page = ref<HTMLElement | null>(null)
+const target = ref<Section | null>(null)
+let handledSection = ''
+let targetTimer: ReturnType<typeof setTimeout> | undefined
+
+function isSection(value: unknown): value is Section {
+  return typeof value === 'string' && (SECTIONS as readonly string[]).includes(value)
+}
+
+watch([() => route.query.section, settings], ([section]) => {
+  if (!isSection(section)) { handledSection = ''; return }
+  // Reloads (language change, realtime refresh) must not scroll again.
+  if (!settings.value || handledSection === section) return
+  const element = page.value?.querySelector<HTMLElement>(`[data-section="${section}"]`)
+  if (!element) return
+  handledSection = section
+  const tool = route.query.tool
+  if (section === 'calibration' && (tool === 'Claude' || tool === 'Codex') && tool !== calibrationTool.value) {
+    calibrationTool.value = tool
+    if (settings.value.calibration?.tool !== tool) percentText.value = ''
+  }
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  element.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
+  target.value = section
+  if (targetTimer) clearTimeout(targetTimer)
+  targetTimer = setTimeout(() => { target.value = null }, 1800)
+}, { flush: 'post', immediate: true })
 
 async function save(next: AppSettings) {
   const previous = settings.value
@@ -488,13 +520,14 @@ onMounted(() => {
 })
 onUnmounted(() => {
   if (loadingTimer) clearTimeout(loadingTimer)
+  if (targetTimer) clearTimeout(targetTimer)
   window.removeEventListener('focus', onWindowFocus)
   void stopProgress?.then(stop => stop())
 })
 </script>
 
 <template>
-  <div class="dashboard-page settings-page" :class="{ 'no-entry-reveal': !reveal }">
+  <div ref="page" class="dashboard-page settings-page" :class="{ 'no-entry-reveal': !reveal }">
     <header class="dashboard-header">
       <div>
         <h1>{{ t.pages.settings.title }}</h1>
@@ -508,10 +541,10 @@ onUnmounted(() => {
       <CircleAlert :size="28" /><strong>{{ t.settings.loadFailed }}</strong><p>{{ loadError }}</p><button type="button" @click="load">{{ t.common.retry }}</button>
     </div>
     <template v-else-if="settings && environment && recorder">
-      <article class="card settings-card content-reveal">
+      <article class="card settings-card content-reveal" data-section="sources" :class="{ 'settings-target': target === 'sources' }">
         <header class="settings-card-head"><Database :size="16" aria-hidden="true" />{{ t.settings.dataSources }}</header>
 
-        <div class="settings-row">
+        <div class="settings-row" data-section="recorder" :class="{ 'settings-target': target === 'recorder' }">
           <span class="settings-icon"><Gauge :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
             <div class="settings-title">{{ t.settings.statuslineTitle }}<span class="origin-pill settings-pill" :class="recorderPill(recorder.statusline_installed, recorder.statusline_modified).tone"><i />{{ recorderPill(recorder.statusline_installed, recorder.statusline_modified).text }}</span></div>
@@ -561,7 +594,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="settings-row settings-row-complex">
+        <div class="settings-row settings-row-complex" data-section="calibration" :class="{ 'settings-target': target === 'calibration' }">
           <span class="settings-icon"><Scale :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
             <div class="settings-title">{{ t.settings.calibrationTitle }}</div>
@@ -728,7 +761,7 @@ onUnmounted(() => {
         </div>
       </article>
 
-      <article class="card settings-card">
+      <article class="card settings-card" data-section="about" :class="{ 'settings-target': target === 'about' }">
         <header class="settings-card-head"><Info :size="16" aria-hidden="true" />{{ t.settings.about }}</header>
 
         <div class="settings-row">

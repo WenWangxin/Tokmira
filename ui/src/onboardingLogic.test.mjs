@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mockDetectedTools } from './mocks/onboarding.ts'
+import { m } from './i18n/index.ts'
 import {
+  detectionCase,
   quotaSources,
   notificationLine,
   trayPlace,
@@ -98,6 +100,8 @@ test('install and quota sentences, and when the dashboard notice should warn', (
 test('preview query forces the guide only in the browser preview', () => {
   assert.equal(previewOnboardingForced('?onboarding=1', true), true)
   assert.equal(previewOnboardingForced('?onboarding=1&mock=nodesktop', true), true)
+  assert.equal(previewOnboardingForced('?onboarding=1&mock=nologs', true), true)
+  assert.equal(previewOnboardingForced('?onboarding=1&mock=desktoponly', true), true)
   assert.equal(previewOnboardingForced('', true), false)
   assert.equal(previewOnboardingForced('?onboarding=1', false), false)
 })
@@ -115,6 +119,44 @@ test('preview fixtures cover both tools and a missing Claude desktop log', () =>
   assert.equal(desktop.last_used_at, null)
   assert.equal(toolSubtitle(desktop.source, desktop.sessions, desktop.plan), '未检测到本机日志')
   assert.equal(precisionPill(desktop.source, desktop.sessions).text, '未检测到')
+})
+
+test('detection case: no logs, Claude desktop only, or normal', () => {
+  assert.equal(detectionCase(mockDetectedTools('nologs')), 'none')
+  assert.equal(detectionCase([]), 'none')
+  assert.equal(detectionCase(mockDetectedTools('desktoponly')), 'claude_desktop_only')
+  assert.equal(detectionCase(mockDetectedTools(null)), 'normal')
+  assert.equal(detectionCase(mockDetectedTools('nodesktop')), 'normal')
+  // Codex logs do not change the Claude desktop-only case.
+  const desktopAndCodex = mockDetectedTools('desktoponly').map(tool => tool.source === 'CodexCli' ? { ...tool, sessions: 2 } : tool)
+  assert.equal(detectionCase(desktopAndCodex), 'claude_desktop_only')
+  // Codex only: Claude has nothing to explain.
+  const codexOnly = mockDetectedTools('nologs').map(tool => tool.source === 'CodexDesktop' ? { ...tool, sessions: 3 } : tool)
+  assert.equal(detectionCase(codexOnly), 'normal')
+})
+
+test('preview fixtures for no logs and Claude desktop only', () => {
+  const none = mockDetectedTools('nologs')
+  assert.deepEqual(none.map(tool => tool.source), ['ClaudeCli', 'ClaudeDesktop', 'CodexCli', 'CodexDesktop'])
+  assert.ok(none.every(tool => tool.sessions === 0 && tool.requests === 0 && tool.last_used_at === null))
+  const desktopOnly = mockDetectedTools('desktoponly')
+  assert.deepEqual(desktopOnly.filter(tool => tool.sessions > 0).map(tool => tool.source), ['ClaudeDesktop'])
+})
+
+test('quota sources explain each switch; the status line needs the CLI for desktop-only users', () => {
+  const normal = quotaSources()
+  assert.ok(normal.every(item => item.notes.length > 0))
+  const statusline = normal.find(item => item.key === 'statusline')
+  assert.deepEqual(statusline.notes, [m().onboarding.statuslineEffect])
+  assert.match(statusline.notes[0], /零联网/)
+  const claude = normal.find(item => item.key === 'claudeOfficial')
+  assert.deepEqual(claude.notes, [m().onboarding.claudeWorth, m().onboarding.claudeEffect])
+  assert.match(claude.notes[1], /Anthropic/)
+  assert.match(claude.notes[1], /不自行刷新/)
+  assert.ok(!normal.find(item => item.key === 'codexOfficial').notes.some(note => /Anthropic|凭据/.test(note)))
+  const desktopOnly = quotaSources('claude_desktop_only').find(item => item.key === 'statusline')
+  assert.deepEqual(desktopOnly.notes, [m().onboarding.statuslineNeedsCli, m().onboarding.statuslineEffect])
+  assert.deepEqual(quotaSources('none').find(item => item.key === 'statusline').notes, [m().onboarding.statuslineEffect])
 })
 
 test('setup summary is short on success and lists only failures', () => {

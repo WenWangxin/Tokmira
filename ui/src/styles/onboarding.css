@@ -152,6 +152,7 @@
 .onboarding-outcome { margin: 8px 0 0; color: var(--on-surface); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .onboarding-error { margin: 8px 0 0; color: var(--error); font-size: 12px; line-height: 1.55; }
 .onboarding-plan > :first-child { margin-top: 0; }
+.onboarding-redetect { margin: 4px 0 -8px -12px; }
 .onboarding-notify-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; margin-top: 8px; }
 .onboarding-notify-status { display: inline-flex; gap: 8px; align-items: center; color: var(--on-surface); font-size: 13px; }
 .onboarding-notify-status i { width: 8px; height: 8px; border-radius: 99px; background: var(--outline); }

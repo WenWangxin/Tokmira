@@ -192,7 +192,7 @@ const helpVisible = computed(() => helpOpen.value && (detail.value?.unattributed
     <PageSkeleton v-if="pending && loading" kind="usage" />
     <div v-else-if="pending" class="page-await" />
     <div v-else-if="error && !selected" class="center-state"><CircleAlert :size="28" /><strong>{{ t.usage.loadFailed }}</strong><p>{{ error }}</p><button @click="load()">{{ t.common.retry }}</button></div>
-    <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>{{ t.usage.noData(tool) }}</strong><p>{{ t.usage.noDataBody }}</p><button @click="router.push('/settings')">{{ t.usage.goSettings }}</button></div>
+    <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>{{ t.usage.noData(tool) }}</strong><p>{{ t.usage.noDataBody }}</p><button @click="router.push({ path: '/settings', query: { section: 'sources' } })">{{ t.usage.goSettings }}</button></div>
     <template v-else>
       <nav class="usage-window-list" :aria-label="t.usage.windows">
         <button v-for="window in windows[tool]" :key="`${window.kind}-${window.window_id}`" :class="{ active: selected?.kind === window.kind && selected?.window_id === window.window_id }" :aria-current="selected?.window_id === window.window_id ? 'true' : undefined" @click="selectWindow(window)">

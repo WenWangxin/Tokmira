@@ -22,6 +22,7 @@ import {
 import {
   quotaSources,
   detectedToolRows,
+  detectionCase,
   initialOnboardingChoices,
   installOutcome,
   notificationLine,
@@ -36,7 +37,6 @@ import { finishOnboarding } from '../onboardingState'
 
 const t = messages
 const checks = computed(() => t.value.onboarding.checks)
-const quotaChoices = computed(() => quotaSources())
 
 const STEPS = 4
 const REMINDER_STEP = 3
@@ -74,6 +74,9 @@ let heightListener: ((event: TransitionEvent) => void) | null = null
 let enterDone: (() => void) | null = null
 
 const rows = computed(() => detectedToolRows(tools.value ?? []))
+// Only a finished scan picks a branch; a failed or running first scan shows its own state.
+const detection = computed(() => (tools.value ? detectionCase(tools.value) : 'normal'))
+const quotaChoices = computed(() => quotaSources(detection.value))
 const notifyLine = computed(() => notificationLine(notifications.value))
 const primaryLabel = computed(() => (step.value === 1 ? m().onboarding.start : step.value < STEPS ? m().onboarding.next : m().onboarding.finish))
 const nextDisabled = computed(() => busy.value || transitioning.value || (step.value === 2 && detecting.value && !tools.value))
@@ -386,6 +389,13 @@ onUnmounted(() => {
                   <span class="origin-pill settings-pill" :class="row.pill.tone === 'success' ? 'pill-success' : 'pill-neutral'"><i />{{ row.pill.text }}</span>
                 </li>
               </ul>
+              <section v-if="tools && detection === 'none'" class="onboarding-plan" aria-live="polite">
+                <p class="onboarding-outcome">{{ t.onboarding.noLogsNote }}</p>
+                <button type="button" class="onboarding-text onboarding-redetect" :disabled="detecting" @click="loadTools">{{ detecting ? t.onboarding.redetecting : t.onboarding.redetect }}</button>
+              </section>
+              <section v-else-if="tools && detection === 'claude_desktop_only'" class="onboarding-plan">
+                <p class="onboarding-outcome">{{ t.onboarding.desktopOnlyNote }}</p>
+              </section>
               <p class="onboarding-footnote"><Info :size="15" aria-hidden="true" />{{ t.onboarding.chatsExcluded }}</p>
             </template>
 
@@ -427,6 +437,7 @@ onUnmounted(() => {
                   <div class="onboarding-choice-main">
                     <strong>{{ item.title }}</strong>
                     <p>{{ item.description }}</p>
+                    <p v-for="note in item.notes" :key="note" class="onboarding-hint">{{ note }}</p>
                     <p v-if="item.hint && selection[item.key]" class="onboarding-hint">{{ item.hint }}</p>
                   </div>
                   <Toggle :checked="selection[item.key]" :disabled="busy" :label="item.title" @toggle="toggle(item.key)" />
