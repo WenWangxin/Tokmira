@@ -54,3 +54,25 @@ test('unattributed help says denser readings may make it larger', () => {
   for (const text of texts(en.usage.unattributedHelp)) assert.doesNotMatch(text, /[一-龥]/)
   assert.deepEqual(Object.keys(en.usage.unattributedHelp), Object.keys(zh.usage.unattributedHelp))
 })
+
+test('advice next step copy texts and preview commands', async () => {
+  const { mockAdvice } = await import('./mocks/advice.ts')
+  assert.equal(zh.advice.copyFailed, '复制失败，请手动选择命令')
+  for (const text of [en.advice.nextStep, en.advice.copyCommand, en.advice.copied('/compact'), en.advice.copyFailed]) {
+    assert.doesNotMatch(text, /[一-龥]/)
+  }
+  for (const lang of ['zh', 'en']) {
+    locale.value = lang
+    try {
+      const items = mockAdvice(7, null).tools.flatMap(tool => tool.items)
+      for (const item of items) assert.ok(item.next_step?.text, `${item.key} has a next step`)
+      // Codex commands are unverified, and reference rules never get a copy button.
+      for (const item of items.filter(item => item.tool === 'Codex' || ['session_startup', 'quota_rebalance', 'plan_fit'].includes(item.id))) {
+        assert.equal(item.next_step.command, null, item.key)
+      }
+      if (lang === 'en') for (const item of items) assert.doesNotMatch(item.next_step.text, /[一-龥]/)
+    } finally {
+      locale.value = 'zh'
+    }
+  }
+})

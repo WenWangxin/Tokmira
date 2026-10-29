@@ -4,7 +4,7 @@ const t = messages
 import { showToast } from '../toast'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeftRight, Brain, CircleAlert, Clock, Coins, Cpu, ExternalLink, FileStack, Gauge, GitFork, Layers, Lightbulb, List, Network, Search, Sparkles, TrendingUp, WandSparkles, Zap } from 'lucide-vue-next'
+import { ArrowLeftRight, Brain, CircleAlert, Clock, Coins, Copy, Cpu, ExternalLink, FileStack, Gauge, GitFork, Layers, Lightbulb, List, Network, Search, Sparkles, TrendingUp, WandSparkles, Zap } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import AnimatedNumber from '../components/AnimatedNumber.vue'
@@ -87,6 +87,17 @@ async function dismiss(item: AdviceItem) {
   }
 }
 
+/** Uses the WebView clipboard; no clipboard plugin or extra capability. */
+async function copyCommand(command: string) {
+  try {
+    if (!navigator.clipboard) throw new Error('clipboard unavailable')
+    await navigator.clipboard.writeText(command)
+    showToast(m().advice.copied(command), 'success')
+  } catch {
+    showToast(m().advice.copyFailed, 'warning')
+  }
+}
+
 onMounted(() => { void load() })
 watch(usageRevision, () => { void load(true) })
 const current = computed(() => report.value?.tools.find(item => item.tool === tool.value) ?? null)
@@ -164,6 +175,14 @@ function impact(item: AdviceItem) {
           </div>
           <div class="advice-facts"><span v-for="fact in item.facts" :key="fact">{{ fact }}</span></div>
           <p class="advice-description">{{ item.description }}</p>
+          <div v-if="item.next_step" class="advice-next-step">
+            <span class="advice-next-label">{{ t.advice.nextStep }}</span>
+            <span class="advice-next-text">{{ item.next_step.text }}</span>
+            <template v-if="item.next_step.command">
+              <code>{{ item.next_step.command }}</code>
+              <button class="advice-copy" :aria-label="t.advice.copyCommand" :title="t.advice.copyCommand" @click="copyCommand(item.next_step.command)"><Copy :size="14" />{{ t.advice.copyCommand }}</button>
+            </template>
+          </div>
           <div class="advice-actions">
             <a v-if="item.link" class="advice-link" :href="item.link.url" target="_blank" rel="noopener noreferrer"><ExternalLink :size="18" />{{ item.link.label }}</a>
             <button class="advice-dismiss" @click="dismiss(item)">{{ t.advice.dismiss }}</button>

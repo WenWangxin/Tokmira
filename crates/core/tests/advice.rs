@@ -96,7 +96,8 @@ fn checked_report(input: &AdviceInput<'_>, days: u32, at: DateTime<Utc>) -> Advi
     fn strip_text(value: &mut serde_json::Value) {
         match value {
             serde_json::Value::Object(fields) => {
-                for key in ["title", "facts", "description", "tag"] {
+                // `next_step.text` is localized; its `command` must not depend on language.
+                for key in ["title", "facts", "description", "tag", "text"] {
                     fields.remove(key);
                 }
                 for child in fields.values_mut() {
@@ -129,8 +130,10 @@ fn checked_report(input: &AdviceInput<'_>, days: u32, at: DateTime<Utc>) -> Advi
                 .expect("same rule")
                 .title
         );
+        let next_step = item.next_step.as_ref().expect("every rule has a next step");
         for text in std::iter::once(&item.title)
             .chain(std::iter::once(&item.description))
+            .chain(std::iter::once(&next_step.text))
             .chain(item.facts.iter())
         {
             assert!(
@@ -138,6 +141,16 @@ fn checked_report(input: &AdviceInput<'_>, days: u32, at: DateTime<Utc>) -> Advi
                 "untranslated text: {text}"
             );
         }
+    }
+    for item in zh.tools.iter().flat_map(|tool| &tool.items) {
+        let step = item.next_step.as_ref().expect("every rule has a next step");
+        assert!(!step.text.is_empty());
+        assert_eq!(
+            step.command.as_deref(),
+            verified_command(item.tool, &item.id),
+            "only verified commands may be copied: {}",
+            item.key
+        );
     }
     for tag in en
         .event_tags
@@ -151,6 +164,17 @@ fn checked_report(input: &AdviceInput<'_>, days: u32, at: DateTime<Utc>) -> Advi
         );
     }
     zh
+}
+
+/// Commands verified against Claude Code 2.1.309. Everything else, including every
+/// Codex rule, must stay text-only so the UI shows no copy button.
+fn verified_command(tool: Tool, id: &str) -> Option<&'static str> {
+    match (tool, id) {
+        (Tool::Claude, "long_context") => Some("/compact"),
+        (Tool::Claude, "expensive_light_task") => Some("/model sonnet"),
+        (Tool::Claude, "high_effort_light_task") => Some("/effort high"),
+        _ => None,
+    }
 }
 
 fn ids(report: &AdviceReport, tool: Tool) -> Vec<String> {
@@ -894,6 +918,7 @@ fn m12_quota_rules_and_startup_inventory_have_hit_and_miss_boundaries() {
     assert_eq!(item.avoidable_cost_usd.to_bits(), 0.0_f64.to_bits());
     assert_eq!(item.consumed_weekly_pct, None);
     assert_eq!(item.avoidable_weekly_pct, None);
+    assert_no_command(item);
     let mut inactive = idle;
     inactive.used_recently = false;
     assert!(!ids(
@@ -929,6 +954,7 @@ fn m12_quota_rules_and_startup_inventory_have_hit_and_miss_boundaries() {
     assert_eq!(item.sessions, 0);
     assert_eq!(item.avoidable_cost_usd, 0.0);
     assert!(item.facts.iter().any(|fact| fact.contains("Pro")));
+    assert_no_command(item);
     let mut too_high = fit;
     too_high.completed_weekly_max = vec![20.0; 4];
     assert!(!ids(
@@ -1011,6 +1037,7 @@ fn m12_quota_rules_and_startup_inventory_have_hit_and_miss_boundaries() {
         .any(|fact| fact == "项目级 MCP 服务器 1 个"));
     assert!(startup.facts.iter().all(|fact| !fact.contains("foreign")));
     assert!(startup.facts.iter().any(|fact| fact.contains("3000 token")));
+    assert_no_command(startup);
     let mut no_local_plugins = environment.clone();
     no_local_plugins.claude_plugins = 0;
     let report = m12_report(
@@ -1182,6 +1209,68 @@ fn long_context_threshold_and_excess() {
     assert_eq!(long.occurrences, 1);
     // Context 400,010 − target 150,000, capped by cache read 400,000.
     assert_eq!(long.overhead_tokens, 250_010);
+}
+
+fn assert_no_command(item: &token_audit_core::advice::Advice) {
+    let step = item.next_step.as_ref().expect("next step");
+    assert!(!step.text.is_empty());
+    assert_eq!(step.command, None, "{} must not offer a command", item.key);
+}
+
+#[test]
+fn next_step_copies_only_verified_claude_commands() {
+    let codex_tokens = TokenCounts {
+        input: 10,
+        output: 10,
+        cache_read: 400_000,
+        ..TokenCounts::default()
+    };
+    let events = vec![
+        event(
+            Tool::Claude,
+            "c",
+            40,
+            "claude-opus-5-5",
+            claude_tokens(400_000, 0, 10),
+            0.0,
+        ),
+        event(Tool::Codex, "x", 40, "gpt-6-sol", codex_tokens, 0.0),
+    ];
+    let report = report(&events, &[], &[]);
+    let find = |tool: Tool| {
+        report
+            .tools
+            .iter()
+            .find(|entry| entry.tool == tool)
+            .and_then(|entry| entry.items.iter().find(|item| item.id == "long_context"))
+            .expect("long context")
+    };
+    let claude = find(Tool::Claude);
+    let step = claude.next_step.as_ref().expect("claude next step");
+    assert_eq!(step.command.as_deref(), Some("/compact"));
+    assert!(step.text.contains("/compact"));
+    // Codex has the same rule, but its command is unverified: text only.
+    let codex = find(Tool::Codex);
+    assert_no_command(codex);
+    assert!(!codex.next_step.as_ref().unwrap().text.contains('/'));
+    // `advice --json` keeps the field with an explicit null so the UI can hide the button.
+    let json = serde_json::to_value(codex).expect("json");
+    assert!(json["next_step"]["command"].is_null());
+    assert!(json["next_step"]
+        .as_object()
+        .unwrap()
+        .contains_key("command"));
+    // Session startup is unavoidable overhead for both tools.
+    for tool in [Tool::Claude, Tool::Codex] {
+        let startup = report
+            .tools
+            .iter()
+            .find(|entry| entry.tool == tool)
+            .and_then(|entry| entry.items.iter().find(|item| item.id == "session_startup"));
+        if let Some(startup) = startup {
+            assert_no_command(startup);
+        }
+    }
 }
 
 #[test]

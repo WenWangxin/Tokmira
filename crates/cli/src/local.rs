@@ -410,6 +410,14 @@ pub fn run(command: &str, args: impl Iterator<Item = OsString>) -> Result<(), St
                         ),
                         item.facts.join(" / ")
                     );
+                    if let Some(step) = &item.next_step {
+                        match &step.command {
+                            Some(command) => {
+                                println!("    下一步：{}（可复制：{command}）", step.text)
+                            }
+                            None => println!("    下一步：{}", step.text),
+                        }
+                    }
                 }
             }
         }

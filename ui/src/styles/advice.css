@@ -23,6 +23,12 @@
 .advice-facts { display: flex; flex-wrap: wrap; gap: 8px; }
 .advice-facts span { padding: 3px 10px; border-radius: 100px; background: var(--surface-container-high); color: var(--on-surface-variant); font-size: 11px; }
 .advice-description { margin: 2px 0 0; color: var(--on-surface-variant); font-size: 14px; line-height: 1.55; }
+.advice-next-step { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--surface-container-high); color: var(--on-surface); font-size: 13px; line-height: 1.5; }
+.advice-next-label { flex: none; color: var(--primary); font-weight: 600; }
+.advice-next-text { min-width: 0; flex: 1 1 200px; }
+.advice-next-step code { padding: 2px 8px; border-radius: 6px; background: var(--surface-container-highest); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; user-select: all; }
+.advice-copy { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: 0; border-radius: 100px; background: transparent; color: var(--primary); font-size: 12px; cursor: pointer; }
+.advice-copy:hover { background: var(--primary-container); color: var(--on-primary-container); }
 .advice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 4px; }
 .advice-actions small { margin-left: auto; color: var(--on-surface-muted); font-size: 11px; }
 .advice-link { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 100px; background: var(--primary-container); color: var(--on-primary-container); font-size: 13px; text-decoration: none; }

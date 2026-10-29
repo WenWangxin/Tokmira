@@ -471,6 +471,8 @@ export const clearRecorderRecords = () => {
 
 export type AdviceSeverity = 'Error' | 'Warning'
 export interface AdviceLink { label: string; url: string }
+/** `command` is null unless verified for that tool; the copy button is shown only with a command. */
+export interface NextStep { text: string; command: string | null }
 export interface AdviceItem {
   id: string
   key: string
@@ -488,6 +490,7 @@ export interface AdviceItem {
   avoidable_cost_usd: number
   avoidable_weekly_pct: number | null
   link: AdviceLink | null
+  next_step: NextStep | null
 }
 export interface ToolAdvice {
   tool: Tool

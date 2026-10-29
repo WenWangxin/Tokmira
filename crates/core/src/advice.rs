@@ -28,8 +28,10 @@ use crate::quota_store::{normalize_claude_plan, ClaudeSnapshot, CodexSnapshot};
 use crate::timeline::QuotaPoint;
 
 mod alerts;
+mod next_step;
 mod rules_m12;
 pub use alerts::{AdviceAlert, AlertTracker};
+pub use next_step::NextStep;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SeverityConfig {
@@ -228,6 +230,8 @@ pub struct Advice {
     pub avoidable_cost_usd: f64,
     pub avoidable_weekly_pct: Option<f64>,
     pub link: Option<AdviceLink>,
+    /// One-line action; `command` is only set for commands verified on that tool.
+    pub next_step: Option<NextStep>,
     #[serde(skip)]
     session_ids: BTreeSet<String>,
 }
@@ -1164,7 +1168,13 @@ fn weekly_share(hits: &[Hit<'_>], pricing: &Pricing, part: impl Fn(&Hit<'_>) -> 
         .sum()
 }
 
-fn finish(tool: Tool, rule: &RuleOutput<'_>, has_quota: bool, input: &AdviceInput<'_>) -> Advice {
+fn finish(
+    tool: Tool,
+    rule: &RuleOutput<'_>,
+    has_quota: bool,
+    input: &AdviceInput<'_>,
+    lang: Lang,
+) -> Advice {
     let pricing = input.pricing;
     let overhead_cost: f64 = if rule.hits.is_empty() {
         0.0
@@ -1215,6 +1225,7 @@ fn finish(tool: Tool, rule: &RuleOutput<'_>, has_quota: bool, input: &AdviceInpu
             show_pct.then_some(0.0)
         },
         link: input.config.link(rule.id),
+        next_step: next_step::next_step(tool, rule.id, lang, input.config),
         session_ids,
     }
 }
@@ -1430,7 +1441,7 @@ pub fn build_advice_lang(
         let mut items = Vec::new();
         let mut hidden = 0;
         for rule in rules {
-            let advice = finish(tool, &rule, has_quota, input);
+            let advice = finish(tool, &rule, has_quota, input, lang);
             record_event_tag(&mut chosen_tags, &positions, &rule, advice.severity);
             prompt_tags_for(
                 tool,
