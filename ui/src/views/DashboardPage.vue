@@ -306,7 +306,16 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
     <div v-if="pending && loading" class="skeleton-layout" :aria-label="t.common.loading"><div class="skeleton" v-for="i in 9" :key="i" /></div>
     <div v-else-if="pending" class="page-await" />
     <div v-else-if="error && !overview" class="center-state"><CircleAlert :size="30" /><strong>{{ t.dashboard.loadFailed }}</strong><p>{{ error }}</p><button @click="load()">{{ t.common.retry }}</button></div>
-    <div v-else-if="empty" class="center-state"><Database :size="32" /><strong>{{ t.dashboard.emptyTitle }}</strong><p>{{ t.dashboard.emptyBody }}</p><button @click="refresh">{{ t.dashboard.rescan }}</button></div>
+    <div v-else-if="empty" class="center-state">
+      <Database :size="32" />
+      <strong>{{ t.dashboard.emptyTitle }}</strong>
+      <p>{{ t.dashboard.emptyBody }}</p>
+      <button @click="refresh">{{ t.dashboard.rescan }}</button>
+      <div class="quota-links">
+        <RouterLink class="settings-link" :to="{ path: '/settings', query: { section: 'sources' } }">{{ t.dashboard.enableSource }} <ChevronRight :size="14" /></RouterLink>
+        <RouterLink class="settings-link" :to="{ path: '/settings', query: { section: 'calibration' } }">{{ t.dashboard.calibrate }} <ChevronRight :size="14" /></RouterLink>
+      </div>
+    </div>
     <div v-else-if="overview" class="dashboard-content content-reveal">
       <section v-if="hits.length" class="quota-hit-list" :aria-label="t.dashboard.hit.section">
         <QuotaHitCard v-for="hit in hits" :key="`${hit.tool}-${hit.kind}`" :hit="hit" :source="sourceText(hit.tool, hit.origin)" :advice="hitAdvice(advice, hit.tool)" :refresh-key="overview.generated_at" />
