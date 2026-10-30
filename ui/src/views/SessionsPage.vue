@@ -12,6 +12,7 @@ import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSele
 import { usePageRequest } from '../usePageRequest'
 import { usageRevision } from '../realtime'
 import { openAndReport } from '../sessionOpen'
+import { newestFirst } from '../sessionTimelineLogic'
 import {
   getSessionDetail, getSessions,
   type SessionDetail, type SessionRow, type Source, type TimelineEntry, type TokenCounts, type Tool,
@@ -213,23 +214,9 @@ function deltaText(value: number) {
   if (Math.abs(value).toFixed(1) === '0.0') return ''
   return value > 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`
 }
-const visibleEntries = computed(() => {
-  if (!detail.value) return []
-  let requests = 0
-  const shown: TimelineEntry[] = []
-  for (const entry of detail.value.entries) {
-    if (entry.kind === 'Request') {
-      if (requests >= requestLimit.value) break
-      requests += 1
-    }
-    shown.push(entry)
-  }
-  return shown
-})
-const hiddenRequests = computed(() => {
-  const total = detail.value?.entries.filter(entry => entry.kind === 'Request').length ?? 0
-  return Math.max(0, total - requestLimit.value)
-})
+const timeline = computed(() => newestFirst(detail.value?.entries ?? [], requestLimit.value))
+const visibleEntries = computed(() => timeline.value.shown)
+const hiddenRequests = computed(() => timeline.value.hidden)
 const listedSession = computed(() => {
   const selected = routeSession.value
   if (!selected) return null
@@ -307,7 +294,7 @@ const detailSubtitle = computed(() => {
           <div class="session-scroll">
             <h3>{{ t.sessions.detail }}</h3>
             <ol class="timeline">
-              <li v-for="(entry, index) in visibleEntries" :key="`${entry.kind}-${entry.at}-${index}`" class="timeline-item">
+              <li v-for="{ entry, sourceIndex } in visibleEntries" :key="sourceIndex" class="timeline-item">
                 <template v-if="entry.kind === 'Prompt'">
                   <span class="timeline-dot timeline-dot-prompt" />
                   <p class="timeline-prompt">{{ promptText(entry) }}</p>

@@ -8,7 +8,7 @@
     "dev": "vite --host localhost --port 1420 --strictPort",
     "build": "vue-tsc --noEmit && vite build",
     "typecheck": "vue-tsc --noEmit",
-    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test src/components/quotaChart.test.mjs src/components/motionNumber.test.mjs src/settingsLogic.test.mjs src/onboardingLogic.test.mjs src/shareLogic.test.mjs src/sessionOpenLogic.test.mjs src/pageCache.test.mjs src/realtime.test.mjs src/sourceStatus.test.mjs src/updateLogic.test.mjs src/i18n.test.mjs src/quotaHit.test.mjs"
+    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test src/components/quotaChart.test.mjs src/components/motionNumber.test.mjs src/settingsLogic.test.mjs src/onboardingLogic.test.mjs src/shareLogic.test.mjs src/sessionOpenLogic.test.mjs src/sessionTimelineLogic.test.mjs src/pageCache.test.mjs src/realtime.test.mjs src/sourceStatus.test.mjs src/updateLogic.test.mjs src/i18n.test.mjs src/quotaHit.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.4",
