@@ -484,7 +484,7 @@ const zh = {
     autostartDesc: (place: string) => `开机后自动在${place}运行，不打开窗口。`,
     autostartDev: '开发版不可用，请在打包后的应用里开启',
     systemNotifications: '系统通知',
-    sourcesLead: '都打开时额度最准。不开也能正常用，只是额度会显示“暂无数据”。',
+    sourcesLead: '按需开启。状态栏记录不联网；两个官方查询会联网，详见各自的“?”说明。都不开也能用，只是额度显示“暂无数据”，用量统计不受影响。',
     stepOf: (step: number, total: number) => `第 ${step} 步，共 ${total} 步`,
     autostartFailed: (error: string) => `开机自动启动：${error}`,
     claudeCli: 'Claude Code · 命令行',

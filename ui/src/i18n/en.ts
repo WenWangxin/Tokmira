@@ -485,7 +485,7 @@ const en: Messages = {
     autostartDesc: place => `Starts in the ${place} when you log in, without opening a window.`,
     autostartDev: 'Not available in development builds. Turn it on in the packaged app',
     systemNotifications: 'System notifications',
-    sourcesLead: 'Turn them all on for the most accurate quota. Everything still works without them; quota just shows “No data yet”.',
+    sourcesLead: 'Turn on only what you need. The status line recorder stays offline; the two official queries go online (see each “?”). With none on, quota shows “No data yet” and usage stats still work.',
     stepOf: (step, total) => `Step ${step} of ${total}`,
     autostartFailed: error => `Open at login: ${error}`,
     claudeCli: 'Claude Code · CLI',
