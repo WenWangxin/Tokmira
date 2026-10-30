@@ -1290,7 +1290,12 @@ fn main() -> tauri::Result<()> {
             tray::install(app)?;
             notifications::install(app.handle());
             let launch_settings = settings::read_settings(&data_dir).unwrap_or_default();
-            if launch_settings.onboarding_completed && launch_settings.silent_start {
+            // Dev builds share the installed app's settings; a silent start there would leave
+            // `tauri dev` running with no window and no Dock icon.
+            if launch_settings.onboarding_completed
+                && launch_settings.silent_start
+                && !tauri::is_dev()
+            {
                 #[cfg(target_os = "macos")]
                 app.handle()
                     .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
