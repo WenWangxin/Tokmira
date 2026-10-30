@@ -4,8 +4,8 @@ const t = messages
 import { showToast } from '../toast'
 import { copyCommand } from '../clipboard'
 import { openAndReport } from '../sessionOpen'
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeftRight, Brain, SquareArrowOutUpRight, CircleAlert, Clock, Coins, Copy, Cpu, ExternalLink, FileStack, Gauge, GitFork, Layers, Lightbulb, List, Network, Search, Sparkles, TrendingUp, WandSparkles, Zap } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
@@ -16,8 +16,10 @@ import PageSkeleton from '../components/PageSkeleton.vue'
 import { getPageCache, invalidatePageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
 import { usePageRequest } from '../usePageRequest'
 import { usageRevision } from '../realtime'
+import { findAdviceTarget, readAdviceDeepLink } from '../adviceRouteLogic'
 
 const router = useRouter()
+const route = useRoute()
 const period = ref<7 | 30>(pageSelection.advice.period)
 const cachedReport = getPageCache<AdviceReport>(pageCacheKey('advice', period.value))
 const cachedTool = cachedReport?.tools.find(item => item.items.length)?.tool ?? cachedReport?.tools[0]?.tool
@@ -26,6 +28,11 @@ if (!pageSelection.advice.tool && cachedTool) pageSelection.advice.tool = cached
 const request = usePageRequest<AdviceReport>(pageCacheKey('advice', period.value))
 const report = request.data
 const { pending, loading, error, reveal } = request
+const page = ref<HTMLElement | null>(null)
+const targetKey = ref<string | null>(null)
+let handledQuery: typeof route.query | null = null
+let appliedQuery: typeof route.query | null = null
+let targetTimer: ReturnType<typeof setTimeout> | undefined
 watch([period, tool], () => {
   pageSelection.advice.period = period.value
   pageSelection.advice.tool = tool.value
@@ -93,6 +100,32 @@ onMounted(() => { void load() })
 watch(usageRevision, () => { void load(true) })
 const current = computed(() => report.value?.tools.find(item => item.tool === tool.value) ?? null)
 const available = (item: Tool) => Boolean(report.value?.tools.some(entry => entry.tool === item))
+watch([() => route.query, report, page], async ([query, data]) => {
+  if (route.path !== '/advice') return
+  const link = readAdviceDeepLink(query)
+  if (appliedQuery !== query) {
+    appliedQuery = query
+    targetKey.value = null
+    if (link.tool) {
+      tool.value = link.tool
+      pageSelection.advice.tool = link.tool
+    }
+  }
+  const key = findAdviceTarget(data, link.tool ?? tool.value, link.key)
+  if (!key || handledQuery === query) return
+  await nextTick()
+  if (route.query !== query || !findAdviceTarget(report.value, tool.value, key)) return
+  const element = [...(page.value?.querySelectorAll<HTMLElement>('[data-advice-key]') ?? [])]
+    .find(item => item.dataset.adviceKey === key)
+  if (!element) return
+  handledQuery = query
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  element.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' })
+  targetKey.value = key
+  if (targetTimer) clearTimeout(targetTimer)
+  targetTimer = setTimeout(() => { targetKey.value = null }, 1800)
+}, { flush: 'post', immediate: true })
+onUnmounted(() => { if (targetTimer) clearTimeout(targetTimer) })
 const pct = (value: number) => `${value.toFixed(1)}%`
 const usd = (value: number) => `$${value.toFixed(2)}`
 
@@ -107,7 +140,7 @@ function impact(item: AdviceItem) {
 </script>
 
 <template>
-  <div class="dashboard-page advice-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
+  <div ref="page" class="dashboard-page advice-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
     <header class="dashboard-header">
       <div><h1>{{ t.pages.advice.title }}</h1><p>{{ t.advice.subtitle(period) }}</p></div>
       <div class="advice-head-controls">
@@ -155,7 +188,7 @@ function impact(item: AdviceItem) {
         <p v-if="current.hidden">{{ t.advice.hiddenRestore(current.hidden) }}</p>
       </div>
       <TransitionGroup name="advice-list" tag="div" class="advice-items content-reveal">
-      <article v-for="item in current.items" :key="item.key" class="card advice-item">
+      <article v-for="item in current.items" :key="item.key" class="card advice-item" :data-advice-key="item.key" :class="{ 'settings-target': targetKey === item.key }">
         <span class="advice-item-icon" :class="item.severity === 'Error' ? 'advice-error' : 'advice-warning'">
           <component :is="icons[item.id] ?? Lightbulb" :size="24" />
         </span>

@@ -99,7 +99,7 @@ function openSession(id: string) {
       </section>
       <section v-if="advice" class="quota-hit-section">
         <h3>{{ t.dashboard.hit.adviceTitle }}</h3>
-        <button class="advice-card-row" @click="router.push({ path: '/advice' })"><Lightbulb :size="16" /><span>{{ advice.title }}</span><span class="advice-tag" :class="advice.severity === 'Error' ? 'pill-error' : 'pill-warning'">{{ percent(advice.avoidable_weekly_pct ?? 0) }}</span><ChevronRight :size="18" /></button>
+        <button class="advice-card-row" @click="router.push({ path: '/advice', query: { tool: hit.tool, key: advice.key } })"><Lightbulb :size="16" /><span>{{ advice.title }}</span><span class="advice-tag" :class="advice.severity === 'Error' ? 'pill-error' : 'pill-warning'">{{ percent(advice.avoidable_weekly_pct ?? 0) }}</span><ChevronRight :size="18" /></button>
         <div v-if="advice.next_step" class="advice-next-step">
           <span class="advice-next-label">{{ t.advice.nextStep }}</span>
           <span class="advice-next-text">{{ advice.next_step.text }}</span>
