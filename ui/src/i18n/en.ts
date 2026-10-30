@@ -156,7 +156,7 @@ const en: Messages = {
     plusEstimate: ' + estimate',
     estimateHint: (time, percent) => `Last reading at ${time}. Local usage since then is estimated at about +${percent}% from the recent rate; the next official reading replaces it.`,
     hit: {
-      section: 'Quota just ran out',
+      section: 'Nearing the limit',
       title: (tool, window, percent, source, time) => `${tool} ${window} quota ${percent}% used (${source} · read at ${time})`,
       fiveHour: '5-hour',
       weekly: 'weekly',
