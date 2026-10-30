@@ -217,6 +217,7 @@ const zh = {
     unattributedHelp: {
       toggle: '“未归属”说明',
       title: '“未归属”是什么',
+      empty: '这个窗口目前没有未归属用量。',
       includesTitle: '含什么',
       includesClaude: '官方额度里本机日志对不上的增量：同一账号在其他电脑上的 Claude Code，以及网页、桌面端聊天和 Cowork。',
       includesCodex: '官方额度里本机日志对不上的增量：同一账号在其他设备或其他客户端上的使用。',

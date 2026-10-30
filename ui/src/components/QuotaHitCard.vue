@@ -68,7 +68,9 @@ function openUsage(options: { help?: boolean; dimension?: 'subagents' } = {}) {
   pageSelection.usage.tool = props.hit.tool
   if (usageWindow.value) pageSelection.usage.windowIds[props.hit.tool] = usageWindow.value.window_id
   if (options.dimension) pageSelection.usage.dimension = options.dimension
-  void router.push({ path: '/usage', query: options.help ? { help: 'unattributed' } : {} })
+  void router.push({ path: '/usage', query: options.help
+    ? { help: 'unattributed', tool: props.hit.tool, window: usageWindow.value?.window_id }
+    : {} })
 }
 function openSession(id: string) {
   void router.push({ path: '/sessions', query: { tool: props.hit.tool, id } })

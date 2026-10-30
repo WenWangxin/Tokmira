@@ -219,6 +219,7 @@ const en: Messages = {
     unattributedHelp: {
       toggle: 'About “Unattributed”',
       title: 'What “Unattributed” means',
+      empty: 'This window currently has no unattributed usage.',
       includesTitle: 'What it includes',
       includesClaude: 'Official quota growth that no local log accounts for: Claude Code on the same account on other computers, plus web chat, desktop chat and Cowork.',
       includesCodex: 'Official quota growth that no local log accounts for: the same account used on other devices or other clients.',

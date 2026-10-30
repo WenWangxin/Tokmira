@@ -15,9 +15,11 @@ export function mockUsageDetail(window: UsageWindowRef): UsageDetail {
   const empty = variant === 'empty'
   // `?mock=unattributed`: same used total, but most of it has no local request behind it.
   const unattributed = variant === 'unattributed'
+  // `?mock=zero&help=unattributed`: show the deep-linked help with no unattributed usage.
+  const zero = variant === 'zero'
   // `?mock=hit`: the current Claude 5-hour window is at 97%, with unattributed above the third session.
   const hit = variant === 'hit' && window.tool === 'Claude' && window.kind === 'FiveHour' && window.is_current
-  const scale = unattributed ? 2 / 3 : hit ? 3 : 1
+  const scale = unattributed ? 2 / 3 : zero ? 4 / 3 : hit ? 3 : 1
   const share = (delta: number) => Math.round(delta * scale * 10) / 10
   const visibleEnd = Math.min(Date.now(), Date.parse(window.end))
   const range = Math.max(1, visibleEnd - Date.parse(window.start))
@@ -44,7 +46,8 @@ export function mockUsageDetail(window: UsageWindowRef): UsageDetail {
   return {
     window, used_percent: hit ? 97 : 28, remaining_percent: hit ? 3 : 72, resets_at: window.end,
     origin: window.tool === 'Claude' ? 'Statusline' : 'Log',
-    attributed_total: empty ? 0 : hit ? 63 : unattributed ? 14 : 21, unattributed_total: empty ? 28 : hit ? 34 : unattributed ? 14 : 7,
+    attributed_total: empty ? 0 : hit ? 63 : unattributed ? 14 : zero ? 28 : 21,
+    unattributed_total: zero ? 0 : empty ? 28 : hit ? 34 : unattributed ? 14 : 7,
     sessions, projects, models, subagents, high_prompts,
     official_weekly_breakdown: window.tool === 'Claude' && window.kind === 'Weekly' ? {
       as_of: at(-10), window_started_at: window.start, rows: [
@@ -57,7 +60,7 @@ export function mockUsageDetail(window: UsageWindowRef): UsageDetail {
   }
 }
 
-export function mockUsage(tool: Tool, variant: 'default' | 'empty' | 'nodata' | 'unattributed'): UsageResponse {
+export function mockUsage(tool: Tool, variant: 'default' | 'empty' | 'nodata' | 'unattributed' | 'zero'): UsageResponse {
   if (variant === 'nodata') return { windows: [], detail: null }
   const windows = [windowRef(tool, 'FiveHour', -280, 20), windowRef(tool, 'FiveHour', -600, -300),
     windowRef(tool, 'FiveHour', -920, -620), windowRef(tool, 'Weekly', -7500, 2580)]

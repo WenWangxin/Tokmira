@@ -11,16 +11,18 @@ import { getAdvice, getUsageDetail, getUsageWindows, promptTag, type AdviceRepor
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
 import { usageRevision } from '../realtime'
+import { readUsageDeepLink, resolveUsageSelection, type UsageLink } from '../usageRouteLogic'
 
 const router = useRouter()
 const route = useRoute()
 const windowsKey = pageCacheKey('usageWindows', 'all')
 const cachedWindows = getPageCache<Record<Tool, UsageWindowRef[]>>(windowsKey)
 const initialTool = pageSelection.usage.tool ?? (cachedWindows?.Claude.length ? 'Claude' : cachedWindows?.Codex.length ? 'Codex' : 'Claude')
-const initialWindow = cachedWindows?.[initialTool].find(item => item.window_id === pageSelection.usage.windowIds[initialTool])
-  ?? cachedWindows?.[initialTool][0] ?? null
+const initialSelection = resolveUsageSelection(null, initialTool, pageSelection.usage.windowIds,
+  cachedWindows ?? { Claude: [], Codex: [] })
+const initialWindow = initialSelection.window
 const initialDetail = initialWindow ? getPageCache<UsageDetail>(pageCacheKey('usageDetail', initialWindow.tool, initialWindow.kind, initialWindow.window_id)) ?? null : null
-const tool = ref<Tool>(initialTool)
+const tool = ref<Tool>(initialSelection.tool)
 const windows = ref<Record<Tool, UsageWindowRef[]>>(cachedWindows ?? { Claude: [], Codex: [] })
 const selected = ref<UsageWindowRef | null>(initialWindow)
 const detail = ref<UsageDetail | null>(initialDetail)
@@ -32,6 +34,10 @@ const detailLoading = ref(false)
 const barsReady = ref(initialDetail !== null)
 const reveal = ref(cachedWindows === undefined)
 const error = ref('')
+const pendingLink = ref<UsageLink | null>(null)
+const deepLinkedHelp = ref(false)
+const helpOpen = ref(false)
+let windowsReady = false
 let loadingTimer: ReturnType<typeof setTimeout> | undefined
 let detailTimer: ReturnType<typeof setTimeout> | undefined
 let detailRequest = 0
@@ -47,6 +53,34 @@ const dimensions = computed(() => [
   { key: 'subagents', name: m().usage.dimSubagents, icon: GitFork },
 ] as const)
 
+function syncRouteSelection(refreshDetail = false) {
+  const next = resolveUsageSelection(pendingLink.value, tool.value, pageSelection.usage.windowIds, windows.value)
+  pendingLink.value = null
+  tool.value = next.tool
+  pageSelection.usage.tool = next.tool
+  if (next.window?.window_id !== selected.value?.window_id || next.window?.kind !== selected.value?.kind || next.window?.tool !== selected.value?.tool) {
+    void selectWindow(next.window)
+  } else if (next.window) {
+    selected.value = next.window
+    pageSelection.usage.windowIds[next.tool] = next.window.window_id
+    if (refreshDetail) void selectWindow(next.window)
+  }
+}
+watch([() => route.path, () => route.query.tool, () => route.query.window, () => route.query.help], () => {
+  if (route.path !== '/usage') return
+  const link = readUsageDeepLink(route.query)
+  if (!link.present) return
+  pendingLink.value = link.selection
+  deepLinkedHelp.value = link.help
+  if (link.help) helpOpen.value = true
+  const query = { ...route.query }
+  delete query.tool
+  delete query.window
+  delete query.help
+  void router.replace({ query })
+  if (windowsReady && pendingLink.value) syncRouteSelection()
+}, { immediate: true })
+
 async function load(quiet = false) {
   if (!quiet && !cachedWindows) {
     pending.value = true
@@ -59,18 +93,14 @@ async function load(quiet = false) {
     if (!cacheVersionMatches(windowsKey, version)) return
     windows.value = { Claude: claude, Codex: codex }
     setPageCache(windowsKey, windows.value)
-    const nextTool = windows.value[tool.value].length ? tool.value : claude.length ? 'Claude' : codex.length ? 'Codex' : 'Claude'
-    tool.value = nextTool
-    const nextWindow = windows.value[nextTool].find(item => item.window_id === pageSelection.usage.windowIds[nextTool])
-      ?? windows.value[nextTool][0] ?? null
-    if (nextWindow?.window_id !== selected.value?.window_id || nextWindow?.kind !== selected.value?.kind || nextWindow?.tool !== selected.value?.tool) {
-      await selectWindow(nextWindow)
-    } else if (nextWindow) {
-      selected.value = nextWindow
-      void selectWindow(nextWindow)
-    }
+    windowsReady = true
+    syncRouteSelection(true)
   } catch (cause) {
     if (!quiet && !cachedWindows) error.value = String(cause)
+    if (cachedWindows && pendingLink.value) {
+      windowsReady = true
+      syncRouteSelection()
+    }
   } finally {
     if (loadingTimer) clearTimeout(loadingTimer)
     pending.value = false
@@ -116,9 +146,22 @@ async function selectWindow(window: UsageWindowRef | null) {
 
 function selectTool(next: Tool) {
   if (next === tool.value || !windows.value[next].length) return
+  pendingLink.value = null
+  deepLinkedHelp.value = false
   tool.value = next
   const window = windows.value[next].find(item => item.window_id === pageSelection.usage.windowIds[next]) ?? windows.value[next][0] ?? null
   void selectWindow(window)
+}
+
+function selectWindowManually(window: UsageWindowRef) {
+  pendingLink.value = null
+  deepLinkedHelp.value = false
+  void selectWindow(window)
+}
+
+function toggleHelp() {
+  helpOpen.value = !helpOpen.value
+  if (!helpOpen.value) deepLinkedHelp.value = false
 }
 
 watch(usageRevision, () => { void load(true) })
@@ -176,9 +219,7 @@ const breakdown = computed(() => detail.value?.official_weekly_breakdown?.rows.m
 // Shares outside local Claude Code logs, quoted as-is from the official breakdown.
 const offLogShare = computed(() => detail.value?.official_weekly_breakdown?.rows.filter(row => row.key !== 'claude_code').map(row =>
   `${row.display_name || row.key} ${percent(row.percent)}`).join(' · ') ?? '')
-// The dashboard's quota-hit card links here with `?help=unattributed`.
-const helpOpen = ref(route.query.help === 'unattributed')
-const helpVisible = computed(() => helpOpen.value && (detail.value?.unattributed_total ?? 0) > 0)
+const helpVisible = computed(() => helpOpen.value && ((detail.value?.unattributed_total ?? 0) > 0 || deepLinkedHelp.value))
 </script>
 
 <template>
@@ -197,7 +238,7 @@ const helpVisible = computed(() => helpOpen.value && (detail.value?.unattributed
     <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>{{ t.usage.noData(tool) }}</strong><p>{{ t.usage.noDataBody }}</p><button @click="router.push({ path: '/settings', query: { section: 'sources' } })">{{ t.usage.goSettings }}</button></div>
     <template v-else>
       <nav class="usage-window-list" :aria-label="t.usage.windows">
-        <button v-for="window in windows[tool]" :key="`${window.kind}-${window.window_id}`" :class="{ active: selected?.kind === window.kind && selected?.window_id === window.window_id }" :aria-current="selected?.window_id === window.window_id ? 'true' : undefined" @click="selectWindow(window)">
+        <button v-for="window in windows[tool]" :key="`${window.kind}-${window.window_id}`" :class="{ active: selected?.kind === window.kind && selected?.window_id === window.window_id }" :aria-current="selected?.window_id === window.window_id ? 'true' : undefined" @click="selectWindowManually(window)">
           <strong>{{ windowLabel(window) }}</strong><span>{{ windowTimes(window) }}</span>
         </button>
       </nav>
@@ -208,9 +249,10 @@ const helpVisible = computed(() => helpOpen.value && (detail.value?.unattributed
         <section class="card usage-overview content-reveal" :aria-label="t.usage.overview">
           <div class="usage-overview-top"><div class="usage-overview-main"><span>{{ t.usage.windowUsed }}</span><strong>{{ percent(detail.used_percent) }}</strong><span class="origin-pill" :class="detail.origin === 'Manual' ? 'pill-warning' : detail.origin === 'Estimated' ? 'pill-neutral' : 'pill-success'">{{ originText }}</span></div><span class="usage-reset">{{ selected?.is_current ? t.usage.remaining(percent(detail.remaining_percent)) : t.usage.ended }} · {{ t.usage.resetsAt(toTime(detail.resets_at)) }}</span></div>
           <div class="usage-bar" role="img" :aria-label="t.usage.barLabel(percent(detail.used_percent), percent(detail.attributed_total), percent(detail.unattributed_total))"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`" :class="`usage-segment usage-level-${part.level}`" :style="{ width: barsReady ? chartWidth(part.value) : '0%' }" /><span class="usage-remainder" :style="{ width: barsReady ? chartWidth(detail.remaining_percent) : '0%' }" /></div>
-          <div class="usage-legend"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`"><i :class="`usage-level-${part.level}`" />{{ part.name }} {{ percent(part.value) }}<button v-if="part.level === 5" type="button" class="usage-help-toggle" :class="{ active: helpVisible }" :title="t.usage.unattributedHelp.toggle" :aria-label="t.usage.unattributedHelp.toggle" :aria-expanded="helpVisible" aria-controls="usage-unattributed-help" @click="helpOpen = !helpOpen"><CircleHelp :size="13" /></button></span></div>
+          <div class="usage-legend"><span v-for="(part, index) in chartSegments" :key="`${part.name}-${index}`"><i :class="`usage-level-${part.level}`" />{{ part.name }} {{ percent(part.value) }}<button v-if="part.level === 5" type="button" class="usage-help-toggle" :class="{ active: helpVisible }" :title="t.usage.unattributedHelp.toggle" :aria-label="t.usage.unattributedHelp.toggle" :aria-expanded="helpVisible" aria-controls="usage-unattributed-help" @click="toggleHelp"><CircleHelp :size="13" /></button></span></div>
           <div v-if="helpVisible" id="usage-unattributed-help" class="usage-help" role="region" :aria-label="t.usage.unattributedHelp.title">
             <strong>{{ t.usage.unattributedHelp.title }}</strong>
+            <p v-if="detail.unattributed_total === 0 && deepLinkedHelp" class="settings-note">{{ t.usage.unattributedHelp.empty }}</p>
             <h3>{{ t.usage.unattributedHelp.includesTitle }}</h3>
             <p class="settings-note">{{ tool === 'Claude' ? t.usage.unattributedHelp.includesClaude : t.usage.unattributedHelp.includesCodex }}<template v-if="tool === 'Claude' && offLogShare"> {{ t.usage.unattributedHelp.officialShare(offLogShare) }}</template></p>
             <h3>{{ t.usage.unattributedHelp.excludesTitle }}</h3>

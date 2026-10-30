@@ -348,7 +348,7 @@ const usageFiles = import.meta.glob<{ default: UsageResponse }>('../.local/usage
 async function developmentUsage(tool: Tool): Promise<UsageResponse> {
   const { mockUsage } = await import('./mocks/usage')
   const variant = new URLSearchParams(window.location.search).get('mock')
-  if (variant === 'empty' || variant === 'nodata' || variant === 'unattributed') return mockUsage(tool, variant)
+  if (variant === 'empty' || variant === 'nodata' || variant === 'unattributed' || variant === 'zero') return mockUsage(tool, variant)
   if (variant === 'hit' || variant === 'hit-estimated') return mockUsage(tool, 'default')
   const local = usageFiles[`../.local/usage-${tool.toLowerCase()}.json`]
   return local ? (await local()).default : mockUsage(tool, 'default')
