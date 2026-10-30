@@ -7,6 +7,7 @@ mod login_item;
 mod notifications;
 mod quota_follow;
 mod realtime;
+mod session_open;
 mod tray;
 #[cfg(target_os = "macos")]
 mod tray_image;
@@ -635,6 +636,22 @@ async fn save_export(
     .map_err(|_| display_text("保存文件失败", "Could not save the file"))?
 }
 
+/// Brings a session back to the front and, with `command`, types it for the user to send.
+#[tauri::command]
+async fn open_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    target: session_open::Target,
+    command: Option<String>,
+) -> Result<token_audit_core::session_open::OpenOutcome, String> {
+    let data_dir = state.data_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        session_open::open(&app, &data_dir, &target, command.as_deref())
+    })
+    .await
+    .map_err(|_| display_text("打开会话失败", "Could not open the session"))
+}
+
 #[tauri::command]
 async fn detect_tools(state: State<'_, AppState>) -> Result<Vec<DetectedTool>, String> {
     let home = state.home.clone();
@@ -1111,8 +1128,40 @@ fn deliver_alert(app: &tauri::AppHandle, alert: &AdviceAlert) {
     if focused {
         let _ = app.emit("advice-alert", alert);
     } else {
-        notifications::post(app, &alert.title, &alert.body);
+        let payload = serde_json::to_string(&session_open::ActionPayload::for_alert(alert))
+            .unwrap_or_default();
+        notifications::post_alert(
+            app,
+            &alert.title,
+            &alert.body,
+            &payload,
+            alert.command.is_some(),
+        );
     }
+}
+
+/// A notification button: brings the session forward and, for "fill", types the command.
+/// Runs off the notification callback; a follow-up notice says what happened when the
+/// result is not on screen or the clipboard changed.
+fn notification_action(app: &tauri::AppHandle, payload: String, fill: bool) {
+    use tauri::Manager;
+    let Ok(payload) = serde_json::from_str::<session_open::ActionPayload>(&payload) else {
+        tray::show_main(app);
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let data_dir = app.state::<AppState>().data_dir.clone();
+        let command = payload.command.filter(|_| fill);
+        let outcome = session_open::open(&app, &data_dir, &payload.target, command.as_deref());
+        if let Some(text) = token_audit_core::session_open::outcome_notice(
+            outcome,
+            command.as_deref(),
+            current_lang(&data_dir),
+        ) {
+            notifications::post(&app, "Tokmira", &text);
+        }
+    });
 }
 
 #[tauri::command]
@@ -1233,6 +1282,7 @@ fn main() -> tauri::Result<()> {
         }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -1320,6 +1370,7 @@ fn main() -> tauri::Result<()> {
             get_overview,
             get_share_summary,
             save_export,
+            open_session,
             get_attribution,
             get_usage_windows,
             get_usage_detail,

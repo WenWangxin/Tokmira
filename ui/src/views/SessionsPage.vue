@@ -3,7 +3,7 @@ import { clock, compactText, formatInteger, listJoin, messages, m } from '../i18
 const t = messages
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { CircleAlert, Database, Search, X } from 'lucide-vue-next'
+import { CircleAlert, Database, Search, SquareArrowOutUpRight, X } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import { vSelectionSlide } from '../components/selectionSlide'
@@ -11,6 +11,7 @@ import PageSkeleton from '../components/PageSkeleton.vue'
 import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
 import { usePageRequest } from '../usePageRequest'
 import { usageRevision } from '../realtime'
+import { openAndReport } from '../sessionOpen'
 import {
   getSessionDetail, getSessions,
   type SessionDetail, type SessionRow, type Source, type TimelineEntry, type TokenCounts, type Tool,
@@ -163,6 +164,18 @@ function openSession(row: SessionRow) {
   if (routeSession.value) router.replace(location)
   else router.push(location)
 }
+const opening = ref(false)
+async function openDetailSession() {
+  const value = detail.value
+  if (!value || opening.value) return
+  opening.value = true
+  try {
+    await openAndReport({ tool: value.tool, source: value.source, session_id: value.session_id, project: value.project })
+  } finally {
+    opening.value = false
+  }
+}
+
 function closeSession() {
   router.replace({ path: '/sessions' })
 }
@@ -276,7 +289,10 @@ const detailSubtitle = computed(() => {
             <h2 id="session-detail-title">{{ detailTitle }}</h2>
             <p v-if="detailSubtitle">{{ detailSubtitle }}</p>
           </div>
-          <button type="button" class="session-close" :aria-label="t.common.close" @click="closeSession"><X :size="18" /></button>
+          <div class="session-drawer-actions">
+            <button v-if="detail && !detailPending" type="button" class="session-open" :title="t.sessions.openSessionHint" :disabled="opening" @click="openDetailSession"><SquareArrowOutUpRight :size="15" aria-hidden="true" />{{ t.sessions.openSession }}</button>
+            <button type="button" class="session-close" :aria-label="t.common.close" @click="closeSession"><X :size="18" /></button>
+          </div>
         </div>
         <PageSkeleton v-if="detailPending && detailLoading" kind="sessionDetail" />
         <div v-else-if="detailPending" class="session-drawer-status" />

@@ -25,6 +25,7 @@ use crate::i18n::Lang;
 use crate::model::{CompactEvent, PromptEvent, TokenCounts, Tool, UsageEvent};
 use crate::pricing::{ModelPrices, Pricing};
 use crate::quota_store::{normalize_claude_plan, ClaudeSnapshot, CodexSnapshot};
+use crate::session_open::SessionRef;
 use crate::timeline::QuotaPoint;
 
 mod alerts;
@@ -238,6 +239,8 @@ pub struct Advice {
     pub link: Option<AdviceLink>,
     /// One-line action; `command` is only set for commands verified on that tool.
     pub next_step: Option<NextStep>,
+    /// The most recent session it happened in, where "fill command" types.
+    pub latest_session: Option<SessionRef>,
     #[serde(skip)]
     session_ids: BTreeSet<String>,
 }
@@ -1232,6 +1235,11 @@ fn finish(
         },
         link: input.config.link(rule.id),
         next_step: next_step::next_step(tool, rule.id, lang, input.config),
+        latest_session: rule
+            .hits
+            .iter()
+            .max_by_key(|hit| hit.item.event.timestamp)
+            .map(|hit| SessionRef::of(&hit.item.event)),
         session_ids,
     }
 }

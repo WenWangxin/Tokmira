@@ -18,6 +18,7 @@ use super::{
 };
 use crate::i18n::Lang;
 use crate::model::{Tool, UsageEvent};
+use crate::session_open::SessionRef;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AdviceAlert {
@@ -27,6 +28,10 @@ pub struct AdviceAlert {
     pub session_id: String,
     pub title: String,
     pub body: String,
+    /// Where the notification's "open session" and "fill command" buttons act.
+    pub session: SessionRef,
+    /// A slash command the "fill command" button may type; only verified ones.
+    pub command: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -115,6 +120,8 @@ fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>, lang: Lang) -> Vec<Ca
                 continue;
             };
             let key = format!("{}:{}", tool_key(tool), rule.id);
+            let command = super::next_step::next_step(tool, rule.id, lang, input.config)
+                .and_then(|step| step.command);
             if matches!(rule.id, "cache_rebuild" | "model_switch" | "context_spike") {
                 for (index, hit) in rule.hits.iter().enumerate() {
                     let event = &hit.item.event;
@@ -127,7 +134,7 @@ fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>, lang: Lang) -> Vec<Ca
                         ),
                         rank,
                         settled: true,
-                        alert: alert(tool, &key, rule, event, match rule.id {
+                        alert: alert(tool, &key, rule, event, command.clone(), match rule.id {
                             "cache_rebuild" => cache_rebuild_body(input, hit, lang),
                             "model_switch" => crate::tr!(lang, "切换模型后重写了 {} token。换模型可放在任务阶段之间，或开启新会话。", "Switching models rewrote {} tokens. Switch between task stages, or start a new session.",
                                 format_tokens_lang(hit.overhead_tokens, lang)
@@ -181,7 +188,7 @@ fn candidates(input: &AdviceInput<'_>, now: DateTime<Utc>, lang: Lang) -> Vec<Ca
                     id: format!("{key}:{session}"),
                     rank,
                     settled,
-                    alert: alert(tool, &key, rule, &hits[0].item.event, body),
+                    alert: alert(tool, &key, rule, &hits[0].item.event, command.clone(), body),
                 });
             }
         }
@@ -230,6 +237,7 @@ fn alert(
     key: &str,
     rule: &RuleOutput<'_>,
     event: &UsageEvent,
+    command: Option<String>,
     body: String,
 ) -> AdviceAlert {
     let product = match tool {
@@ -250,6 +258,8 @@ fn alert(
         session_id: event.session_id.clone(),
         title: format!("{product} · {}", rule.title),
         body: format!("{label}{body}"),
+        session: SessionRef::of(event),
+        command,
     }
 }
 

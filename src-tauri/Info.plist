@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Tokmira 需要控制终端，才能切换到你的会话并填入命令（不会替你发送）。Tokmira needs to control your terminal to switch to your session and type a command (it never sends it for you).</string>
+</dict>
+</plist>

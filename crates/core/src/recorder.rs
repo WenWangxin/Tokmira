@@ -3,6 +3,7 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::i18n::Lang;
+use crate::session_open::TerminalEnv;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -183,6 +184,10 @@ pub struct HookEvent {
     pub tool: String,
     pub event: String,
     pub session_id: Option<String>,
+    /// On `SessionStart`: which terminal tab the session runs in, so "open session" can find
+    /// it again. Only [`TERMINAL_ENV_KEYS`](crate::session_open::TERMINAL_ENV_KEYS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<TerminalEnv>,
 }
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ReadStats {
@@ -895,6 +900,12 @@ pub fn record_statusline(data_dir: &Path, input: &[u8]) {
     let _ = append_record(&path, &record);
 }
 pub fn record_hook_event(data_dir: &Path, input: &[u8]) {
+    record_hook_event_with_env(data_dir, input, |key| std::env::var(key).ok());
+}
+
+/// The hook runs inside the Claude Code process tree, so its environment names the
+/// session's terminal tab.
+fn record_hook_event_with_env(data_dir: &Path, input: &[u8], env: impl Fn(&str) -> Option<String>) {
     if input.len() > INPUT_LIMIT {
         return;
     }
@@ -906,11 +917,15 @@ pub fn record_hook_event(data_dir: &Path, input: &[u8]) {
     else {
         return;
     };
+    let terminal = (event == "SessionStart")
+        .then(|| TerminalEnv::capture(env))
+        .filter(|terminal| !terminal.is_empty());
     let record = HookEvent {
         recorded_at: Utc::now(),
         tool: "claude".to_owned(),
         event,
         session_id: string_field(&raw, "session_id"),
+        terminal,
     };
     let _ = append_record(&recorder_dir(data_dir).join("hooks.jsonl"), &record);
 }
@@ -954,6 +969,16 @@ pub fn read_hook_events(data_dir: &Path) -> (Vec<HookEvent>, ReadStats) {
         read_records(&recorder_dir(data_dir).join("hooks.jsonl"));
     records.sort_by_key(|record| record.recorded_at);
     (records, stats)
+}
+/// The terminal tab the latest `SessionStart` of this session reported.
+#[must_use]
+pub fn recorded_terminal(data_dir: &Path, session_id: &str) -> Option<TerminalEnv> {
+    let (records, _) = read_hook_events(data_dir);
+    records
+        .into_iter()
+        .rev()
+        .filter(|record| record.session_id.as_deref() == Some(session_id))
+        .find_map(|record| record.terminal)
 }
 pub fn original_statusline_command(data_dir: &Path) -> Option<String> {
     read_state(data_dir)
@@ -1012,4 +1037,39 @@ pub fn clear_records(data_dir: &Path) -> Result<(), RecorderError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_hook_events, record_hook_event_with_env, recorded_terminal};
+
+    #[test]
+    fn session_start_keeps_only_terminal_identifiers() {
+        let dir = std::env::temp_dir().join(format!("tokmira-hook-env-{}", std::process::id()));
+        let env = |key: &str| match key {
+            "TERM_PROGRAM" => Some("iTerm.app".to_owned()),
+            "ITERM_SESSION_ID" => Some("w0t0p0:ABC".to_owned()),
+            "ANTHROPIC_API_KEY" => Some("sk-PRIVATE".to_owned()),
+            _ => None,
+        };
+        record_hook_event_with_env(
+            &dir,
+            br#"{"hook_event_name":"SessionStart","session_id":"s1"}"#,
+            env,
+        );
+        record_hook_event_with_env(
+            &dir,
+            br#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#,
+            env,
+        );
+        let (events, _) = read_hook_events(&dir);
+        assert_eq!(events.len(), 2);
+        assert!(events[1].terminal.is_none());
+        let terminal = recorded_terminal(&dir, "s1").expect("terminal");
+        assert_eq!(terminal.iterm_session(), Some("ABC"));
+        assert_eq!(recorded_terminal(&dir, "other"), None);
+        let raw = std::fs::read_to_string(dir.join("recorder/hooks.jsonl")).expect("hooks");
+        assert!(!raw.contains("PRIVATE"));
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
 }

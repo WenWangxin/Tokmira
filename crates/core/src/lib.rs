@@ -15,6 +15,7 @@ pub mod pricing;
 pub mod quota_store;
 pub mod recorder;
 pub mod report;
+pub mod session_open;
 pub mod sessions;
 pub mod settings;
 pub mod share;

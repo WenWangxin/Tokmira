@@ -3,9 +3,10 @@ import { formatInteger, messages, m } from '../i18n/index.ts'
 const t = messages
 import { showToast } from '../toast'
 import { copyCommand } from '../clipboard'
+import { openAndReport } from '../sessionOpen'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeftRight, Brain, CircleAlert, Clock, Coins, Copy, Cpu, ExternalLink, FileStack, Gauge, GitFork, Layers, Lightbulb, List, Network, Search, Sparkles, TrendingUp, WandSparkles, Zap } from 'lucide-vue-next'
+import { ArrowLeftRight, Brain, SquareArrowOutUpRight, CircleAlert, Clock, Coins, Copy, Cpu, ExternalLink, FileStack, Gauge, GitFork, Layers, Lightbulb, List, Network, Search, Sparkles, TrendingUp, WandSparkles, Zap } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from '../components/CodexLogo.vue'
 import AnimatedNumber from '../components/AnimatedNumber.vue'
@@ -171,6 +172,7 @@ function impact(item: AdviceItem) {
             <template v-if="item.next_step.command">
               <code>{{ item.next_step.command }}</code>
               <button class="advice-copy" :aria-label="t.advice.copyCommand" :title="t.advice.copyCommand" @click="copyCommand(item.next_step.command)"><Copy :size="14" />{{ t.advice.copyCommand }}</button>
+              <button v-if="item.latest_session" class="advice-copy" :title="t.advice.fillCommandHint" @click="openAndReport(item.latest_session, item.next_step.command)"><SquareArrowOutUpRight :size="14" />{{ t.advice.fillCommand }}</button>
             </template>
           </div>
           <div class="advice-actions">

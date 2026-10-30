@@ -476,6 +476,9 @@ export type AdviceSeverity = 'Error' | 'Warning'
 export interface AdviceLink { label: string; url: string }
 /** `command` is null unless verified for that tool; the copy button is shown only with a command. */
 export interface NextStep { text: string; command: string | null }
+/** Enough to find a session again; `project` is its working folder. */
+export interface SessionRef { tool: Tool; source: Source; session_id: string; project: string | null }
+export type OpenOutcome = 'focused' | 'filled' | 'focused_copied' | 'app_copied' | 'app_opened' | 'resumed' | 'not_found'
 export interface AdviceItem {
   id: string
   key: string
@@ -494,6 +497,8 @@ export interface AdviceItem {
   avoidable_weekly_pct: number | null
   link: AdviceLink | null
   next_step: NextStep | null
+  /** The most recent session it happened in; "fill command" types there. */
+  latest_session: SessionRef | null
 }
 export interface ToolAdvice {
   tool: Tool
@@ -668,3 +673,12 @@ export const saveExport = (fileName: string, bytes: Uint8Array) =>
   isPreview()
     ? Promise.resolve(previewDownload(fileName, bytes))
     : invoke<string | null>('save_export', { fileName, bytes: Array.from(bytes) })
+
+/** Brings a session to the front; with `command`, types it without sending where the terminal allows. */
+export const openSession = (session: SessionRef, command?: string) =>
+  isPreview()
+    ? Promise.resolve<OpenOutcome>(command ? 'focused_copied' : 'focused')
+    : invoke<OpenOutcome>('open_session', {
+      target: { tool: session.tool, source: session.source, sessionId: session.session_id, project: session.project },
+      command: command ?? null,
+    })

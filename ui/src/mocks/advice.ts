@@ -69,6 +69,7 @@ const item = (tool: Tool, id: string, partial: Partial<AdviceItem>): AdviceItem 
   avoidable_weekly_pct: null,
   link: null,
   next_step: null,
+  latest_session: { tool, source: tool === 'Claude' ? 'ClaudeCli' : 'CodexCli', session_id: `demo-${id}`, project: '/Users/demo/token-audit' },
   ...partial,
 })
 

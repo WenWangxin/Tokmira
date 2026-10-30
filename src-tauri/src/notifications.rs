@@ -40,11 +40,23 @@ pub fn request() -> NotificationStatus {
 
 pub fn post(app: &AppHandle, title: &str, body: &str) {
     #[cfg(target_os = "macos")]
-    if mac::post(title, body) {
+    if mac::post(title, body, None) {
         return;
     }
     use tauri_plugin_notification::NotificationExt;
     let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// A savings alert with "open session" (and, with a command, "fill command") buttons on
+/// macOS. `payload` comes back to [`crate::notification_action`] when a button is pressed.
+/// Elsewhere the buttons are not available and the alert is plain text.
+pub fn post_alert(app: &AppHandle, title: &str, body: &str, payload: &str, can_fill: bool) {
+    #[cfg(target_os = "macos")]
+    if mac::post(title, body, Some((payload, can_fill))) {
+        return;
+    }
+    let _ = (payload, can_fill);
+    post(app, title, body);
 }
 
 /// Posts after a pause. macOS keeps a notification from the frontmost app out of the desktop
@@ -68,13 +80,20 @@ mod mac {
     use objc2::rc::Retained;
     use objc2::runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject};
     use objc2::{define_class, msg_send, AllocAnyThread};
-    use objc2_foundation::{NSBundle, NSError, NSString};
+    use objc2_foundation::{NSArray, NSBundle, NSDictionary, NSError, NSSet, NSString};
     use objc2_user_notifications::{
         UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent,
-        UNNotification, UNNotificationPresentationOptions, UNNotificationRequest,
+        UNNotification, UNNotificationAction, UNNotificationActionOptions, UNNotificationCategory,
+        UNNotificationCategoryOptions, UNNotificationPresentationOptions, UNNotificationRequest,
         UNNotificationResponse, UNNotificationSettings, UNNotificationSound,
         UNUserNotificationCenter, UNUserNotificationCenterDelegate,
     };
+
+    const FILL_ACTION: &str = "tokmira.fill";
+    const OPEN_ACTION: &str = "tokmira.open";
+    const FILL_CATEGORY: &str = "tokmira.advice.fill";
+    const OPEN_CATEGORY: &str = "tokmira.advice.open";
+    const PAYLOAD_KEY: &str = "tokmira";
 
     use super::NotificationStatus;
 
@@ -104,11 +123,18 @@ mod mac {
             fn did_receive(
                 &self,
                 _center: &UNUserNotificationCenter,
-                _response: &UNNotificationResponse,
+                response: &UNNotificationResponse,
                 handler: &block2::DynBlock<dyn Fn()>,
             ) {
                 if let Some(app) = APP.get() {
-                    crate::tray::show_main(app);
+                    let action = response.actionIdentifier().to_string();
+                    let payload = payload(response);
+                    match (action.as_str(), payload) {
+                        (FILL_ACTION | OPEN_ACTION, Some(payload)) => {
+                            crate::notification_action(app, payload, action == FILL_ACTION);
+                        }
+                        _ => crate::tray::show_main(app),
+                    }
                 }
                 handler.call(());
             }
@@ -130,10 +156,41 @@ mod mac {
             let this = Delegate::alloc().set_ivars(());
             unsafe { msg_send![super(this), init] }
         };
-        UNUserNotificationCenter::currentNotificationCenter()
-            .setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         // The center holds its delegate weakly; it has to live as long as the app.
         std::mem::forget(delegate);
+        // Background actions: the session's terminal comes forward, not Tokmira.
+        let action = |id: &str, title: String| {
+            UNNotificationAction::actionWithIdentifier_title_options(
+                &NSString::from_str(id),
+                &NSString::from_str(&title),
+                UNNotificationActionOptions::empty(),
+            )
+        };
+        let fill = action(
+            FILL_ACTION,
+            crate::display_text("填入命令", "Fill in command"),
+        );
+        let open = action(OPEN_ACTION, crate::display_text("打开会话", "Open session"));
+        let category = |id: &str, actions: &[&UNNotificationAction]| {
+            UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+                &NSString::from_str(id),
+                &NSArray::from_slice(actions),
+                &NSArray::new(),
+                UNNotificationCategoryOptions::empty(),
+            )
+        };
+        let fill_category = category(FILL_CATEGORY, &[&fill, &open]);
+        let open_category = category(OPEN_CATEGORY, &[&open]);
+        center.setNotificationCategories(&NSSet::from_slice(&[&*fill_category, &*open_category]));
+    }
+
+    fn payload(response: &UNNotificationResponse) -> Option<String> {
+        let info = response.notification().request().content().userInfo();
+        let key = NSString::from_str(PAYLOAD_KEY);
+        let value = info.objectForKey(&key)?;
+        Some(value.downcast::<NSString>().ok()?.to_string())
     }
 
     pub fn status() -> Option<NotificationStatus> {
@@ -176,7 +233,7 @@ mod mac {
         status().unwrap_or(NotificationStatus::Unknown)
     }
 
-    pub fn post(title: &str, body: &str) -> bool {
+    pub fn post(title: &str, body: &str, action: Option<(&str, bool)>) -> bool {
         if !available() {
             return false;
         }
@@ -184,6 +241,18 @@ mod mac {
         content.setTitle(&NSString::from_str(title));
         content.setBody(&NSString::from_str(body));
         content.setSound(Some(&UNNotificationSound::defaultSound()));
+        if let Some((payload, can_fill)) = action {
+            content.setCategoryIdentifier(&NSString::from_str(if can_fill {
+                FILL_CATEGORY
+            } else {
+                OPEN_CATEGORY
+            }));
+            let key = NSString::from_str(PAYLOAD_KEY);
+            let value = NSString::from_str(payload);
+            let info = NSDictionary::from_slices(&[&*key], &[&*value]);
+            // SAFETY: userInfo takes a dictionary of property-list objects; strings are.
+            unsafe { content.setUserInfo(&Retained::cast_unchecked::<NSDictionary>(info)) };
+        }
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_nanos())
