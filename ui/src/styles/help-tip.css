@@ -1,0 +1,33 @@
+/* "?" icon beside a label; the details show on hover, keyboard focus or tap. */
+.help-tip {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--on-surface-muted);
+  cursor: help;
+  place-items: center;
+  vertical-align: -3px;
+}
+.help-tip:hover,
+.help-tip[aria-expanded='true'] { color: var(--on-surface-variant); }
+.help-tip:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+.help-tip-popup {
+  position: fixed;
+  z-index: 70;
+  padding: 10px 12px;
+  border-radius: 8px;
+  /* Inverted like a Material plain tooltip so it stands off the white cards in both themes. */
+  background: var(--on-surface);
+  box-shadow: var(--shadow-dialog);
+  color: var(--surface-container);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+  pointer-events: none;
+}

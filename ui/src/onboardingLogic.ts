@@ -151,17 +151,19 @@ export interface QuotaSourceInfo {
   description: string
   /** Shown under the description while the switch is on, e.g. a system prompt the user will see. */
   hint?: string
-  /** Always shown: why the source is worth turning on and what turning it on does. */
+  /** Shown under the description, e.g. why the source does not apply here. */
   notes: string[]
+  /** Behind the "?" icon: what turning it on does and why it is worth it. */
+  help: string
 }
 
 export function quotaSources(kind: DetectionCase = 'normal'): readonly QuotaSourceInfo[] {
   const t = m().onboarding
-  const statuslineNotes = kind === 'claude_desktop_only' ? [t.statuslineNeedsCli, t.statuslineEffect] : [t.statuslineEffect]
+  const statuslineNotes = kind === 'claude_desktop_only' ? [t.statuslineNeedsCli] : []
   return [
-    { key: 'statusline', title: t.statuslineTitle, description: t.statuslineDesc, notes: statuslineNotes },
-    { key: 'claudeOfficial', title: t.claudeTitle, description: t.claudeDesc, hint: t.claudeHint, notes: [t.claudeWorth, t.claudeEffect] },
-    { key: 'codexOfficial', title: t.codexTitle, description: t.codexDesc, notes: [t.codexWorth, t.codexEffect] },
+    { key: 'statusline', title: t.statuslineTitle, description: t.statuslineDesc, notes: statuslineNotes, help: t.statuslineHelp },
+    { key: 'claudeOfficial', title: t.claudeTitle, description: t.claudeDesc, hint: t.claudeHint, notes: [], help: t.claudeHelp },
+    { key: 'codexOfficial', title: t.codexTitle, description: t.codexDesc, notes: [], help: t.codexHelp },
   ]
 }
 

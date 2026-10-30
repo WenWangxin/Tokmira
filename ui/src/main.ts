@@ -15,6 +15,7 @@ import './styles/onboarding.css'
 import './styles/share.css'
 import './styles/motion.css'
 import './styles/toast.css'
+import './styles/help-tip.css'
 
 async function boot() {
   try {

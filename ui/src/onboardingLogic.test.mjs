@@ -145,18 +145,17 @@ test('preview fixtures for no logs and Claude desktop only', () => {
 
 test('quota sources explain each switch; the status line needs the CLI for desktop-only users', () => {
   const normal = quotaSources()
-  assert.ok(normal.every(item => item.notes.length > 0))
+  assert.ok(normal.every(item => item.help.length > 0))
+  assert.ok(normal.every(item => item.notes.length === 0))
   const statusline = normal.find(item => item.key === 'statusline')
-  assert.deepEqual(statusline.notes, [m().onboarding.statuslineEffect])
-  assert.match(statusline.notes[0], /零联网/)
+  assert.match(statusline.help, /备份/)
   const claude = normal.find(item => item.key === 'claudeOfficial')
-  assert.deepEqual(claude.notes, [m().onboarding.claudeWorth, m().onboarding.claudeEffect])
-  assert.match(claude.notes[1], /Anthropic/)
-  assert.match(claude.notes[1], /不自行刷新/)
-  assert.ok(!normal.find(item => item.key === 'codexOfficial').notes.some(note => /Anthropic|凭据/.test(note)))
+  assert.match(claude.help, /Anthropic/)
+  assert.match(claude.help, /不保存/)
+  assert.ok(!/Anthropic|Claude 登录/.test(normal.find(item => item.key === 'codexOfficial').help))
   const desktopOnly = quotaSources('claude_desktop_only').find(item => item.key === 'statusline')
-  assert.deepEqual(desktopOnly.notes, [m().onboarding.statuslineNeedsCli, m().onboarding.statuslineEffect])
-  assert.deepEqual(quotaSources('none').find(item => item.key === 'statusline').notes, [m().onboarding.statuslineEffect])
+  assert.deepEqual(desktopOnly.notes, [m().onboarding.statuslineNeedsCli])
+  assert.deepEqual(quotaSources('none').find(item => item.key === 'statusline').notes, [])
 })
 
 test('setup summary is short on success and lists only failures', () => {

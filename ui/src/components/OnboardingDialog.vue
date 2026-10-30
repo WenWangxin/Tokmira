@@ -4,6 +4,7 @@ import { BellRing, Bot, CircleCheck, Database, Info, LoaderCircle, ShieldCheck, 
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from './CodexLogo.vue'
 import Toggle from './Toggle.vue'
+import HelpTip from './HelpTip.vue'
 import {
   detectTools,
   getAutostart,
@@ -406,7 +407,7 @@ onUnmounted(() => {
               <div class="onboarding-choices">
                 <div class="onboarding-choice">
                   <div class="onboarding-choice-main">
-                    <strong>{{ t.onboarding.alertsTitle }}</strong>
+                    <strong>{{ t.onboarding.alertsTitle }}<HelpTip :text="t.onboarding.alertsHelp" :label="t.onboarding.moreAbout(t.onboarding.alertsTitle)" /></strong>
                     <p>{{ t.onboarding.alertsDesc }}</p>
                   </div>
                   <Toggle :checked="reminders.notifications" :disabled="busy" :label="t.onboarding.alertsTitle" @toggle="toggleReminder('notifications')" />
@@ -435,7 +436,7 @@ onUnmounted(() => {
               <div class="onboarding-choices">
                 <div v-for="item in quotaChoices" :key="item.key" class="onboarding-choice">
                   <div class="onboarding-choice-main">
-                    <strong>{{ item.title }}</strong>
+                    <strong>{{ item.title }}<HelpTip :text="item.help" :label="t.onboarding.moreAbout(item.title)" /></strong>
                     <p>{{ item.description }}</p>
                     <p v-for="note in item.notes" :key="note" class="onboarding-hint">{{ note }}</p>
                     <p v-if="item.hint && selection[item.key]" class="onboarding-hint">{{ item.hint }}</p>
