@@ -475,6 +475,8 @@ const zh = {
     chatsExcluded: '网页版和桌面端的聊天不计入统计。',
     noLogsNote: '还没有找到 Claude Code / Codex 的本机记录。先在终端或桌面版里跑一次会话，回来点「重新检测」。',
     desktopOnlyNote: '只找到 Claude 桌面版的记录。桌面版的 Code 功能不会调用状态栏，所以状态栏记录拿不到它的额度。可以开启官方查询、在设置里手动校准，或者偶尔用一次命令行版 Claude Code。',
+    goToCalibration: '去校准 →',
+    calibrationQueued: '完成引导后前往校准',
     redetect: '重新检测',
     redetecting: '正在检测…',
     remindersLead: (place: string) => `关掉窗口后，Tokmira 会留在${place}，发现浪费额度时提醒你。`,

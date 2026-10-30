@@ -201,6 +201,11 @@ export function previewOnboardingForced(search: string, isPreview: boolean): boo
   return new URLSearchParams(search).get('onboarding') === '1'
 }
 
+/** A requested settings destination is used only after the guide has saved completion. */
+export function onboardingExitTarget(calibrationRequested: boolean, completed: boolean): string | null {
+  return calibrationRequested && completed ? '/settings?section=calibration&tool=Claude' : null
+}
+
 export type NotificationState = 'unknown' | 'not_determined' | 'denied' | 'authorized'
 
 export interface NotificationLine {

@@ -476,6 +476,8 @@ const en: Messages = {
     chatsExcluded: 'Web and desktop chats are not counted.',
     noLogsNote: 'No local Claude Code or Codex records yet. Run one session in the terminal or desktop app, then come back and click “Detect again”.',
     desktopOnlyNote: 'Only Claude desktop records were found. Code in the desktop app never runs the status line, so the status line recorder cannot read its quota. Turn on the official query, calibrate by hand in Settings, or use the Claude Code CLI now and then.',
+    goToCalibration: 'Calibrate →',
+    calibrationQueued: 'Calibrate after the guide',
     redetect: 'Detect again',
     redetecting: 'Detecting…',
     remindersLead: place => `After you close the window, Tokmira stays in the ${place} and lets you know when quota is being wasted.`,

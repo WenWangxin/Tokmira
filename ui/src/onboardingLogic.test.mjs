@@ -11,6 +11,7 @@ import {
   detectedToolRows,
   initialOnboardingChoices,
   installOutcome,
+  onboardingExitTarget,
   onboardingSummary,
   outcomeTone,
   precisionPill,
@@ -104,6 +105,12 @@ test('preview query forces the guide only in the browser preview', () => {
   assert.equal(previewOnboardingForced('?onboarding=1&mock=desktoponly', true), true)
   assert.equal(previewOnboardingForced('', true), false)
   assert.equal(previewOnboardingForced('?onboarding=1', false), false)
+})
+
+test('calibration link navigates only after onboarding completes', () => {
+  assert.equal(onboardingExitTarget(false, true), null)
+  assert.equal(onboardingExitTarget(true, false), null)
+  assert.equal(onboardingExitTarget(true, true), '/settings?section=calibration&tool=Claude')
 })
 
 test('preview fixtures cover both tools and a missing Claude desktop log', () => {

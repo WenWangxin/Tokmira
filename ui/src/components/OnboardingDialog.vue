@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { BellRing, Bot, CircleCheck, Database, Info, LoaderCircle, ShieldCheck, Zap } from 'lucide-vue-next'
 import ClaudeLogo from '../assets/logos/claude.svg'
 import CodexLogo from './CodexLogo.vue'
@@ -27,6 +28,7 @@ import {
   initialOnboardingChoices,
   installOutcome,
   notificationLine,
+  onboardingExitTarget,
   onboardingSummary,
   quotaOutcome,
   trayPlace,
@@ -37,6 +39,7 @@ import { m, messages } from '../i18n/index.ts'
 import { finishOnboarding } from '../onboardingState'
 
 const t = messages
+const router = useRouter()
 const checks = computed(() => t.value.onboarding.checks)
 
 const STEPS = 4
@@ -63,6 +66,7 @@ const busy = ref(false)
 // Set only while “完成” installs and queries, so the button can show it is working.
 const finishing = ref(false)
 const closing = ref(false)
+const calibrationRequested = ref(false)
 const panel = ref<HTMLElement | null>(null)
 const scroll = ref<HTMLElement | null>(null)
 const footer = ref<HTMLElement | null>(null)
@@ -284,6 +288,13 @@ async function skip() {
   await finish(true)
 }
 
+function closeAfterFinish(message: string, tone: 'success' | 'warning', completed: boolean) {
+  const target = onboardingExitTarget(calibrationRequested.value, completed)
+  finishOnboarding(message, tone)
+  closing.value = true
+  if (target) void router.push(target)
+}
+
 async function finish(skipChanges: boolean) {
   if (closing.value || busy.value) return
   busy.value = true
@@ -306,17 +317,15 @@ async function finish(skipChanges: boolean) {
         const refreshed = await refreshQuotas()
         quotaFeedback.value = quotaOutcome(selection.value, refreshed)
       }
-      await updateSettings({ ...saved, onboarding_completed: true })
+      const completed = await updateSettings({ ...saved, onboarding_completed: true })
       const summary = onboardingSummary(quotaFeedback.value, operationErrors.value)
       await nextTick()
-      finishOnboarding(summary.text, summary.tone)
-      closing.value = true
+      closeAfterFinish(summary.text, summary.tone, completed.onboarding_completed)
       return
     }
-    await updateSettings({ ...current, onboarding_completed: true })
+    const completed = await updateSettings({ ...current, onboarding_completed: true })
     const summary = operationErrors.value.length || quotaFeedback.value.length ? onboardingSummary(quotaFeedback.value, operationErrors.value) : { text: '', tone: 'success' as const }
-    finishOnboarding(summary.text, summary.tone)
-    closing.value = true
+    closeAfterFinish(summary.text, summary.tone, completed.onboarding_completed)
   } catch (cause) {
     actionError.value = errorText(cause)
     busy.value = false
@@ -396,6 +405,7 @@ onUnmounted(() => {
               </section>
               <section v-else-if="tools && detection === 'claude_desktop_only'" class="onboarding-plan">
                 <p class="onboarding-outcome">{{ t.onboarding.desktopOnlyNote }}</p>
+                <button type="button" class="settings-link" :aria-pressed="calibrationRequested" @click="calibrationRequested = true">{{ calibrationRequested ? t.onboarding.calibrationQueued : t.onboarding.goToCalibration }}</button>
               </section>
               <p class="onboarding-footnote"><Info :size="15" aria-hidden="true" />{{ t.onboarding.chatsExcluded }}</p>
             </template>
