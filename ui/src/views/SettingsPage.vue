@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { listen } from '@tauri-apps/api/event'
 import { BellRing, CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Info, Languages, LogIn, MonitorOff, Palette, Power, RefreshCw, Scale, SlidersHorizontal, Tag, Terminal, Trash2 } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import HelpTip from '../components/HelpTip.vue'
 import Toggle from '../components/Toggle.vue'
 import CodexLogo from '../components/CodexLogo.vue'
 import ClaudeLogo from '../assets/logos/claude.svg'
@@ -547,7 +548,7 @@ onUnmounted(() => {
         <div class="settings-row" data-section="recorder" :class="{ 'settings-target': target === 'recorder' }">
           <span class="settings-icon"><Gauge :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
-            <div class="settings-title">{{ t.settings.statuslineTitle }}<span class="origin-pill settings-pill" :class="recorderPill(recorder.statusline_installed, recorder.statusline_modified).tone"><i />{{ recorderPill(recorder.statusline_installed, recorder.statusline_modified).text }}</span></div>
+            <div class="settings-title">{{ t.settings.statuslineTitle }}<HelpTip :text="t.onboarding.statuslineHelp" :label="t.onboarding.moreAbout(t.settings.statuslineTitle)" /><span class="origin-pill settings-pill" :class="recorderPill(recorder.statusline_installed, recorder.statusline_modified).tone"><i />{{ recorderPill(recorder.statusline_installed, recorder.statusline_modified).text }}</span></div>
             <p class="settings-desc">{{ t.settings.statuslineDesc }}</p>
           </div>
           <div class="settings-controls">
@@ -569,7 +570,7 @@ onUnmounted(() => {
         <div class="settings-row">
           <span class="settings-icon"><Terminal :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
-            <div class="settings-title">{{ t.settings.codexTitle }}<span class="origin-pill settings-pill" :class="networkPill(settings.codex_app_server).tone"><i />{{ networkPill(settings.codex_app_server).text }}</span></div>
+            <div class="settings-title">{{ t.settings.codexTitle }}<HelpTip :text="t.onboarding.codexHelp" :label="t.onboarding.moreAbout(t.settings.codexTitle)" /><span class="origin-pill settings-pill" :class="networkPill(settings.codex_app_server).tone"><i />{{ networkPill(settings.codex_app_server).text }}</span></div>
             <p class="settings-desc">{{ t.settings.codexDesc }}</p>
           </div>
           <div class="settings-controls">
@@ -580,7 +581,7 @@ onUnmounted(() => {
         <div class="settings-row settings-row-complex">
           <span class="settings-icon"><ExternalLink :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
-            <div class="settings-title">{{ t.settings.claudeTitle }}<span class="origin-pill settings-pill" :class="networkPill(settings.claude_official_query).tone"><i />{{ networkPill(settings.claude_official_query).text }}</span></div>
+            <div class="settings-title">{{ t.settings.claudeTitle }}<HelpTip :text="t.onboarding.claudeHelp" :label="t.onboarding.moreAbout(t.settings.claudeTitle)" /><span class="origin-pill settings-pill" :class="networkPill(settings.claude_official_query).tone"><i />{{ networkPill(settings.claude_official_query).text }}</span></div>
             <p class="settings-desc">{{ t.settings.claudeDesc }}</p>
             <p v-if="claudeResult" class="settings-result" :class="quotaMessageTone(claudeResult)" role="status">{{ quotaMessage(claudeResult) }}</p>
           </div>
