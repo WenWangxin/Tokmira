@@ -199,10 +199,12 @@ impl Pricing {
                 "pro" => "pro",
                 _ => return None,
             },
+            crate::model::Tool::DeepSeek => return None,
         };
         match tool {
             crate::model::Tool::Claude => self.subscriptions.claude.get(key).copied(),
             crate::model::Tool::Codex => self.subscriptions.chatgpt.get(key).copied(),
+            crate::model::Tool::DeepSeek => None,
         }
     }
 

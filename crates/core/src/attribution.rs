@@ -432,6 +432,7 @@ pub fn source_label_lang(source: Source, lang: crate::i18n::Lang) -> &'static st
         Source::ClaudeDesktop => lang.pick("Claude · 桌面版", "Claude · Desktop"),
         Source::CodexCli => lang.pick("Codex · 命令行", "Codex · CLI"),
         Source::CodexDesktop => lang.pick("Codex · 桌面版", "Codex · Desktop"),
+        Source::DeepSeek => "DeepSeek Harness",
         Source::Unknown => lang.pick("未知来源", "Unknown source"),
     }
 }

@@ -57,6 +57,7 @@ fn print_share(summary: &ShareSummary) {
             .map(|tool| match tool {
                 Tool::Claude => "Claude",
                 Tool::Codex => "Codex",
+                Tool::DeepSeek => "DeepSeek Harness",
             })
             .collect();
         println!("套餐未识别：{}", names.join("、"));

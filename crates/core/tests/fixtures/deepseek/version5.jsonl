@@ -1,0 +1,2 @@
+{"type":"session","version":5,"id":"future-session","cwd":"/sample/future"}
+{"type":"assistant/message","seq":1,"time":1793520100000,"data":{"turn":1,"step":0,"usage":{"inputTokens":1,"outputTokens":1}}}

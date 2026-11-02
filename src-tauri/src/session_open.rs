@@ -94,7 +94,7 @@ pub fn open(
                 _ => OpenOutcome::NotFound,
             };
         }
-        Source::ClaudeCli | Source::CodexCli | Source::Unknown => {}
+        Source::ClaudeCli | Source::CodexCli | Source::DeepSeek | Source::Unknown => {}
     }
 
     let Some(project) = target.project.as_deref().map(PathBuf::from) else {

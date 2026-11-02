@@ -1,0 +1,6 @@
+{"type":"session","version":4,"id":"synthetic-session","createdAt":1793520000000,"cwd":"/sample/project","isSeeded":false,"delegationDepth":0}
+{"type":"request/header","seq":1,"time":1793520000000,"data":{"header":{"config":{"provider":"deepseek-account","model":"deepseek-flash","reasoningEffort":"medium"}}}}
+{"type":"assistant/attempt","seq":2,"time":1793520001000,"data":{"turn":1,"step":0,"stream":[{"type":"chunk","chunk":{"type":"text","text":"not retained"}},{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":500,"outputTokens":10}}}]}}
+{"type":"assistant/message","seq":3,"time":1793520002000,"data":{"turn":1,"step":0,"usage":{"inputTokens":9007,"outputTokens":98,"cacheReadTokens":0,"cacheWriteTokens":0},"message":{"id":"request-1","source":{"model":"deepseek-flash"},"content":"not retained"}}}
+{"type":"session/title-llm-request","seq":4,"time":1793520003000,"data":{"system":"not retained","messages":[{"content":"not retained"}]}}
+{"type":"session/title","seq":5,"time":1793520004000,"data":{"title":"Old synthetic title"}}

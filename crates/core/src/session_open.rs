@@ -228,6 +228,7 @@ pub fn resume_command(tool: Tool, session_id: &str) -> Option<String> {
     Some(match tool {
         Tool::Claude => format!("claude --resume {session_id}"),
         Tool::Codex => format!("codex resume {session_id}"),
+        Tool::DeepSeek => return None,
     })
 }
 
@@ -335,6 +336,7 @@ pub fn is_cli_process(tool: Tool, exe: &str, args: &[String]) -> bool {
                     .skip(1)
                     .any(|arg| HEADLESS.contains(&arg.as_str()))
         }
+        Tool::DeepSeek => false,
     }
 }
 

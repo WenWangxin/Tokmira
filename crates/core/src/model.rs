@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum Tool {
     Claude,
     Codex,
+    DeepSeek,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -13,6 +14,7 @@ pub enum Source {
     ClaudeDesktop,
     CodexCli,
     CodexDesktop,
+    DeepSeek,
     Unknown,
 }
 

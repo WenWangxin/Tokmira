@@ -151,6 +151,7 @@ fn source_name(source: Source, lang: crate::i18n::Lang) -> &'static str {
     match source {
         Source::ClaudeCli | Source::CodexCli => lang.pick("命令行", "CLI"),
         Source::ClaudeDesktop | Source::CodexDesktop => lang.pick("桌面端", "Desktop"),
+        Source::DeepSeek => lang.pick("DeepSeek Harness", "DeepSeek Harness"),
         Source::Unknown => lang.pick("未知来源", "Unknown source"),
     }
 }

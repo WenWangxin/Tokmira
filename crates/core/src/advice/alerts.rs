@@ -243,6 +243,7 @@ fn alert(
     let product = match tool {
         Tool::Claude => "Claude Code",
         Tool::Codex => "Codex",
+        Tool::DeepSeek => "DeepSeek Harness",
     };
     // The project folder's name, not the session title: titles are derived from the
     // conversation, and notifications can show on the lock screen.
@@ -364,6 +365,7 @@ fn light_task(
             "Consider {} for this type of task to reduce usage.",
             alternative_family(&input.config.light_task.codex_alternative)
         ),
+        Tool::DeepSeek => String::new(),
     };
     (
         settled,

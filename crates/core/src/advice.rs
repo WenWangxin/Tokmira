@@ -378,6 +378,7 @@ pub fn quota_advice_states(
                         }
                     }
                 }
+                Tool::DeepSeek => {}
             }
             let plan = match tool {
                 Tool::Claude => claude
@@ -401,6 +402,7 @@ pub fn quota_advice_states(
                     })
                     .max_by_key(|snapshot| snapshot.at)
                     .and_then(|snapshot| snapshot.plan_type.clone()),
+                Tool::DeepSeek => None,
             };
             QuotaAdviceState {
                 tool: Some(tool),
@@ -468,6 +470,7 @@ fn rebuild_tokens(event: &UsageEvent) -> u64 {
     match event.tool {
         Tool::Claude => write_tokens(&event.tokens),
         Tool::Codex => event.tokens.input,
+        Tool::DeepSeek => 0,
     }
 }
 
@@ -481,6 +484,7 @@ fn rebuild_cost(event: &UsageEvent, prices: &ModelPrices) -> f64 {
                 / 1_000_000.0
         }
         Tool::Codex => tokens.input as f64 * prices.input / 1_000_000.0,
+        Tool::DeepSeek => 0.0,
     }
 }
 
@@ -665,6 +669,7 @@ fn cache_rebuild<'a>(
                 Tool::Claude if uses_hour => config.claude_ttl_1h_minutes,
                 Tool::Claude => config.claude_ttl_5m_minutes,
                 Tool::Codex => config.codex_ttl_minutes,
+                Tool::DeepSeek => return None,
             };
             let gap = current.timestamp - previous.timestamp;
             let rebuilt = rebuild_tokens(current);
@@ -708,6 +713,7 @@ fn cache_rebuild<'a>(
         Tool::Claude if hour_ttl * 2 >= hits.len() as u64 => lang.pick("订阅版缓存的有效期为 1 小时。间隔超过 1 小时再继续对话时，之前的上下文需要整段重新写入缓存。建议在过期前继续，或开启新会话并只保留必要上下文。", "The recorded cache lifetime is 1 hour. Resuming after more than an hour rewrites the previous context. Continue before it expires, or start a new session with only the context you need."),
         Tool::Claude => lang.pick("缓存的有效期为 5 分钟。间隔超过 5 分钟再继续对话时，之前的上下文需要整段重新写入缓存。连续的工作尽量一次完成，长时间离开后可开启新会话并只保留必要上下文。", "The recorded cache lifetime is 5 minutes. Resuming after more than 5 minutes rewrites the previous context. Keep related work together, or start a new session with only the context you need after a long break."),
         Tool::Codex => lang.pick("Codex 未公开缓存时长。间隔较久再继续对话时，之前的上下文通常需要重新计入输入。长时间离开后可开启新会话并只保留必要上下文。", "Codex does not publish a cache lifetime. After a long break, previous context may count as uncached input again. Consider a new session with only the context you need."),
+        Tool::DeepSeek => return None,
     };
     Some(RuleOutput {
         id: "cache_rebuild",
@@ -812,6 +818,7 @@ fn session_startup<'a>(
                 environment.codex_instruction_bytes,
                 &environment.codex_project_instruction_bytes,
             ),
+            Tool::DeepSeek => return None,
         };
         let shown = names
             .iter()
@@ -981,6 +988,7 @@ fn expensive_light_task<'a>(
     let (patterns, alternative) = match tool {
         Tool::Claude => (&config.claude_expensive, &config.claude_alternative),
         Tool::Codex => (&config.codex_expensive, &config.codex_alternative),
+        Tool::DeepSeek => return None,
     };
     let alternative_prices = input.pricing.model_prices(alternative)?;
     let mut prompt_times: BTreeMap<&str, Vec<DateTime<Utc>>> = BTreeMap::new();
@@ -1064,6 +1072,7 @@ fn expensive_light_task<'a>(
     let description = match tool {
         Tool::Claude => crate::tr!(lang, "重命名、补注释、运行测试等短小任务，换用 {alternative_name} 效果相近、额度消耗更低。Claude Code 中可执行 /model sonnet。", "For short tasks such as renaming, adding comments or running tests, consider {alternative_name} to reduce usage. In Claude Code, use /model sonnet and check that the result meets your needs."),
         Tool::Codex => crate::tr!(lang, "短小任务换用 {alternative_name} 效果相近、额度消耗更低。可在 Codex 中切换模型后再执行这类任务。", "Consider {alternative_name} for short tasks to reduce usage. Switch models in Codex before starting the task, and check that the result meets your needs."),
+        Tool::DeepSeek => return None,
     };
     Some(RuleOutput {
         id: "expensive_light_task",
@@ -1248,6 +1257,7 @@ pub fn tool_key(tool: Tool) -> &'static str {
     match tool {
         Tool::Claude => "claude",
         Tool::Codex => "codex",
+        Tool::DeepSeek => "deepseek",
     }
 }
 

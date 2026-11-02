@@ -27,6 +27,7 @@ pub fn tool_name(tool: Tool) -> &'static str {
     match tool {
         Tool::Claude => "Claude",
         Tool::Codex => "Codex",
+        Tool::DeepSeek => "DeepSeek Harness",
     }
 }
 

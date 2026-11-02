@@ -18,6 +18,7 @@ aes = "0.8.4"
 cbc = { version = "0.1.2", features = ["block-padding"] }
 pbkdf2 = "0.12.2"
 sha1 = "0.10.6"
+ruzstd = "0.9.1"
 
 [target.'cfg(not(windows))'.dependencies]
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }

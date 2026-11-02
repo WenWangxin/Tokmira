@@ -14,6 +14,7 @@ use token_audit_core::codex::{scan_codex, CodexDebugSummary, RateLimitWindow};
 use token_audit_core::codex_app_server::{
     codex_candidates, read_codex_quota, resolve_launch, AppServerOptions, CodexQuota,
 };
+use token_audit_core::deepseek::{deepseek_root, scan_deepseek, DeepSeekDebugSummary};
 use token_audit_core::model::{Source, Tool};
 use token_audit_core::pricing::Pricing;
 use token_audit_core::report::{build_report, Metrics, Report, ReportOptions};
@@ -21,7 +22,7 @@ use token_audit_core::report::{build_report, Metrics, Report, ReportOptions};
 fn usage() {
     println!("       token-audit attribution [--home <目录>] [--data-dir <目录>] [--tool claude|codex] [--json]\n       token-audit overview [--home <目录>] [--data-dir <目录>] [--json]\n       token-audit usage [--home <目录>] [--data-dir <目录>] [--tool claude|codex] [--window current|<RFC3339 window_id>] [--json]\n       token-audit advice [--home <目录>] [--data-dir <目录>] [--days 7|30] [--json|--distribution]\n       token-audit sessions [--home <目录>] [--data-dir <目录>] [--days 7|30] [--json]\n       token-audit session --tool claude|codex --id <session_id> [--home <目录>] [--data-dir <目录>] [--json]\n       token-audit share [--home <目录>] [--data-dir <目录>] [--json]");
     println!(
-        "用法：token-audit debug <claude|codex> [--home <目录>] [--json]\n       token-audit scan [--home <目录>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--tool claude|codex] [--pricing <覆盖文件>] [--json]\n       token-audit quota codex [--codex <路径>] [--timeout <秒>] [--json]\n       token-audit quota claude [--source auto|desktop|code] [--proxy <url>] [--no-proxy] [--timeout <秒>] [--keychain-timeout <秒>] [--json]\n       token-audit recorder <status|install|uninstall|records> [选项]\n       token-audit hook <statusline|event --tool claude>\n       token-audit --version"
+        "用法：token-audit debug <claude|codex|deepseek> [--home <目录>] [--json]\n       token-audit scan [--home <目录>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--tool claude|codex|deepseek] [--pricing <覆盖文件>] [--json]\n       token-audit quota codex [--codex <路径>] [--timeout <秒>] [--json]\n       token-audit quota claude [--source auto|desktop|code] [--proxy <url>] [--no-proxy] [--timeout <秒>] [--keychain-timeout <秒>] [--json]\n       token-audit recorder <status|install|uninstall|records> [选项]\n       token-audit hook <statusline|event --tool claude>\n       token-audit --version"
     );
 }
 
@@ -146,6 +147,35 @@ fn print_codex_summary(summary: &CodexDebugSummary) {
     }
 }
 
+fn print_deepseek_summary(summary: &DeepSeekDebugSummary) {
+    let stats = &summary.stats;
+    println!("文件数：{}", stats.files);
+    println!("不支持格式文件数：{}", stats.unsupported_files);
+    println!("尾帧不完整文件数：{}", stats.truncated_files);
+    println!("读取失败文件数：{}", stats.unreadable_files);
+    println!("总行数：{}", stats.total_lines);
+    println!("格式错误行数：{}", stats.malformed_lines);
+    println!("非用量行数：{}", stats.non_usage_lines);
+    println!("用量样本数：{}", stats.usage_samples);
+    println!("替换样本数：{}", stats.replaced_samples);
+    println!("重试次数：{}", stats.retries);
+    println!("继承事件跳过数：{}", stats.seeded_events_skipped);
+    println!("标题请求数：{}", stats.title_requests);
+    println!("自定义路由事件数：{}", stats.custom_route_events);
+    println!("事件总数：{}", summary.events_total);
+    println!("唯一 session 数：{}", summary.unique_sessions);
+    println!("input：{}", summary.tokens.input);
+    println!("output：{}", summary.tokens.output);
+    println!("cache_read：{}", summary.tokens.cache_read);
+    println!(
+        "cache_write_unspecified：{}",
+        summary.tokens.cache_write_unspecified
+    );
+    for (model, count) in &summary.models {
+        println!("模型 {model}：事件数 {count}");
+    }
+}
+
 fn run_debug(tool: &str, args: impl Iterator<Item = OsString>) -> Result<(), &'static str> {
     let (home, json) = parse_debug_args(args)?;
     match tool {
@@ -171,6 +201,20 @@ fn run_debug(tool: &str, args: impl Iterator<Item = OsString>) -> Result<(), &'s
                 println!("{output}");
             } else {
                 print_codex_summary(&summary);
+            }
+        }
+        "deepseek" => {
+            let root = deepseek_root(&home, std::env::var_os("DSH_HOME").as_deref());
+            let summary = scan_deepseek(&root)
+                .map_err(|_| "扫描 DeepSeek Harness 日志失败")?
+                .debug_summary();
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&summary).map_err(|_| "生成 JSON 失败")?
+                );
+            } else {
+                print_deepseek_summary(&summary);
             }
         }
         _ => return Err("未知调试工具"),
@@ -217,7 +261,8 @@ fn parse_scan_args(args: impl Iterator<Item = OsString>) -> Result<ScanArgs, Str
                         tool = Some(match value.to_str() {
                             Some("claude") => Tool::Claude,
                             Some("codex") => Tool::Codex,
-                            _ => return Err("--tool 只能是 claude 或 codex".into()),
+                            Some("deepseek") => Tool::DeepSeek,
+                            _ => return Err("--tool 只能是 claude、codex 或 deepseek".into()),
                         });
                     }
                     _ => return Err(format!("{flag} 只能指定一次")),
@@ -354,6 +399,7 @@ fn source_label(source: Source) -> &'static str {
         Source::ClaudeDesktop => "Claude 桌面版",
         Source::CodexCli => "Codex 命令行",
         Source::CodexDesktop => "Codex 桌面版",
+        Source::DeepSeek => "DeepSeek Harness",
         Source::Unknown => "未知来源",
     }
 }
@@ -388,7 +434,9 @@ fn print_report(report: &Report, malformed: u64, unreadable: u64) {
     }
     print_header("按会话（前 10）");
     for group in report.by_session.iter().take(10) {
-        let label: String = group.key.chars().take(8).collect();
+        // DeepSeek Harness ids all start with "session-"; show the part that differs.
+        let id = group.key.strip_prefix("session-").unwrap_or(&group.key);
+        let label: String = id.chars().take(8).collect();
         print_row(&label, &group.metrics);
     }
     println!("\n费用为按 API 价格的估算（价格表版本 {}），不是实际账单；不含 ChatGPT / Claude 桌面端聊天", report.pricing_version);
@@ -400,12 +448,29 @@ fn print_report(report: &Report, malformed: u64, unreadable: u64) {
 fn run_scan(args: impl Iterator<Item = OsString>) -> Result<(), String> {
     let args = parse_scan_args(args)?;
     let pricing = load_pricing(args.pricing.clone())?;
-    let claude = scan_claude(&args.home).map_err(|_| "扫描 Claude 日志失败".to_owned())?;
-    let codex = scan_codex(&args.home).map_err(|_| "扫描 Codex 日志失败".to_owned())?;
-    let malformed = claude.stats.malformed_lines + codex.stats.malformed_lines;
-    let unreadable = claude.stats.unreadable_files + codex.stats.unreadable_files;
-    let mut events = claude.events;
-    events.extend(codex.events);
+    let mut events = Vec::new();
+    let mut malformed = 0;
+    let mut unreadable = 0;
+    if args.tool.is_none_or(|tool| tool == Tool::Claude) {
+        let claude = scan_claude(&args.home).map_err(|_| "扫描 Claude 日志失败".to_owned())?;
+        malformed += claude.stats.malformed_lines;
+        unreadable += claude.stats.unreadable_files;
+        events.extend(claude.events);
+    }
+    if args.tool.is_none_or(|tool| tool == Tool::Codex) {
+        let codex = scan_codex(&args.home).map_err(|_| "扫描 Codex 日志失败".to_owned())?;
+        malformed += codex.stats.malformed_lines;
+        unreadable += codex.stats.unreadable_files;
+        events.extend(codex.events);
+    }
+    if args.tool.is_none_or(|tool| tool == Tool::DeepSeek) {
+        let root = deepseek_root(&args.home, std::env::var_os("DSH_HOME").as_deref());
+        let deepseek =
+            scan_deepseek(&root).map_err(|_| "扫描 DeepSeek Harness 日志失败".to_owned())?;
+        malformed += deepseek.stats.malformed_lines;
+        unreadable += deepseek.stats.unreadable_files;
+        events.extend(deepseek.events);
+    }
     let report = build_report(
         &events,
         &pricing,
@@ -597,7 +662,7 @@ fn main() -> ExitCode {
         Some("debug") => {
             let tool = args.next();
             let tool = tool.as_deref().and_then(|arg| arg.to_str());
-            let Some(tool @ ("claude" | "codex")) = tool else {
+            let Some(tool @ ("claude" | "codex" | "deepseek")) = tool else {
                 eprintln!("未知调试工具。");
                 usage();
                 return ExitCode::FAILURE;

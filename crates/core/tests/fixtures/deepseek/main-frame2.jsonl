@@ -1,0 +1,4 @@
+{"type":"llm/retry-started","seq":6,"time":1793520005000,"data":{"turn":1,"step":0}}
+{"type":"assistant/message","seq":7,"time":1793520006000,"data":{"turn":1,"step":0,"usage":{"inputTokens":2,"outputTokens":3,"cacheReadTokens":1,"cacheWriteTokens":4},"message":{"id":"request-2","source":{"model":"deepseek-flash"}}}}
+{"type":"session/title","seq":8,"time":1793520007000,"data":{"title":"Final synthetic title"}}
+{broken JSON

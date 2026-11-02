@@ -48,6 +48,7 @@ fn scan_json_combines_both_scanners_and_reports_unpriced_events() {
     let expected = scan_claude(home.path()).expect("Claude scan").events.len()
         + scan_codex(home.path()).expect("Codex scan").events.len();
     let output = Command::new(env!("CARGO_BIN_EXE_token-audit"))
+        .env_remove("DSH_HOME")
         .args(["scan", "--home"])
         .arg(home.path())
         .args(["--pricing"])

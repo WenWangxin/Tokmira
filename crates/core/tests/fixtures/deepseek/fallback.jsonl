@@ -1,0 +1,7 @@
+{"type":"session","version":4,"id":"fallback-session","cwd":"/sample/fallback","isSeeded":false,"delegationDepth":0}
+{"type":"request/header","seq":1,"time":1793520100000,"data":{"header":{"config":{"provider":"deepseek-official","model":"fallback-model"}}}}
+{"type":"assistant/message","seq":2,"time":1793520101000,"data":{"turn":1,"step":1,"stream":[{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":1,"outputTokens":2}}},{"type":"chunk","chunk":{"type":"text","text":"not retained"}},{"type":"chunk","chunk":{"type":"usage","usage":{"inputTokens":3,"outputTokens":4,"cacheReadTokens":5,"cacheWriteTokens":6}}}],"message":{"id":"fallback-request"}}}
+{"type":"assistant/message","seq":3,"time":1793520102000,"data":{"turn":1,"step":1,"stream":null,"usage":{"inputTokens":3,"outputTokens":4,"cacheReadTokens":5,"cacheWriteTokens":6},"message":{"id":"fallback-request"}}}
+{"type":"session/title-llm-request","seq":4,"time":1793520103000,"data":{"system":"not retained"}}
+{"type":"session/title-llm-request","seq":5,"time":1793520104000,"data":{"messages":"not retained"}}
+{"type":"unknown/new-event","seq":6,"time":1793520105000,"data":["not retained"]}

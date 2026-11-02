@@ -4,6 +4,9 @@
 //! Claude quota snapshot and the newest Codex log snapshot, not from message text.
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
+use std::fs;
+use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -11,6 +14,48 @@ use serde::Serialize;
 use crate::codex::RateLimitSnapshot;
 use crate::model::{Source, UsageEvent};
 use crate::quota_store::{normalize_claude_plan, ClaudeSnapshot};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeepSeekPlatform {
+    Mac,
+    Windows,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct DeepSeekInstall {
+    pub desktop: bool,
+    pub cli: bool,
+}
+
+/// Inspect only caller-supplied paths. The application and CLI paths are the
+/// platform's system locations; PATH is searched without executing a program.
+#[must_use]
+pub fn detect_deepseek_install(
+    root: &Path,
+    home: &Path,
+    system_app: &Path,
+    system_cli: &Path,
+    path: Option<&OsStr>,
+    platform: DeepSeekPlatform,
+) -> DeepSeekInstall {
+    let mac = platform == DeepSeekPlatform::Mac;
+    let desktop = root.join("profiles/desktop").is_dir()
+        || (mac
+            && (system_app.exists() || home.join("Applications/DeepSeek Harness.app").exists()));
+    let name = if mac { "dsh" } else { "dsh.cmd" };
+    let in_path = path.is_some_and(|path| {
+        std::env::split_paths(path).any(|directory| directory.join(name).is_file())
+    });
+    let other_profile = fs::read_dir(root.join("profiles")).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry.file_name() != "desktop" && entry.file_type().is_ok_and(|kind| kind.is_dir())
+        })
+    });
+    DeepSeekInstall {
+        desktop,
+        cli: (mac && system_cli.is_file()) || in_path || other_profile,
+    }
+}
 
 /// One of the four log sources the guide can show.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

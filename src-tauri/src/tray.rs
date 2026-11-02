@@ -155,6 +155,7 @@ fn menu_logo(tool: Tool) -> tauri::Result<Image<'static>> {
     Image::from_bytes(match tool {
         Tool::Claude => include_bytes!("../icons/tray/claude-menu.png"),
         Tool::Codex => include_bytes!("../icons/tray/codex-menu.png"),
+        Tool::DeepSeek => include_bytes!("../icons/tray-template.png"),
     })
 }
 

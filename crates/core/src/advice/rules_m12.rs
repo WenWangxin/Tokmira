@@ -96,6 +96,7 @@ fn model_switch<'a>(
                 }
                 Tool::Claude => config.claude_ttl_5m_minutes,
                 Tool::Codex => config.codex_ttl_minutes,
+                Tool::DeepSeek => return None,
             };
             if current.timestamp - previous.timestamp > Duration::minutes(ttl) {
                 continue;
@@ -242,6 +243,7 @@ fn runaway_prompt<'a>(
     let threshold = match tool {
         Tool::Claude => input.config.runaway_prompt.max_requests_per_prompt,
         Tool::Codex => input.config.runaway_prompt.codex_max_requests_per_prompt,
+        Tool::DeepSeek => return None,
     };
     for events in groups
         .values()
@@ -297,6 +299,7 @@ fn expensive_subagent<'a>(
             &input.config.light_task.codex_expensive,
             &input.config.expensive_subagent.codex_alternative,
         ),
+        Tool::DeepSeek => return None,
     };
     let alternative_prices = input.pricing.model_prices(alternative)?;
     let mut groups: SessionMap<'a> = BTreeMap::new();
@@ -357,6 +360,7 @@ fn expensive_subagent<'a>(
                 "简单子任务可选用较低价的模型。",
                 "Consider a lower-cost model for simple subtasks.",
             ),
+            Tool::DeepSeek => return None,
         }
         .into(),
         occurrences: hits.len() as u64,
@@ -511,6 +515,7 @@ fn high_effort_light_task<'a>(
     let efforts = match tool {
         Tool::Claude => &input.config.high_effort_light_task.claude_high_efforts,
         Tool::Codex => &input.config.high_effort_light_task.codex_high_efforts,
+        Tool::DeepSeek => return None,
     };
     let mut hits = Vec::new();
     let mut prompts_hit = 0;
@@ -567,6 +572,7 @@ fn high_effort_light_task<'a>(
                 "轻量任务可通过 model_reasoning_effort 或 /model 调低推理强度。",
                 "For light tasks, reduce effort with model_reasoning_effort or /model.",
             ),
+            Tool::DeepSeek => return None,
         }
         .into(),
         occurrences: prompts_hit,
@@ -795,6 +801,7 @@ fn plan_fit<'a>(tool: Tool, input: &AdviceInput<'_>, lang: Lang) -> Option<RuleO
     let capacities = match tool {
         Tool::Claude => &config.claude_capacity,
         Tool::Codex => &config.chatgpt_capacity,
+        Tool::DeepSeek => return None,
     };
     let current_capacity = *capacities.get(&plan)?;
     let current_price = input.pricing.subscription_usd(tool, &plan)?;

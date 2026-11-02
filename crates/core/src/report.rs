@@ -147,7 +147,9 @@ pub fn build_report<Tz: TimeZone>(
         {
             continue;
         }
-        let cost = pricing.cost_usd(&event.model, &event.tokens);
+        let cost = (event.tool != Tool::DeepSeek)
+            .then(|| pricing.cost_usd(&event.model, &event.tokens))
+            .flatten();
         total.add(event, cost);
         add_group(&mut days, day, event, cost);
         add_group(&mut tools, event.tool, event, cost);

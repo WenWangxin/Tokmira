@@ -1,0 +1,5 @@
+{"type":"session","version":4,"id":"seeded-session","cwd":"/sample/fork","isSeeded":true,"delegationDepth":1}
+{"type":"assistant/message","seq":1,"time":1793520000000,"data":{"turn":1,"step":0,"usage":{"inputTokens":99,"outputTokens":99}}}
+{"type":"session/end-seed","seq":2,"time":1793520001000,"data":{}}
+{"type":"request/header","seq":3,"time":1793520002000,"data":{"header":{"config":{"provider":"custom-route","model":"custom-model"}}}}
+{"type":"assistant/message","seq":4,"time":1793520003000,"data":{"turn":2,"step":0,"usage":{"inputTokens":7,"outputTokens":8},"message":{"id":"fork-request"}}}

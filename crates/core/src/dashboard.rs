@@ -644,6 +644,7 @@ pub fn build_overview<Tz: TimeZone>(
                             .max_by_key(|s| s.timestamp)
                             .and_then(|s| s.plan_type.clone())
                     }),
+                Tool::DeepSeek => None,
             };
             ToolOverview {
                 tool,

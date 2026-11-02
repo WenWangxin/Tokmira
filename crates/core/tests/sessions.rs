@@ -41,6 +41,7 @@ fn event(
             source: match tool {
                 Tool::Claude => Source::ClaudeCli,
                 Tool::Codex => Source::CodexCli,
+                Tool::DeepSeek => Source::DeepSeek,
             },
             session_id: session.to_owned(),
             request_id: None,
