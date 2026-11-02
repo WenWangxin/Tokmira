@@ -7,7 +7,7 @@ export type SourceAction = 'authorize' | 'settings' | null
 
 export interface SourceRow {
   key: string
-  tool: 'Claude' | 'Codex'
+  tool: 'Claude' | 'Codex' | 'DeepSeek'
   title: string
   status: string
   tone: SourceTone
@@ -22,6 +22,8 @@ export interface SourceStatusInput {
   claudeNeedsAuthorization: boolean
   lastResult: RefreshResult | null
   now: number
+  /** Present once DeepSeek Harness has data; `asOf` is the latest official balance reading. */
+  deepseek?: { enabled: boolean; asOf: string | null } | null
 }
 
 /** “刚刚”, “5 分钟前”, “3 小时前”, or a date for anything older than a day. */
@@ -91,6 +93,20 @@ export function sourceRows(input: SourceStatusInput): SourceRow[] {
       ? { status: updated(times?.codex_log, m().time.recorded)!, tone: 'ok', action: null }
       : { status: t.noQuotaRecords, tone: 'neutral', action: null }),
   } as SourceRow)
+
+  if (input.deepseek) {
+    const deepseekError = failure(input.lastResult?.deepseek)
+    rows.push({
+      key: 'deepseekBalance', tool: 'DeepSeek', title: t.deepseekBalance,
+      ...(!input.deepseek.enabled
+        ? { status: t.off, tone: 'neutral', action: 'settings' }
+        : deepseekError
+          ? { status: deepseekError, tone: 'warning', action: null }
+          : updated(input.deepseek.asOf)
+            ? { status: updated(input.deepseek.asOf)!, tone: 'ok', action: null }
+            : { status: t.noData, tone: 'neutral', action: null }),
+    } as SourceRow)
+  }
   return rows
 }
 

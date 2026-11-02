@@ -4,10 +4,10 @@ const t = messages
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Cpu, Folder, GitFork, List, Zap, Database, CircleAlert, CircleHelp } from 'lucide-vue-next'
-import ClaudeLogo from '../assets/logos/claude.svg'
-import CodexLogo from '../components/CodexLogo.vue'
+import ToolLogo from '../components/ToolLogo.vue'
+import DeepSeekUsage from '../components/DeepSeekUsage.vue'
 import { vSelectionSlide } from '../components/selectionSlide'
-import { getAdvice, getUsageDetail, getUsageWindows, promptTag, type AdviceReport, type Tool, type UsageDetail, type UsageRank, type UsageWindowRef } from '../api'
+import { getAdvice, getDeepSeekUsage, getUsageDetail, getUsageWindows, promptTag, type AdviceReport, type QuotaTool, type Tool, type UsageDetail, type UsageRank, type UsageWindowRef } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
 import { usageRevision } from '../realtime'
@@ -16,14 +16,17 @@ import { readUsageDeepLink, resolveUsageSelection, type UsageLink } from '../usa
 const router = useRouter()
 const route = useRoute()
 const windowsKey = pageCacheKey('usageWindows', 'all')
-const cachedWindows = getPageCache<Record<Tool, UsageWindowRef[]>>(windowsKey)
+const cachedWindows = getPageCache<Record<QuotaTool, UsageWindowRef[]>>(windowsKey)
+const deepseekKey = pageCacheKey('usageWindows', 'deepseek')
+/** DeepSeek Harness has no windows; its tab opens once this month has usage or a balance. */
+const deepseekAvailable = ref(getPageCache<boolean>(deepseekKey) ?? false)
 const initialTool = pageSelection.usage.tool ?? (cachedWindows?.Claude.length ? 'Claude' : cachedWindows?.Codex.length ? 'Codex' : 'Claude')
 const initialSelection = resolveUsageSelection(null, initialTool, pageSelection.usage.windowIds,
   cachedWindows ?? { Claude: [], Codex: [] })
 const initialWindow = initialSelection.window
 const initialDetail = initialWindow ? getPageCache<UsageDetail>(pageCacheKey('usageDetail', initialWindow.tool, initialWindow.kind, initialWindow.window_id)) ?? null : null
-const tool = ref<Tool>(initialSelection.tool)
-const windows = ref<Record<Tool, UsageWindowRef[]>>(cachedWindows ?? { Claude: [], Codex: [] })
+const tool = ref<Tool>(pageSelection.usage.tool === 'DeepSeek' && deepseekAvailable.value ? 'DeepSeek' : initialSelection.tool)
+const windows = ref<Record<QuotaTool, UsageWindowRef[]>>(cachedWindows ?? { Claude: [], Codex: [] })
 const selected = ref<UsageWindowRef | null>(initialWindow)
 const detail = ref<UsageDetail | null>(initialDetail)
 const dimension = ref<'sessions' | 'projects' | 'models' | 'subagents'>(pageSelection.usage.dimension)
@@ -54,6 +57,7 @@ const dimensions = computed(() => [
 ] as const)
 
 function syncRouteSelection(refreshDetail = false) {
+  if (tool.value === 'DeepSeek' && !pendingLink.value) return
   const next = resolveUsageSelection(pendingLink.value, tool.value, pageSelection.usage.windowIds, windows.value)
   pendingLink.value = null
   tool.value = next.tool
@@ -89,10 +93,17 @@ async function load(quiet = false) {
   error.value = ''
   const version = cacheVersion(windowsKey)
   try {
-    const [claude, codex] = await Promise.all([getUsageWindows('Claude'), getUsageWindows('Codex')])
+    const [claude, codex, deepseek] = await Promise.all([
+      getUsageWindows('Claude'),
+      getUsageWindows('Codex'),
+      getDeepSeekUsage('month').then(usage => usage.requests > 0 || usage.overview.balance !== null).catch(() => false),
+    ])
     if (!cacheVersionMatches(windowsKey, version)) return
     windows.value = { Claude: claude, Codex: codex }
     setPageCache(windowsKey, windows.value)
+    deepseekAvailable.value = deepseek
+    setPageCache(deepseekKey, deepseek)
+    if (tool.value === 'DeepSeek' && !deepseek) tool.value = 'Claude'
     windowsReady = true
     syncRouteSelection(true)
   } catch (cause) {
@@ -144,11 +155,16 @@ async function selectWindow(window: UsageWindowRef | null) {
   }
 }
 
+function available(item: Tool) {
+  return item === 'DeepSeek' ? deepseekAvailable.value : windows.value[item].length > 0
+}
+
 function selectTool(next: Tool) {
-  if (next === tool.value || !windows.value[next].length) return
+  if (next === tool.value || !available(next)) return
   pendingLink.value = null
   deepLinkedHelp.value = false
   tool.value = next
+  if (next === 'DeepSeek') return
   const window = windows.value[next].find(item => item.window_id === pageSelection.usage.windowIds[next]) ?? windows.value[next][0] ?? null
   void selectWindow(window)
 }
@@ -223,22 +239,23 @@ const helpVisible = computed(() => helpOpen.value && ((detail.value?.unattribute
 </script>
 
 <template>
-  <div class="dashboard-page usage-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
+  <div class="dashboard-page usage-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': `var(--tool-${tool.toLowerCase()})` }">
     <header class="dashboard-header">
       <div><h1>{{ t.pages.usage.title }}</h1><p>{{ t.pages.usage.subtitle }}</p></div>
       <div v-selection-slide class="usage-tool-switch" :aria-label="t.usage.selectTool">
-        <button v-for="item in (['Claude', 'Codex'] as const)" :key="item" :class="{ active: tool === item }" :disabled="!windows[item].length" :aria-pressed="tool === item" @click="selectTool(item)">
-          <img v-if="item === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else />{{ item }}
+        <button v-for="item in (['Claude', 'Codex', 'DeepSeek'] as const)" :key="item" :class="{ active: tool === item }" :disabled="!available(item)" :aria-pressed="tool === item" @click="selectTool(item)">
+          <ToolLogo :tool="item" />{{ item }}
         </button>
       </div>
     </header>
-    <PageSkeleton v-if="pending && loading" kind="usage" />
+    <DeepSeekUsage v-if="tool === 'DeepSeek'" />
+    <PageSkeleton v-else-if="pending && loading" kind="usage" />
     <div v-else-if="pending" class="page-await" />
     <div v-else-if="error && !selected" class="center-state"><CircleAlert :size="28" /><strong>{{ t.usage.loadFailed }}</strong><p>{{ error }}</p><button @click="load()">{{ t.common.retry }}</button></div>
-    <div v-else-if="!windows[tool].length" class="center-state"><Database :size="28" /><strong>{{ t.usage.noData(tool) }}</strong><p>{{ t.usage.noDataBody }}</p><button @click="router.push({ path: '/settings', query: { section: 'sources' } })">{{ t.usage.goSettings }}</button></div>
+    <div v-else-if="!available(tool)" class="center-state"><Database :size="28" /><strong>{{ t.usage.noData(tool) }}</strong><p>{{ t.usage.noDataBody }}</p><button @click="router.push({ path: '/settings', query: { section: 'sources' } })">{{ t.usage.goSettings }}</button></div>
     <template v-else>
       <nav class="usage-window-list" :aria-label="t.usage.windows">
-        <button v-for="window in windows[tool]" :key="`${window.kind}-${window.window_id}`" :class="{ active: selected?.kind === window.kind && selected?.window_id === window.window_id }" :aria-current="selected?.window_id === window.window_id ? 'true' : undefined" @click="selectWindowManually(window)">
+        <button v-for="window in windows[tool === 'Codex' ? 'Codex' : 'Claude']" :key="`${window.kind}-${window.window_id}`" :class="{ active: selected?.kind === window.kind && selected?.window_id === window.window_id }" :aria-current="selected?.window_id === window.window_id ? 'true' : undefined" @click="selectWindowManually(window)">
           <strong>{{ windowLabel(window) }}</strong><span>{{ windowTimes(window) }}</span>
         </button>
       </nav>

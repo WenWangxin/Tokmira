@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { BellRing, Bot, CircleCheck, Database, Info, LoaderCircle, ShieldCheck, Zap } from 'lucide-vue-next'
-import ClaudeLogo from '../assets/logos/claude.svg'
-import CodexLogo from './CodexLogo.vue'
+import { BellRing, CircleCheck, Database, Info, LoaderCircle, ShieldCheck, Zap } from 'lucide-vue-next'
+import ToolLogo from './ToolLogo.vue'
 import Toggle from './Toggle.vue'
 import HelpTip from './HelpTip.vue'
 import {
@@ -23,7 +22,7 @@ import {
 } from '../api'
 import {
   quotaSources,
-  detectedToolRows,
+  toolGroups,
   detectionCase,
   initialOnboardingChoices,
   installOutcome,
@@ -49,7 +48,7 @@ const tools = ref<DetectedTool[] | null>(null)
 const detecting = ref(true)
 const detectError = ref('')
 const choicesReady = ref(false)
-const selection = ref<OnboardingSelection>({ statusline: true, claudeOfficial: false, codexOfficial: false })
+const selection = ref<OnboardingSelection>({ statusline: true, claudeOfficial: false, codexOfficial: false, deepseekOfficial: false })
 // Background reminders: applied on 完成 and on 暂不开启 alike, which only skips quota sources.
 const reminders = ref({ notifications: true, autostart: true })
 const autostartAvailable = ref(true)
@@ -78,7 +77,7 @@ let heightPanel: HTMLElement | null = null
 let heightListener: ((event: TransitionEvent) => void) | null = null
 let enterDone: (() => void) | null = null
 
-const rows = computed(() => detectedToolRows(tools.value ?? []))
+const groups = computed(() => toolGroups(tools.value ?? []))
 // Only a finished scan picks a branch; a failed or running first scan shows its own state.
 const detection = computed(() => (tools.value ? detectionCase(tools.value) : 'normal'))
 const quotaChoices = computed(() => quotaSources(detection.value))
@@ -312,8 +311,9 @@ async function finish(skipChanges: boolean) {
         ...current,
         claude_official_query: selection.value.claudeOfficial,
         codex_app_server: selection.value.codexOfficial,
+        deepseek_balance_query: selection.value.deepseekOfficial,
       })
-      if (selection.value.claudeOfficial || selection.value.codexOfficial) {
+      if (selection.value.claudeOfficial || selection.value.codexOfficial || selection.value.deepseekOfficial) {
         const refreshed = await refreshQuotas()
         quotaFeedback.value = quotaOutcome(selection.value, refreshed)
       }
@@ -389,14 +389,16 @@ onUnmounted(() => {
               <p v-if="detecting && !tools" class="onboarding-status">{{ t.onboarding.detecting }}</p>
               <p v-else-if="detectError && !tools" class="onboarding-error">{{ detectError }} <button type="button" class="onboarding-text" @click="loadTools">{{ t.common.retry }}</button></p>
               <ul v-else class="onboarding-tools">
-                <li v-for="row in rows" :key="row.source" class="onboarding-tool">
-                  <span class="onboarding-logo"><img v-if="row.logo === 'claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else-if="row.logo === 'codex'" /><Bot v-else :size="18" aria-hidden="true" /></span>
+                <li v-for="group in groups" :key="group.tool" class="onboarding-tool">
+                  <span class="onboarding-logo"><ToolLogo :tool="group.tool" /></span>
                   <span class="onboarding-tool-main">
-                    <strong>{{ row.name }}</strong>
-                    <p>{{ row.subtitle }}</p>
-                    <p v-if="row.hint" class="onboarding-hint">{{ row.hint }}</p>
+                    <strong>{{ group.name }}</strong>
+                    <span class="onboarding-variants">
+                      <span v-for="item in group.variants" :key="item.label" class="onboarding-variant" :class="{ found: item.found }"><i aria-hidden="true" /><b>{{ item.label }}</b>{{ item.detail }}</span>
+                    </span>
+                    <p v-if="group.hint" class="onboarding-hint">{{ group.hint }}</p>
                   </span>
-                  <span class="origin-pill settings-pill" :class="row.pill.tone === 'success' ? 'pill-success' : 'pill-neutral'"><i />{{ row.pill.text }}</span>
+                  <span class="origin-pill settings-pill" :class="group.pill.tone === 'success' ? 'pill-success' : 'pill-neutral'"><i />{{ group.pill.text }}</span>
                 </li>
               </ul>
               <section v-if="tools && detection === 'none'" class="onboarding-plan" aria-live="polite">

@@ -11,6 +11,9 @@ pub struct ReportOptions<Tz: TimeZone> {
     pub until: Option<NaiveDate>,
     pub tool: Option<Tool>,
     pub tz: Tz,
+    /// DeepSeek requests sent through a custom route, by session and time: their
+    /// tokens are exact but official yuan prices do not apply.
+    pub deepseek_custom_route: BTreeSet<(String, DateTime<Utc>)>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -20,17 +23,20 @@ pub struct Metrics {
     pub cache_hit_rate: Option<f64>,
     /// Known-price subtotal; check unpriced_events before treating it as complete.
     pub estimated_cost_usd: f64,
+    /// DeepSeek Harness requests, at DeepSeek's yuan prices.
+    pub estimated_cost_cny: f64,
     pub unpriced_events: u64,
     pub unpriced_tokens: TokenCounts,
 }
 
 impl Metrics {
-    fn add(&mut self, event: &UsageEvent, cost: Option<f64>) {
+    fn add(&mut self, event: &UsageEvent, cost: Cost) {
         self.events += 1;
         self.tokens.add_saturating(&event.tokens);
         match cost {
-            Some(cost) => self.estimated_cost_usd += cost,
-            None => {
+            Cost::Usd(cost) => self.estimated_cost_usd += cost,
+            Cost::Cny(cost) => self.estimated_cost_cny += cost,
+            Cost::Unpriced => {
                 self.unpriced_events += 1;
                 self.unpriced_tokens.add_saturating(&event.tokens);
             }
@@ -46,6 +52,13 @@ impl Metrics {
         self.cache_hit_rate =
             (denominator != 0).then(|| self.tokens.cache_read as f64 / denominator as f64);
     }
+}
+
+#[derive(Clone, Copy)]
+enum Cost {
+    Usd(f64),
+    Cny(f64),
+    Unpriced,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -87,7 +100,7 @@ fn add_group<K: Ord + Clone>(
     groups: &mut BTreeMap<K, Metrics>,
     key: K,
     event: &UsageEvent,
-    cost: Option<f64>,
+    cost: Cost,
 ) {
     groups.entry(key).or_default().add(event, cost);
 }
@@ -147,9 +160,22 @@ pub fn build_report<Tz: TimeZone>(
         {
             continue;
         }
-        let cost = (event.tool != Tool::DeepSeek)
-            .then(|| pricing.cost_usd(&event.model, &event.tokens))
-            .flatten();
+        let cost = if event.tool == Tool::DeepSeek {
+            (!options
+                .deepseek_custom_route
+                .contains(&(event.session_id.clone(), event.timestamp)))
+            .then(|| {
+                pricing
+                    .deepseek
+                    .cost_cny(&event.model, &event.tokens, event.timestamp)
+            })
+            .flatten()
+            .map_or(Cost::Unpriced, Cost::Cny)
+        } else {
+            pricing
+                .event_cost_usd(event)
+                .map_or(Cost::Unpriced, Cost::Usd)
+        };
         total.add(event, cost);
         add_group(&mut days, day, event, cost);
         add_group(&mut tools, event.tool, event, cost);

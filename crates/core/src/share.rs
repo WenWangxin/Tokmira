@@ -79,10 +79,7 @@ pub fn share_summary<Tz: TimeZone>(
         if name.is_empty() || name.contains('/') || name.contains('\\') {
             continue;
         }
-        let cost = input
-            .pricing
-            .cost_usd(&event.model, &event.tokens)
-            .unwrap_or(0.0);
+        let cost = input.pricing.event_cost_usd(event).unwrap_or(0.0);
         *projects.entry(project.to_owned()).or_default() += cost;
     }
     let top_project = projects

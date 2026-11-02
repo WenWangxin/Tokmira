@@ -91,3 +91,4 @@
   .settings-row-complex { flex-wrap: wrap; }
   .settings-row-complex .settings-controls { width: 100%; justify-content: flex-end; padding-left: 50px; }
 }
+.settings-yuan input { width: 64px; }

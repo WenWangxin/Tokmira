@@ -355,15 +355,25 @@ fn print_row(label: &str, metrics: &Metrics) {
     let hit = metrics
         .cache_hit_rate
         .map_or_else(|| "—".to_owned(), |rate| format!("{:.1}%", rate * 100.0));
-    let cost = if metrics.unpriced_events > 0 && metrics.unpriced_events == metrics.events {
+    let priced = metrics.events - metrics.unpriced_events;
+    // DeepSeek is billed in yuan; mixed rows show both currencies side by side.
+    let mut parts = Vec::new();
+    if metrics.estimated_cost_usd > 0.0 || (priced > 0 && metrics.estimated_cost_cny == 0.0) {
+        parts.push(format!("${:.4}", metrics.estimated_cost_usd));
+    }
+    if metrics.estimated_cost_cny > 0.0 {
+        parts.push(format!("¥{:.4}", metrics.estimated_cost_cny));
+    }
+    let cost = if parts.is_empty() {
         format!("—（未定价 {}）", metrics.unpriced_events)
     } else if metrics.unpriced_events > 0 {
         format!(
-            "${:.4}（部分，未定价 {}）",
-            metrics.estimated_cost_usd, metrics.unpriced_events
+            "{}（部分，未定价 {}）",
+            parts.join(" + "),
+            metrics.unpriced_events
         )
     } else {
-        format!("${:.4}", metrics.estimated_cost_usd)
+        parts.join(" + ")
     };
     println!(
         "{} {:>8} {:>10} {:>10} {:>10} {:>10} {:>8} {:>16}",
@@ -449,6 +459,7 @@ fn run_scan(args: impl Iterator<Item = OsString>) -> Result<(), String> {
     let args = parse_scan_args(args)?;
     let pricing = load_pricing(args.pricing.clone())?;
     let mut events = Vec::new();
+    let mut custom_route = Default::default();
     let mut malformed = 0;
     let mut unreadable = 0;
     if args.tool.is_none_or(|tool| tool == Tool::Claude) {
@@ -469,6 +480,7 @@ fn run_scan(args: impl Iterator<Item = OsString>) -> Result<(), String> {
             scan_deepseek(&root).map_err(|_| "扫描 DeepSeek Harness 日志失败".to_owned())?;
         malformed += deepseek.stats.malformed_lines;
         unreadable += deepseek.stats.unreadable_files;
+        custom_route = deepseek.custom_route;
         events.extend(deepseek.events);
     }
     let report = build_report(
@@ -479,6 +491,7 @@ fn run_scan(args: impl Iterator<Item = OsString>) -> Result<(), String> {
             until: args.until,
             tool: args.tool,
             tz: Local,
+            deepseek_custom_route: custom_route,
         },
     );
     if args.json {

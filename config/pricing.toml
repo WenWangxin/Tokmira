@@ -1,4 +1,4 @@
-version = "2026-10-24"
+version = "2026-11-02"
 currency = "USD"
 unit = "per_million_tokens"
 note = "仅供估算，非实际账单；claude-haiku-5-5 仅按 10 万 token 以内价格计算，不计长上下文加价。"
@@ -19,6 +19,35 @@ max_20x = 200
 [subscriptions.chatgpt]
 plus = 20
 pro = 200
+
+# DeepSeek Harness 按人民币计费，单独成表，不并入上面的美元价格。
+# 来源：https://api-docs.deepseek.com/zh-cn/quick_start/pricing（2026-11-02 核对，价格随时可能调整）。
+# 下面是高峰价（元 / 百万 token）：北京时间周一至周五 9:00–12:00、14:00–18:00，法定节假日除外；
+# 其余时段（含周末）按 off_peak_ratio 打折。holidays 只列落在工作日的法定节假日，没列出的按高峰价算，会略微高估。
+# DeepSeek 没有缓存写入价，缓存写入按未命中输入价计。
+# 联网搜索 / 抓取（2026-11-01 起每 1000 次 5 元）不在日志用量里，暂不计入。
+[deepseek]
+currency = "CNY"
+source = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing"
+utc_offset_hours = 8
+peak_hours = [[9, 12], [14, 18]]
+off_peak_ratio = 0.5
+holidays = []
+# 会话标题请求在日志里没有用量：按请求大小（字节数 ÷ 下面的值）估算输入，不读取内容。
+title_bytes_per_token = 4
+title_output_tokens = 32
+
+[deepseek.models."deepseek-flash"]
+input = 2
+output = 8
+cache_read = 0.04
+# 已下线的旧名仍可调用，按 Flash 价格计费。
+aliases = ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]
+
+[deepseek.models."deepseek-v4-pro"]
+input = 9
+output = 27
+cache_read = 0.30
 
 [[sources]]
 name = "Anthropic"

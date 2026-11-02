@@ -4,8 +4,8 @@ const t = messages
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CircleAlert, Database, Search, SquareArrowOutUpRight, X } from 'lucide-vue-next'
-import ClaudeLogo from '../assets/logos/claude.svg'
-import CodexLogo from '../components/CodexLogo.vue'
+import ToolLogo from '../components/ToolLogo.vue'
+import { yuan } from '../deepseekLogic'
 import { vSelectionSlide } from '../components/selectionSlide'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { cacheVersion, cacheVersionMatches, getPageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
@@ -46,6 +46,7 @@ function parseTool(value: unknown): Tool | null {
   const text = Array.isArray(value) ? value[0] : value
   if (text === 'Claude' || text === 'claude') return 'Claude'
   if (text === 'Codex' || text === 'codex') return 'Codex'
+  if (text === 'DeepSeek' || text === 'deepseek') return 'DeepSeek'
   return null
 }
 const routeSession = computed(() => {
@@ -183,22 +184,20 @@ function closeSession() {
 function selected(row: SessionRow) {
   return routeSession.value?.tool === row.tool && routeSession.value.id === row.session_id
 }
-const sourceLabel = (source: Source) => ({
-  ClaudeCli: m().sources.label.ClaudeCli, ClaudeDesktop: m().sources.label.ClaudeDesktop,
-  CodexCli: m().sources.label.CodexCli, CodexDesktop: m().sources.label.CodexDesktop, Unknown: m().sources.label.Unknown,
-})[source]
-const sourcePhrase = (source: Source) => ({
-  ClaudeCli: m().sources.phrase.ClaudeCli, ClaudeDesktop: m().sources.phrase.ClaudeDesktop,
-  CodexCli: m().sources.phrase.CodexCli, CodexDesktop: m().sources.phrase.CodexDesktop, Unknown: m().sources.label.Unknown,
-})[source]
+const sourceLabel = (source: Source) => m().sources.label[source]
+const sourcePhrase = (source: Source) => source === 'Unknown' ? m().sources.label.Unknown : m().sources.phrase[source]
 const tokens = (value: number) => compactText(value)
 const hitText = (value: number | null) => value === null ? '—' : `${(value * 100).toFixed(0)}%`
 const quotaText = (value: number, available: boolean) => available ? `${value.toFixed(1)}%` : '—'
+/** Claude and Codex spend quota; DeepSeek Harness spends yuan. */
+const quotaOrCost = (item: { tool: Tool; weekly_delta: number; has_quota_data: boolean; estimated_cost_cny: number | null }) =>
+  item.tool === 'DeepSeek' ? yuan(item.estimated_cost_cny) : quotaText(item.weekly_delta, item.has_quota_data)
 const grouped = (value: number) => formatInteger(value)
 function tokenLine(tool: Tool, item: TokenCounts) {
   const read = grouped(item.cache_read)
   const output = grouped(item.output)
-  if (tool === 'Codex') return m().sessions.tokensCodex(grouped(item.input), read, output)
+  // Their input excludes cache reads, so it is shown as is.
+  if (tool === 'Codex' || tool === 'DeepSeek') return m().sessions.tokensCodex(grouped(item.input), read, output)
   const write = item.cache_write_5m + item.cache_write_1h + item.cache_write_unspecified
   return m().sessions.tokensClaude(grouped(write), read, output)
 }
@@ -245,7 +244,7 @@ const detailSubtitle = computed(() => {
         </label>
         <div v-selection-slide class="segmented" role="group" :aria-label="t.sessions.filter">
           <button type="button" :class="{ active: toolFilter === 'all' }" :aria-pressed="toolFilter === 'all'" @click="toolFilter = 'all'">{{ t.sessions.all }}</button>
-          <button v-for="tool in (['Claude', 'Codex'] as const)" :key="tool" type="button" :class="{ active: toolFilter === tool }" :aria-pressed="toolFilter === tool" @click="toolFilter = tool">{{ tool }}</button>
+          <button v-for="tool in (['Claude', 'Codex', 'DeepSeek'] as const)" :key="tool" type="button" :class="{ active: toolFilter === tool }" :aria-pressed="toolFilter === tool" @click="toolFilter = tool">{{ tool }}</button>
         </div>
       </div>
     </header>
@@ -256,28 +255,28 @@ const detailSubtitle = computed(() => {
     <div v-else-if="!rows.length" class="center-state"><Database :size="28" /><strong>{{ t.sessions.empty }}</strong><p>{{ t.sessions.emptyBody }}</p></div>
     <div v-else-if="!filtered.length" class="center-state"><Search :size="28" /><strong>{{ t.sessions.noMatch }}</strong><p>{{ t.sessions.noMatchBody }}</p></div>
     <section v-else class="card sessions-table content-reveal" :aria-label="t.sessions.list">
-      <div class="session-head"><span>{{ t.common.source }}</span><span>{{ t.common.session }}</span><span>{{ t.common.requests }}</span><span>{{ t.common.token }}</span><span>{{ t.common.cacheHit }}</span><span>{{ t.common.quota }}</span></div>
+      <div class="session-head"><span>{{ t.common.source }}</span><span>{{ t.common.session }}</span><span>{{ t.common.requests }}</span><span>{{ t.common.token }}</span><span>{{ t.common.cacheHit }}</span><span>{{ t.common.quotaOrCost }}</span></div>
       <button v-for="row in visibleRows" :key="`${row.tool}-${row.session_id}`" type="button" class="session-line" :class="{ active: selected(row) }" :aria-current="selected(row) ? 'true' : undefined" @click="openSession(row)">
-        <span class="row-source"><span class="row-icon"><img v-if="row.tool === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else /></span>{{ sourceLabel(row.source) }}</span>
+        <span class="row-source"><span class="row-icon"><ToolLogo :tool="row.tool" /></span>{{ sourceLabel(row.source) }}</span>
         <span class="session-name"><strong :title="row.title || row.display_name">{{ row.title || row.display_name }}</strong><small v-if="row.title && row.project_name">{{ row.project_name }}</small></span>
         <span class="session-metric" :data-label="t.common.requests">{{ formatInteger(row.requests) }}</span>
         <span class="session-metric" :data-label="t.common.token">{{ tokens(row.total_tokens) }}</span>
         <span class="session-metric" :data-label="t.common.cacheHit" :class="{ 'error-text': row.cache_hit_rate !== null && row.cache_hit_rate < 0.5 }">{{ hitText(row.cache_hit_rate) }}</span>
-        <span class="session-metric session-quota" :data-label="t.common.quota">{{ quotaText(row.weekly_delta, row.has_quota_data) }}</span>
+        <span class="session-metric session-quota" :data-label="t.common.quotaOrCost">{{ quotaOrCost(row) }}</span>
       </button>
       <button v-if="filtered.length > visibleCount" type="button" class="sessions-more" @click="visibleCount += 50">{{ t.common.showMore }}</button>
       <p v-if="quotaNote" class="sessions-quota-note">{{ quotaNote }}</p>
     </section>
 
     <Transition name="drawer-mask"><button v-if="routeSession" type="button" class="session-mask" :aria-label="t.sessions.closeDetail" @click="closeSession" /></Transition>
-    <Transition name="drawer"><aside v-if="routeSession" class="session-drawer" role="dialog" aria-modal="true" aria-labelledby="session-detail-title" :style="{ '--session-tool': (detail?.tool ?? routeSession.tool) === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
+    <Transition name="drawer"><aside v-if="routeSession" class="session-drawer" role="dialog" aria-modal="true" aria-labelledby="session-detail-title" :style="{ '--session-tool': `var(--tool-${(detail?.tool ?? routeSession.tool).toLowerCase()})` }">
         <div class="session-drawer-head">
           <div>
             <h2 id="session-detail-title">{{ detailTitle }}</h2>
             <p v-if="detailSubtitle">{{ detailSubtitle }}</p>
           </div>
           <div class="session-drawer-actions">
-            <button v-if="detail && !detailPending" type="button" class="session-open" :title="t.sessions.openSessionHint" :disabled="opening" @click="openDetailSession"><SquareArrowOutUpRight :size="15" aria-hidden="true" />{{ t.sessions.openSession }}</button>
+            <button v-if="detail && !detailPending && detail.tool !== 'DeepSeek'" type="button" class="session-open" :title="t.sessions.openSessionHint" :disabled="opening" @click="openDetailSession"><SquareArrowOutUpRight :size="15" aria-hidden="true" />{{ t.sessions.openSession }}</button>
             <button type="button" class="session-close" :aria-label="t.common.close" @click="closeSession"><X :size="18" /></button>
           </div>
         </div>
@@ -289,7 +288,7 @@ const detailSubtitle = computed(() => {
             <div class="session-stat"><small>{{ t.common.requests }}</small><strong>{{ formatInteger(detail.requests) }}</strong></div>
             <div class="session-stat"><small>{{ t.common.token }}</small><strong>{{ tokens(detail.total_tokens) }}</strong></div>
             <div class="session-stat"><small>{{ t.common.cacheHit }}</small><strong :class="{ 'error-text': detail.cache_hit_rate !== null && detail.cache_hit_rate < 0.5 }">{{ hitText(detail.cache_hit_rate) }}</strong></div>
-            <div class="session-stat"><small>{{ t.common.quota }}</small><strong class="session-stat-quota">{{ quotaText(detail.weekly_delta, detail.has_quota_data) }}</strong></div>
+            <div class="session-stat"><small>{{ detail.tool === 'DeepSeek' ? t.deepseek.cost : t.common.quota }}</small><strong class="session-stat-quota">{{ quotaOrCost(detail) }}</strong></div>
           </div>
           <div class="session-scroll">
             <h3>{{ t.sessions.detail }}</h3>

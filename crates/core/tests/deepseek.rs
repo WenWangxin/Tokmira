@@ -228,3 +228,299 @@ fn root_and_install_detection_use_only_supplied_paths() {
         }
     );
 }
+
+#[test]
+fn yuan_prices_follow_beijing_peak_hours() {
+    use chrono::{TimeZone, Utc};
+    use token_audit_core::model::TokenCounts;
+    use token_audit_core::pricing::Pricing;
+
+    let pricing = Pricing::bundled().expect("pricing");
+    let deepseek = &pricing.deepseek;
+    let tokens = TokenCounts {
+        input: 9007,
+        output: 98,
+        ..TokenCounts::default()
+    };
+    // 2026-11-01 is a Sunday: off-peak all day.
+    let sunday = Utc.with_ymd_and_hms(2026, 11, 1, 6, 0, 0).unwrap();
+    assert!(!deepseek.is_peak(sunday));
+    let cost = deepseek
+        .cost_cny("deepseek-flash", &tokens, sunday)
+        .expect("priced");
+    assert!((cost - (9007.0 * 1.0 + 98.0 * 4.0) / 1e6).abs() < 1e-12);
+    // Monday 11:59 Beijing is peak, 12:00 is not; 14:00 is peak again.
+    let before_noon = Utc.with_ymd_and_hms(2026, 11, 2, 3, 59, 0).unwrap();
+    let noon = Utc.with_ymd_and_hms(2026, 11, 2, 4, 0, 0).unwrap();
+    let afternoon = Utc.with_ymd_and_hms(2026, 11, 2, 6, 0, 0).unwrap();
+    assert!(deepseek.is_peak(before_noon));
+    assert!(!deepseek.is_peak(noon));
+    assert!(deepseek.is_peak(afternoon));
+    let peak = deepseek
+        .cost_cny("deepseek-flash", &tokens, before_noon)
+        .expect("priced");
+    assert!((peak - 2.0 * cost).abs() < 1e-12);
+    // Retired names bill at Flash prices; cache writes bill as misses.
+    let alias = TokenCounts {
+        cache_read: 1_000_000,
+        cache_write_unspecified: 1_000_000,
+        ..TokenCounts::default()
+    };
+    let aliased = deepseek
+        .cost_cny("deepseek-v4-flash", &alias, before_noon)
+        .expect("alias");
+    assert!((aliased - (0.04 + 2.0)).abs() < 1e-9);
+    assert!(deepseek.cost_cny("custom-model", &tokens, sunday).is_none());
+    assert_eq!(deepseek.title_tokens(999).input, 250);
+}
+
+#[test]
+fn deepseek_requests_never_have_a_usd_cost() {
+    let temp = Temp::new();
+    copy(
+        "main.zstd",
+        &temp.session("workspace", "a", "session.v4.jsonl.zstd"),
+    );
+    let mut event = scan_deepseek(temp.path()).expect("scan").events.remove(0);
+    let pricing = token_audit_core::pricing::Pricing::bundled().expect("pricing");
+    // Even a custom route named like a Claude model is not priced in dollars.
+    event.model = "claude-opus-5-5".into();
+    assert!(pricing.event_cost_usd(&event).is_none());
+}
+
+#[test]
+fn title_calls_uploads_and_custom_routes_keep_no_content() {
+    let temp = Temp::new();
+    copy(
+        "uploads.zstd",
+        &temp.session("one", "a", "session.v4.jsonl.zstd"),
+    );
+    let scan = scan_deepseek(temp.path()).expect("scan");
+    assert_eq!(scan.events.len(), 2);
+    assert_eq!(scan.uploads["upload-session"], 2);
+    assert_eq!(scan.title_calls.len(), 1);
+    let call = &scan.title_calls[0];
+    assert_eq!(call.model, "deepseek-flash");
+    assert_eq!(call.provider.as_deref(), Some("deepseek-account"));
+    assert!(call.bytes > 100);
+    assert!(!scan.is_custom_route(&scan.events[0]));
+    assert!(scan.is_custom_route(&scan.events[1]));
+    let json = serde_json::to_string(&scan).expect("serialize scan");
+    assert!(!json.contains("not retained"));
+}
+
+#[test]
+fn yuan_views_cover_balance_usage_and_tips() {
+    use chrono::{TimeZone, Utc};
+    use token_audit_core::deepseek_view::{
+        deepseek_advice, deepseek_overview, deepseek_usage, DeepSeekCosting, DeepSeekPeriod,
+        DeepSeekTipKind, ManualBalance,
+    };
+    use token_audit_core::i18n::Lang;
+    use token_audit_core::pricing::Pricing;
+
+    let temp = Temp::new();
+    copy(
+        "uploads.zstd",
+        &temp.session("one", "a", "session.v4.jsonl.zstd"),
+    );
+    let scan = scan_deepseek(temp.path()).expect("scan");
+    let pricing = Pricing::bundled().expect("pricing");
+    let costing = DeepSeekCosting::new(&scan, &pricing.deepseek);
+    // Monday 09:00 Beijing: peak prices. The second request went through a custom gateway.
+    let official = (100.0 * 2.0 + 10.0 * 8.0) / 1e6;
+    assert!((costing.event_cost(&scan.events[0]).expect("priced") - official).abs() < 1e-12);
+    assert!(costing.event_cost(&scan.events[1]).is_none());
+    let call = &scan.title_calls[0];
+    let title = ((call.bytes as f64 / 4.0).ceil() * 2.0 + 32.0 * 8.0) / 1e6;
+    assert!((costing.title_cost(call).expect("title") - title).abs() < 1e-12);
+    let session = &scan.events[0].session_id;
+    let (first, last) = (scan.events[0].timestamp, scan.events[1].timestamp);
+    assert!((costing.session_cost(session, first, last).expect("cost") - official).abs() < 1e-12);
+
+    let now = Utc.with_ymd_and_hms(2026, 11, 2, 2, 0, 0).unwrap();
+    let manual = ManualBalance {
+        amount: 1.0,
+        recorded_at: Utc.with_ymd_and_hms(2026, 11, 2, 0, 0, 0).unwrap(),
+    };
+    let balance = costing.manual_balance(&manual, now);
+    assert!((balance.total - (1.0 - official - title)).abs() < 1e-12);
+    let overview = deepseek_overview(&costing, Some(balance.clone()), now, &Utc);
+    assert_eq!(overview.today_requests, 2);
+    assert_eq!(overview.unpriced_requests, 1);
+    assert!((overview.daily_average - (official + title)).abs() < 1e-12);
+    assert!(overview.days_left.expect("days") > 1000.0);
+    assert!(!overview.low_balance);
+
+    let usage = deepseek_usage(
+        &costing,
+        DeepSeekPeriod::Today,
+        Some(balance),
+        now,
+        &Utc,
+        Lang::Zh,
+    );
+    assert_eq!(usage.requests, 2);
+    assert_eq!(usage.title_requests, 1);
+    assert_eq!(usage.sessions.len(), 1);
+    assert_eq!(usage.projects[0].name, "upload");
+    assert!((usage.cost - official - title).abs() < 1e-12);
+    assert_eq!(usage.high_requests.len(), 2);
+
+    let advice = deepseek_advice(&costing, 7, &[], now);
+    let kinds: Vec<_> = advice.tips.iter().map(|tip| tip.kind).collect();
+    assert_eq!(
+        kinds,
+        [DeepSeekTipKind::LogUpload, DeepSeekTipKind::TitleRequests]
+    );
+    let dismissed = deepseek_advice(&costing, 7, &["deepseek:log_upload".into()], now);
+    assert_eq!(dismissed.tips.len(), 1);
+}
+
+#[test]
+fn short_session_with_an_uncached_first_request_gets_a_cold_start_tip() {
+    use chrono::{TimeZone, Utc};
+    use token_audit_core::deepseek_view::{deepseek_advice, DeepSeekCosting, DeepSeekTipKind};
+
+    let temp = Temp::new();
+    copy(
+        "main.zstd",
+        &temp.session("workspace", "a", "session.v4.jsonl.zstd"),
+    );
+    let scan = scan_deepseek(temp.path()).expect("scan");
+    let pricing = token_audit_core::pricing::Pricing::bundled().expect("pricing");
+    let costing = DeepSeekCosting::new(&scan, &pricing.deepseek);
+    let now = Utc.with_ymd_and_hms(2026, 11, 1, 9, 0, 0).unwrap();
+    let advice = deepseek_advice(&costing, 7, &[], now);
+    let tip = advice
+        .tips
+        .iter()
+        .find(|tip| tip.kind == DeepSeekTipKind::ColdStart)
+        .expect("cold start");
+    assert_eq!((tip.sessions, tip.tokens), (1, 9007));
+    // Sunday, off-peak: the miss price is ¥1/M and the hit price ¥0.02/M.
+    let saving = 9007.0 * (1.0 - 0.02) / 1e6 / 7.0;
+    assert!((tip.saving_per_day - saving).abs() < 1e-12);
+}
+
+#[test]
+fn a_day_without_spend_is_positive_zero() {
+    use chrono::{TimeZone, Utc};
+    use token_audit_core::deepseek_view::{deepseek_overview, DeepSeekCosting};
+
+    let temp = Temp::new();
+    copy(
+        "main.zstd",
+        &temp.session("workspace", "a", "session.v4.jsonl.zstd"),
+    );
+    let scan = scan_deepseek(temp.path()).expect("scan");
+    let pricing = token_audit_core::pricing::Pricing::bundled().expect("pricing");
+    let costing = DeepSeekCosting::new(&scan, &pricing.deepseek);
+    let later = Utc.with_ymd_and_hms(2026, 11, 3, 6, 0, 0).unwrap();
+    let overview = deepseek_overview(&costing, None, later, &Utc);
+    assert_eq!(format!("{:.2}", overview.today_cost), "0.00");
+}
+
+/// DeepSeek requests share the event list with Claude and Codex on the desktop,
+/// but quota advice, alerts, the share card and the dollar month map ignore them.
+#[test]
+fn deepseek_stays_out_of_quota_advice_alerts_and_dollar_totals() {
+    use chrono::{Duration, TimeZone, Utc};
+    use token_audit_core::advice::{build_advice_lang, AdviceConfig, AdviceInput, AlertTracker};
+    use token_audit_core::attribution::attribute;
+    use token_audit_core::dashboard::{build_overview, OverviewInput};
+    use token_audit_core::i18n::Lang;
+    use token_audit_core::model::{TokenCounts, UsageEvent};
+    use token_audit_core::pricing::Pricing;
+    use token_audit_core::recorder::RecorderStatus;
+    use token_audit_core::share::share_summary;
+
+    let now = Utc.with_ymd_and_hms(2026, 11, 2, 6, 0, 0).unwrap();
+    let event = |tool, source, session: &str, model: &str, minutes: i64, input: u64| UsageEvent {
+        tool,
+        source,
+        session_id: session.into(),
+        request_id: None,
+        timestamp: now - Duration::minutes(minutes),
+        model: model.into(),
+        project: Some("/sample/project".into()),
+        is_subagent: false,
+        fast: false,
+        effort: None,
+        web_search_requests: 0,
+        tokens: TokenCounts {
+            input,
+            output: 2_000,
+            ..TokenCounts::default()
+        },
+    };
+    let mut events = vec![event(
+        Tool::Claude,
+        Source::ClaudeCli,
+        "claude",
+        "claude-opus-5-5",
+        30,
+        5_000,
+    )];
+    // A long, uncached Harness session: the kind of usage Claude's rules would flag.
+    for minute in (1..=20).rev() {
+        events.push(event(
+            Tool::DeepSeek,
+            Source::DeepSeek,
+            "session-heavy",
+            "claude-opus-5-5",
+            minute,
+            900_000,
+        ));
+    }
+    let pricing = Pricing::bundled().expect("pricing");
+    let titles = std::collections::BTreeMap::new();
+    let attribution = attribute(&events, &[], &titles, &[], &[], &pricing);
+    let input = OverviewInput {
+        events: &events,
+        titles: &titles,
+        points: &[],
+        attribution: &attribution,
+        claude_snapshots: &[],
+        codex_snapshots: &[],
+        codex_log: &[],
+        pricing: &pricing,
+        recorder: RecorderStatus::default(),
+    };
+    let overview = build_overview(&input, now, Utc);
+    assert!(!overview.month_cost_by_tool.contains_key(&Tool::DeepSeek));
+    assert!(overview
+        .tools
+        .iter()
+        .all(|tool| tool.tool != Tool::DeepSeek));
+    let share = share_summary(&input, now, Utc);
+    assert!(share.tools.iter().all(|tool| tool.tool != Tool::DeepSeek));
+    assert!((share.month_estimated_cost_usd - overview.month_estimated_cost_usd).abs() < 1e-9);
+
+    let config = AdviceConfig::bundled().expect("advice config");
+    let advice_input = AdviceInput {
+        events: &attribution.events,
+        prompts: &[],
+        pricing: &pricing,
+        config: &config,
+        dismissed: &[],
+        compactions: &[],
+        environment: None,
+        quotas: &[],
+    };
+    let report = build_advice_lang(&advice_input, 7, now, Lang::Zh);
+    assert!(report.tools.iter().all(|tool| tool.tool != Tool::DeepSeek));
+    assert!(report
+        .event_tags
+        .iter()
+        .all(|tag| tag.tool != Tool::DeepSeek));
+    let mut tracker = AlertTracker::default();
+    tracker.seed(&advice_input, now - Duration::hours(1));
+    for minute in 0..60 {
+        if let Some(alert) =
+            tracker.check_lang(&advice_input, now + Duration::minutes(minute), Lang::Zh)
+        {
+            assert_ne!(alert.tool, Tool::DeepSeek);
+        }
+    }
+}

@@ -143,6 +143,30 @@ pub fn read_codex_daily(data_dir: &Path) -> io::Result<Vec<CodexDaily>> {
     }
 }
 
+/// The latest DeepSeek wallet reading. Only amounts are stored, never a token or key.
+pub fn write_deepseek_balance(
+    data_dir: &Path,
+    balance: &crate::deepseek_view::DeepSeekBalance,
+) -> io::Result<()> {
+    let path = quota_path(data_dir, "deepseek.json");
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("invalid quota path"))?;
+    fs::create_dir_all(parent)?;
+    let temp = parent.join(format!(".deepseek-{}.tmp", std::process::id()));
+    fs::write(
+        &temp,
+        serde_json::to_vec(balance).map_err(io::Error::other)?,
+    )?;
+    fs::rename(temp, path)
+}
+
+#[must_use]
+pub fn read_deepseek_balance(data_dir: &Path) -> Option<crate::deepseek_view::DeepSeekBalance> {
+    let bytes = fs::read(quota_path(data_dir, "deepseek.json")).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 impl From<&ClaudeQuota> for ClaudeSnapshot {
     fn from(quota: &ClaudeQuota) -> Self {
         let window = |name: &str, minutes| {

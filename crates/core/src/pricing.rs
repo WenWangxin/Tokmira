@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike, Utc};
 use serde::Deserialize;
 
-use crate::model::TokenCounts;
+use crate::model::{TokenCounts, Tool, UsageEvent};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ModelPrices {
@@ -52,6 +53,7 @@ struct DefaultTable {
     models: BTreeMap<String, ModelPrices>,
     subscriptions: Subscriptions,
     server_tools: ServerTools,
+    deepseek: DeepSeekPricing,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -107,6 +109,7 @@ pub struct Pricing {
     models: BTreeMap<String, ModelPrices>,
     subscriptions: Subscriptions,
     pub server_tools: ServerTools,
+    pub deepseek: DeepSeekPricing,
 }
 
 impl Pricing {
@@ -119,6 +122,7 @@ impl Pricing {
             || !table.subscriptions.valid()
             || !table.server_tools.web_search_per_1k.is_finite()
             || table.server_tools.web_search_per_1k < 0.0
+            || !table.deepseek.valid()
         {
             return Err("内置价格表价格无效");
         }
@@ -132,6 +136,7 @@ impl Pricing {
             models: table.models,
             subscriptions: table.subscriptions,
             server_tools: table.server_tools,
+            deepseek: table.deepseek,
         })
     }
 
@@ -229,5 +234,118 @@ impl Pricing {
     pub fn cost_usd(&self, model: &str, tokens: &TokenCounts) -> Option<f64> {
         self.model_prices(model)
             .map(|prices| prices.cost_usd(tokens))
+    }
+
+    /// USD cost of one logged request; DeepSeek Harness bills in yuan, so it never has one.
+    #[must_use]
+    pub fn event_cost_usd(&self, event: &UsageEvent) -> Option<f64> {
+        (event.tool != Tool::DeepSeek)
+            .then(|| self.cost_usd(&event.model, &event.tokens))
+            .flatten()
+    }
+}
+
+/// DeepSeek's official yuan price list, with its weekday peak hours in Beijing time.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct DeepSeekPricing {
+    pub currency: String,
+    pub source: String,
+    utc_offset_hours: i32,
+    /// `[start, end)` hours on Monday to Friday, Beijing time.
+    peak_hours: Vec<[u32; 2]>,
+    off_peak_ratio: f64,
+    /// Beijing dates (`YYYY-MM-DD`) on a weekday that are billed off-peak.
+    #[serde(default)]
+    holidays: Vec<NaiveDate>,
+    /// Title requests carry no usage; their size in bytes is divided by this.
+    pub title_bytes_per_token: f64,
+    pub title_output_tokens: u64,
+    models: BTreeMap<String, DeepSeekModelPrices>,
+}
+
+/// Peak-hour yuan per million tokens. Cache writes are billed as cache misses.
+#[derive(Clone, Debug, Deserialize)]
+pub struct DeepSeekModelPrices {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+}
+
+impl DeepSeekPricing {
+    fn valid(&self) -> bool {
+        let price = |value: f64| value.is_finite() && value >= 0.0;
+        !self.models.is_empty()
+            && self.currency == "CNY"
+            && (-12..=14).contains(&self.utc_offset_hours)
+            && self
+                .peak_hours
+                .iter()
+                .all(|[start, end]| start < end && *end <= 24)
+            && price(self.off_peak_ratio)
+            && self.title_bytes_per_token.is_finite()
+            && self.title_bytes_per_token > 0.0
+            && self.models.values().all(|prices| {
+                price(prices.input) && price(prices.output) && price(prices.cache_read)
+            })
+    }
+
+    fn model(&self, model: &str) -> Option<&DeepSeekModelPrices> {
+        self.models.get(model).or_else(|| {
+            self.models
+                .values()
+                .find(|prices| prices.aliases.iter().any(|alias| alias == model))
+        })
+    }
+
+    /// Whether `at` falls in DeepSeek's peak hours. Weekday holidays are only
+    /// known when listed, so an unlisted one is billed here at the peak price.
+    #[must_use]
+    pub fn is_peak(&self, at: DateTime<Utc>) -> bool {
+        let Some(offset) = FixedOffset::east_opt(self.utc_offset_hours * 3600) else {
+            return false;
+        };
+        let local = at.with_timezone(&offset);
+        if local.weekday().number_from_monday() > 5 || self.holidays.contains(&local.date_naive()) {
+            return false;
+        }
+        let hour = local.hour();
+        self.peak_hours
+            .iter()
+            .any(|[start, end]| (*start..*end).contains(&hour))
+    }
+
+    /// Yuan for one request at the price in force when it was made.
+    #[must_use]
+    pub fn cost_cny(&self, model: &str, tokens: &TokenCounts, at: DateTime<Utc>) -> Option<f64> {
+        let prices = self.model(model)?;
+        let ratio = if self.is_peak(at) {
+            1.0
+        } else {
+            self.off_peak_ratio
+        };
+        let input = tokens
+            .input
+            .saturating_add(tokens.cache_write_5m)
+            .saturating_add(tokens.cache_write_1h)
+            .saturating_add(tokens.cache_write_unspecified);
+        Some(
+            (input as f64 * prices.input
+                + tokens.output as f64 * prices.output
+                + tokens.cache_read as f64 * prices.cache_read)
+                * ratio
+                / 1_000_000.0,
+        )
+    }
+
+    /// Estimated tokens for a title request of `bytes`, which logs no usage.
+    #[must_use]
+    pub fn title_tokens(&self, bytes: u64) -> TokenCounts {
+        TokenCounts {
+            input: (bytes as f64 / self.title_bytes_per_token).ceil() as u64,
+            output: self.title_output_tokens,
+            ..TokenCounts::default()
+        }
     }
 }

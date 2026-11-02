@@ -49,7 +49,10 @@ fn scan_and_debug_deepseek_fixture() {
     );
     let json: serde_json::Value = serde_json::from_slice(&scan.stdout).expect("scan JSON");
     assert_eq!(json["total"]["events"], 2);
-    assert_eq!(json["total"]["unpriced_events"], 2);
+    // Yuan prices apply; nothing is added to the dollar total.
+    assert_eq!(json["total"]["unpriced_events"], 0);
+    assert_eq!(json["total"]["estimated_cost_usd"], 0.0);
+    assert!(json["total"]["estimated_cost_cny"].as_f64().expect("yuan") > 0.0);
     assert_eq!(json["by_tool"][0]["key"], "DeepSeek");
     assert_eq!(json["by_source"][0]["key"], "DeepSeek");
     let debug = Command::new(bin)

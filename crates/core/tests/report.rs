@@ -86,6 +86,7 @@ fn options() -> ReportOptions<FixedOffset> {
         until: None,
         tool: None,
         tz: FixedOffset::east_opt(8 * 3600).expect("+08:00"),
+        deepseek_custom_route: Default::default(),
     }
 }
 
@@ -186,6 +187,7 @@ fn daylight_saving_offsets_apply_per_event_and_date_filter() {
         until: None,
         tool: None,
         tz: SpringForward,
+        deepseek_custom_route: Default::default(),
     };
     let report = build_report(&events, &pricing, &options);
     let days: Vec<_> = report

@@ -2,8 +2,7 @@
 import { messages, m } from '../i18n/index.ts'
 const t = messages
 import { ChevronRight } from 'lucide-vue-next'
-import ClaudeLogo from '../assets/logos/claude.svg'
-import CodexLogo from './CodexLogo.vue'
+import ToolLogo from './ToolLogo.vue'
 import type { SourceRow } from '../sourceStatus'
 
 defineProps<{ rows: SourceRow[]; logsUpdated: string | null; loadError: string; busy: boolean }>()
@@ -19,7 +18,7 @@ defineEmits<{ authorize: []; settings: [] }>()
     <p v-if="loadError" class="source-panel-error">{{ loadError }}</p>
     <ul class="source-rows">
       <li v-for="row in rows" :key="row.key" class="source-row">
-        <span class="source-logo"><img v-if="row.tool === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else /></span>
+        <span class="source-logo"><ToolLogo :tool="row.tool" /></span>
         <span class="source-main">
           <strong>{{ row.title }}</strong>
           <span class="source-status" :class="`source-${row.tone}`"><i aria-hidden="true" />{{ row.status }}</span>

@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::claude_quota::CredentialPreference;
+use crate::deepseek_balance::DeepSeekCredential;
+use crate::deepseek_view::ManualBalance;
 use crate::i18n::Lang;
 use crate::model::Tool;
 
@@ -98,6 +100,11 @@ pub struct AppSettings {
     pub update_last_checked_at: Option<DateTime<Utc>>,
     /// The newest version already announced, so each release is announced once.
     pub update_notified_version: Option<String>,
+    /// Off by default: the DeepSeek balance query is one of the three allowed network requests.
+    pub deepseek_balance_query: bool,
+    pub deepseek_credential: DeepSeekCredential,
+    /// A balance typed in by hand, used while the balance query is off.
+    pub deepseek_manual_balance: Option<ManualBalance>,
 }
 impl Default for AppSettings {
     fn default() -> Self {
@@ -117,6 +124,9 @@ impl Default for AppSettings {
             auto_check_updates: false,
             update_last_checked_at: None,
             update_notified_version: None,
+            deepseek_balance_query: false,
+            deepseek_credential: DeepSeekCredential::Auto,
+            deepseek_manual_balance: None,
         }
     }
 }
@@ -138,6 +148,16 @@ pub fn write_settings(data_dir: &Path, settings: &AppSettings) -> io::Result<()>
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "校准百分比应在 0 到 100 之间",
+        ));
+    }
+    if settings
+        .deepseek_manual_balance
+        .as_ref()
+        .is_some_and(|manual| !manual.amount.is_finite() || manual.amount < 0.0)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "DeepSeek 余额应为不小于 0 的数字",
         ));
     }
     fs::create_dir_all(data_dir)?;

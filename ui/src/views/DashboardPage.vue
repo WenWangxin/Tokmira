@@ -4,8 +4,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Share, RefreshCw, CircleCheck, CircleAlert, Coins, Database, TrendingUp, ShieldCheck, Lightbulb, ChevronRight } from 'lucide-vue-next'
 import { getAdvice, getOverview, getSettings, refreshQuotas, rescan, type AdviceItem, type AdviceReport, type Overview, type Origin, type QuotaDisplay, type Tool, type Source } from '../api'
-import ClaudeLogo from '../assets/logos/claude.svg'
-import CodexLogo from '../components/CodexLogo.vue'
+import ToolLogo from '../components/ToolLogo.vue'
+import BalanceCard from '../components/BalanceCard.vue'
+import { yuan } from '../deepseekLogic'
 import Sparkline from '../components/Sparkline.vue'
 import QuotaTrend from '../components/QuotaTrend.vue'
 import { remainingQuotaColor } from '../components/quotaChart'
@@ -102,7 +103,7 @@ async function refresh() {
     await rescan()
     invalidatePageCache('overview', 'advice', 'usageWindows', 'usageDetail', 'sessions', 'sessionDetail')
     const result = await refreshQuotas()
-    refreshError.value = [result.claude, result.codex].filter(outcome => outcome.state === 'error' || outcome.state === 'backoff' || outcome.state === 'needs_authorization').map(quotaMessage).join(m().onboarding.failureSeparator)
+    refreshError.value = [result.claude, result.codex, ...(result.deepseek ? [result.deepseek] : [])].filter(outcome => outcome.state === 'error' || outcome.state === 'backoff' || outcome.state === 'needs_authorization').map(quotaMessage).join(m().onboarding.failureSeparator)
     if (refreshError.value) showToast(refreshError.value, 'warning')
     overview.value = await getOverview()
     setPageCache(overviewKey, overview.value)
@@ -120,7 +121,7 @@ async function refresh() {
 // Source status panel behind the round status button in the header.
 const statusOpen = ref(false)
 const statusAnchor = ref<HTMLElement | null>(null)
-const sourceSettings = ref<{ claude_official_query: boolean; codex_app_server: boolean } | null>(null)
+const sourceSettings = ref<{ claude_official_query: boolean; codex_app_server: boolean; deepseek_balance_query?: boolean } | null>(null)
 const now = ref(Date.now())
 let nowTimer: ReturnType<typeof setInterval> | undefined
 async function loadSourceSettings() {
@@ -134,6 +135,10 @@ const statusRows = computed(() => overview.value ? sourceRows({
   claudeNeedsAuthorization: claudeNeedsAuthorization.value,
   lastResult: lastQuotaResult.value,
   now: now.value,
+  deepseek: overview.value.deepseek ? {
+    enabled: Boolean(sourceSettings.value?.deepseek_balance_query),
+    asOf: overview.value.deepseek.balance?.origin === 'Official' ? overview.value.deepseek.balance.as_of : null,
+  } : null,
 }) : [])
 const statusTone = computed(() => overallTone(statusRows.value, error.value))
 const logsUpdated = computed(() => overview.value ? m().time.updated(timeAgo(overview.value.generated_at, now.value)) : null)
@@ -278,9 +283,12 @@ const recorderInfo = computed(() => {
   if (!recorder.hooks_installed) return m().dashboard.hooksMissing
   return m().dashboard.recorderAll
 })
-const sourceLabel = (source: Source) => ({ ClaudeCli: m().sources.label.ClaudeCli, ClaudeDesktop: m().sources.label.ClaudeDesktop, CodexCli: m().sources.label.CodexCli, CodexDesktop: m().sources.label.CodexDesktop, Unknown: m().sources.label.Unknown })[source]
+const sourceLabel = (source: Source) => m().sources.label[source]
 const rowTitle = (row: { title: string | null; project: string | null; session_id: string }) => row.title || row.project?.split(/[\\/]/).filter(Boolean).at(-1) || row.session_id.slice(0, 8)
 const quotaDelta = (value: number) => value > 0 && value < .1 ? '<0.1%' : `${value.toFixed(1)}%`
+/** Claude and Codex spend quota; DeepSeek Harness spends yuan. */
+const quotaOrCost = (row: { tool: Tool; weekly_delta: number; estimated_cost_cny?: number | null }) =>
+  row.tool === 'DeepSeek' ? yuan(row.estimated_cost_cny ?? null) : quotaDelta(row.weekly_delta)
 const modelLabel = (model: string) => model || '—'
 const selectTrendTool = (tool: Tool) => { selectedTool.value = tool; userSelectedTool = true }
 const openSession = (row: { tool: Tool; session_id: string }) => {
@@ -323,13 +331,14 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
       <section class="quota-grid" :aria-label="t.dashboard.quotaSection">
         <article v-for="item in overview.tools" :key="item.tool" class="card quota-card" :class="{ 'first-card': firstContent }">
           <div class="quota-body">
-            <div class="quota-top"><span class="tool-icon"><img v-if="item.tool === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else /></span><span class="plan-label">{{ planName(item.tool, item.plan) }}</span><span class="origin-pill" :class="item.five_hour.origin === 'Manual' ? 'pill-warning' : item.five_hour.used_percent === null || item.five_hour.origin === 'Estimated' || estimated(item.five_hour) ? 'pill-neutral' : 'pill-success'">{{ sourceText(item.tool, item.five_hour.origin) }}{{ estimated(item.five_hour) ? t.dashboard.plusEstimate : '' }}</span></div>
+            <div class="quota-top"><span class="tool-icon"><ToolLogo :tool="item.tool" /></span><span class="plan-label">{{ planName(item.tool, item.plan) }}</span><span class="origin-pill" :class="item.five_hour.origin === 'Manual' ? 'pill-warning' : item.five_hour.used_percent === null || item.five_hour.origin === 'Estimated' || estimated(item.five_hour) ? 'pill-neutral' : 'pill-success'">{{ sourceText(item.tool, item.five_hour.origin) }}{{ estimated(item.five_hour) ? t.dashboard.plusEstimate : '' }}</span></div>
             <div class="quota-main"><div><div class="eyebrow">{{ t.dashboard.fiveHourUsed }}</div><div class="quota-number" :class="{ 'quota-passed': item.five_hour.window_passed }" :title="estimateHint(item.five_hour)"><span v-if="estimated(item.five_hour)" class="quota-approx">≈</span><AnimatedNumber :initial-animation="reveal" :value="item.five_hour.window_passed ? t.dashboard.reset : quotaPercent(item.five_hour.used_percent)" /><span v-if="!item.five_hour.window_passed && item.five_hour.used_percent !== null">%</span></div><div class="quota-links"><button v-if="item.tool === 'Claude' && claudeNeedsAuthorization" class="settings-link" :disabled="refreshing" @click="authorizeClaude">{{ t.dashboard.authorize }} <ChevronRight :size="14" /></button><button v-else-if="item.five_hour.used_percent === null && !item.five_hour.window_passed" class="settings-link" @click="router.push({ path: '/settings', query: { section: 'sources' } })">{{ t.dashboard.enableSource }} <ChevronRight :size="14" /></button><button v-if="canCalibrate(item.five_hour)" class="settings-link" @click="router.push({ path: '/settings', query: { section: 'calibration', tool: item.tool } })">{{ t.dashboard.calibrate }} <ChevronRight :size="14" /></button></div></div>
               <div class="quota-ring"><svg viewBox="0 0 96 96" aria-hidden="true"><circle cx="48" cy="48" r="42" fill="none" stroke="var(--surface-container-high)" stroke-width="10"/><circle v-if="item.five_hour.used_percent !== null && !item.five_hour.window_passed" cx="48" cy="48" r="42" fill="none" :style="{ stroke: remainingQuotaColor(100 - item.five_hour.used_percent) }" stroke-width="10" stroke-dasharray="264 264" :stroke-dashoffset="ringReady ? 264 - Math.max(0, Math.min(100, 100 - item.five_hour.used_percent)) * 2.639 : 264" transform="rotate(-90 48 48)" /></svg><div class="ring-label"><strong>{{ item.five_hour.used_percent === null ? '—' : `${Math.max(0, 100 - item.five_hour.used_percent).toFixed(0)}%` }}</strong><span>{{ t.dashboard.remaining }}</span></div></div>
             </div>
             <div class="quota-facts"><div><span>{{ t.dashboard.nextReset }}</span><template v-if="item.five_hour.used_percent === 0 && !item.five_hour.resets_at"><strong>{{ t.dashboard.notStarted }}</strong><small>{{ t.dashboard.startsOnFirstUse }}</small></template><template v-else><strong>{{ time(item.five_hour.resets_at) }}</strong><small>{{ resetRemaining(item.five_hour.resets_at) }}</small></template></div><div><span>{{ t.dashboard.weekly }}</span><strong :title="estimateHint(item.weekly)">{{ item.weekly.used_percent === null ? '—' : `${estimated(item.weekly) ? '≈' : ''}${quotaPercent(item.weekly.used_percent)}%` }}</strong><small>{{ item.weekly.resets_at ? t.dashboard.resetsOn(dateSlash(item.weekly.resets_at)) : '—' }}</small></div><div><span>{{ t.dashboard.forecast }}</span><strong :class="forecast(item.five_hour).tone" class="forecast-text">{{ forecast(item.five_hour).text }}</strong><small>{{ forecast(item.five_hour).sub }}</small></div></div>
           </div>
         </article>
+        <BalanceCard v-if="overview.deepseek" :overview="overview.deepseek" :reveal="reveal" :first="firstContent" />
       </section>
       <section class="metric-grid" :aria-label="t.dashboard.metrics">
         <article class="card metric-card" :class="{ 'first-card': firstContent }"><div class="metric-head"><span class="metric-icon"><Coins :size="17" /></span><span>{{ t.dashboard.todayUsage }}</span><small>{{ t.dashboard.peak(overview.peak_hour === null ? '—' : `${String(overview.peak_hour).padStart(2, '0')}:00`) }}</small></div><div class="metric-value"><AnimatedNumber :initial-animation="reveal" :value="todayNumber.value" /><span>{{ todayNumber.unit }}</span></div><p>{{ overview.today_cache_read_share === null ? t.dashboard.noCacheRead : t.dashboard.fromCacheRead(percent(overview.today_cache_read_share)) }}</p><Sparkline :values="overview.hourly_tokens" /></article>
@@ -351,7 +360,7 @@ const openSession = (row: { tool: Tool; session_id: string }) => {
           </template>
           <div v-else class="advice-empty"><Lightbulb :size="27" /><p>{{ advice ? t.dashboard.adviceNone : t.dashboard.adviceAnalyzing }}</p></div>
           <button class="advice-button" @click="router.push('/advice')">{{ t.dashboard.allAdvice }}</button></article></section>
-      <section class="card sessions-card"><div class="sessions-top"><div v-selection-slide class="summary-pills"><button :class="{ active: selectedList === 'sessions' }" @click="selectedList = 'sessions'">{{ t.dashboard.sessionsCount(overview.summary.sessions) }}</button><button>{{ t.dashboard.requestsCount(formatInteger(overview.summary.requests)) }}</button><button :class="{ active: selectedList === 'prompts' }" @click="selectedList = 'prompts'">{{ t.dashboard.highPrompts(overview.summary.high_prompts) }}</button></div><button class="all-link" @click="router.push('/sessions')">{{ t.dashboard.viewAll }}</button></div><div class="table-scroll"><div class="table-head"><span>{{ t.common.source }}</span><span>{{ t.common.session }}</span><span>{{ t.common.model }}</span><span>{{ t.common.token }}</span><span>{{ t.common.cacheHit }}</span><span>{{ t.common.quota }}</span></div><button v-for="row in tableRows" :key="`${row.tool}-${row.session_id}-${'at' in row ? row.at : ''}`" class="session-row" @click="openSession(row)"><span class="row-source"><span class="row-icon"><img v-if="row.tool === 'Claude'" :src="ClaudeLogo" alt=""/><CodexLogo v-else /></span>{{ sourceLabel(row.source) }}</span><span class="truncate">{{ rowTitle(row) }}</span><span class="truncate">{{ modelLabel(row.model) }}</span><span class="numeric">{{ compactText(row.total_tokens, 1_000_000) }}</span><span class="numeric" :class="{ 'error-text': row.cache_hit_rate !== null && row.cache_hit_rate < .5 }">{{ percent(row.cache_hit_rate) }}</span><span class="numeric">{{ quotaDelta(row.weekly_delta) }}</span></button><p v-if="!tableRows.length" class="table-empty">{{ t.common.noRecords }}</p></div></section>
+      <section class="card sessions-card"><div class="sessions-top"><div v-selection-slide class="summary-pills"><button :class="{ active: selectedList === 'sessions' }" @click="selectedList = 'sessions'">{{ t.dashboard.sessionsCount(overview.summary.sessions) }}</button><button>{{ t.dashboard.requestsCount(formatInteger(overview.summary.requests)) }}</button><button :class="{ active: selectedList === 'prompts' }" @click="selectedList = 'prompts'">{{ t.dashboard.highPrompts(overview.summary.high_prompts) }}</button></div><button class="all-link" @click="router.push('/sessions')">{{ t.dashboard.viewAll }}</button></div><div class="table-scroll"><div class="table-head"><span>{{ t.common.source }}</span><span>{{ t.common.session }}</span><span>{{ t.common.model }}</span><span>{{ t.common.token }}</span><span>{{ t.common.cacheHit }}</span><span>{{ t.common.quotaOrCost }}</span></div><button v-for="row in tableRows" :key="`${row.tool}-${row.session_id}-${'at' in row ? row.at : ''}`" class="session-row" @click="openSession(row)"><span class="row-source"><span class="row-icon"><ToolLogo :tool="row.tool" /></span>{{ sourceLabel(row.source) }}</span><span class="truncate">{{ rowTitle(row) }}</span><span class="truncate">{{ modelLabel(row.model) }}</span><span class="numeric">{{ compactText(row.total_tokens, 1_000_000) }}</span><span class="numeric" :class="{ 'error-text': row.cache_hit_rate !== null && row.cache_hit_rate < .5 }">{{ percent(row.cache_hit_rate) }}</span><span class="numeric">{{ quotaOrCost(row) }}</span></button><p v-if="!tableRows.length" class="table-empty">{{ t.common.noRecords }}</p></div></section>
     </div>
     <Transition name="dialog"><ShareDialog v-if="shareOpen" @close="shareOpen = false" /></Transition>
   </div>

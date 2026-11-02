@@ -631,7 +631,7 @@ pub fn warm_middle_writes(
 }
 
 fn event_cost(pricing: &Pricing, event: &UsageEvent) -> f64 {
-    pricing.cost_usd(&event.model, &event.tokens).unwrap_or(0.0)
+    pricing.event_cost_usd(event).unwrap_or(0.0)
 }
 
 fn sessions_in_order<'a>(

@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Datelike, Local, Utc};
 use token_audit_core::dashboard::{QuotaDisplay, ToolOverview};
+use token_audit_core::deepseek_view::DeepSeekOverview;
 use token_audit_core::forecast::Forecast;
 use token_audit_core::i18n::Lang;
 use token_audit_core::model::Tool;
@@ -250,6 +251,59 @@ pub fn format_menu(
     }
 }
 
+/// Yuan with two decimals, as on the dashboard card.
+fn yuan(value: f64) -> String {
+    format!("¥{value:.2}")
+}
+
+/// The menu bar keeps it short: whole yuan, or one decimal under ¥10.
+pub fn deepseek_badge(overview: &DeepSeekOverview) -> Option<String> {
+    let total = overview.balance.as_ref()?.total.max(0.0);
+    Some(if total < 10.0 {
+        format!("¥{total:.1}")
+    } else {
+        format!("¥{}", total.floor() as u64)
+    })
+}
+
+/// DeepSeek Harness bills a prepaid wallet, so its rows are the balance and spend
+/// rather than quota windows.
+pub fn deepseek_section(lang: Lang, overview: &DeepSeekOverview) -> ToolSection {
+    let mut rows = Vec::new();
+    match (&overview.balance, overview.days_left) {
+        (Some(balance), Some(days)) if days < 1.0 => rows.push(token_audit_core::tr!(
+            lang,
+            "余额 {} · 不到 1 天",
+            "Balance {} · under a day left",
+            yuan(balance.total)
+        )),
+        (Some(balance), Some(days)) => rows.push(token_audit_core::tr!(
+            lang,
+            "余额 {} · 约可用 {} 天",
+            "Balance {} · about {} days left",
+            yuan(balance.total),
+            days.round() as u64
+        )),
+        (Some(balance), None) => rows.push(token_audit_core::tr!(
+            lang,
+            "余额 {}",
+            "Balance {}",
+            yuan(balance.total)
+        )),
+        (None, _) => rows.push(lang.pick("暂无余额数据", "No balance data").to_owned()),
+    }
+    rows.push(token_audit_core::tr!(
+        lang,
+        "今日花费 {}（估算）",
+        "Spent today {} (estimate)",
+        yuan(overview.today_cost)
+    ));
+    ToolSection {
+        heading: tool_name(Tool::DeepSeek).to_owned(),
+        rows,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,5 +547,40 @@ mod tests {
             reset_time(Lang::En, later, now),
             format!("resets {}/{}", local.month(), local.day())
         );
+    }
+
+    #[test]
+    fn deepseek_rows_show_balance_and_spend() {
+        use token_audit_core::deepseek_view::{BalanceOrigin, DeepSeekBalance};
+        let mut overview = DeepSeekOverview {
+            today_cost: 3.2,
+            today_requests: 4,
+            daily_average: 2.85,
+            days_left: Some(30.3),
+            balance: Some(DeepSeekBalance {
+                total: 86.4,
+                topped_up: Some(76.4),
+                granted: Some(10.0),
+                origin: BalanceOrigin::Official,
+                as_of: Utc::now(),
+                spent_since: None,
+            }),
+            low_balance: false,
+            unpriced_requests: 0,
+        };
+        let section = deepseek_section(Lang::Zh, &overview);
+        assert_eq!(
+            section.rows,
+            ["余额 ¥86.40 · 约可用 30 天", "今日花费 ¥3.20（估算）"]
+        );
+        assert_eq!(deepseek_badge(&overview).as_deref(), Some("¥86"));
+        overview.balance.as_mut().expect("balance").total = 5.64;
+        assert_eq!(deepseek_badge(&overview).as_deref(), Some("¥5.6"));
+        overview.balance = None;
+        assert_eq!(
+            deepseek_section(Lang::En, &overview).rows[0],
+            "No balance data"
+        );
+        assert_eq!(deepseek_badge(&overview), None);
     }
 }

@@ -7,82 +7,67 @@ import {
   quotaSources,
   notificationLine,
   trayPlace,
-  toolSources,
-  detectedToolRows,
+  toolGroups,
   initialOnboardingChoices,
   installOutcome,
   onboardingExitTarget,
   onboardingSummary,
   outcomeTone,
-  precisionPill,
   previewOnboardingForced,
   quotaOutcome,
-  toolSubtitle,
 } from './onboardingLogic.ts'
 
 test('quota sources come from the registry, one per switch', () => {
-  assert.deepEqual(quotaSources().map(item => item.key), ['statusline', 'claudeOfficial', 'codexOfficial'])
+  assert.deepEqual(quotaSources().map(item => item.key), ['statusline', 'claudeOfficial', 'codexOfficial', 'deepseekOfficial'])
   assert.equal(quotaSources()[0].title, 'Claude Code 状态栏记录')
 })
 
-test('tool rows follow the registry and fall back for unknown sources', () => {
-  const rows = detectedToolRows([
+test('each tool shows its command line and desktop apps on one row', () => {
+  const groups = toolGroups([
     { source: 'ClaudeCli', sessions: 34, requests: 900, plan: null },
+    { source: 'ClaudeDesktop', sessions: 0, requests: 0, plan: null },
     { source: 'CodexCli', sessions: 4, requests: 60, plan: 'plus' },
-    { source: 'GeminiCli', sessions: 2, requests: 10, plan: null },
-    { source: 'Unknown', sessions: 1, requests: 1, plan: null },
+    { source: 'CodexDesktop', sessions: 15, requests: 40, plan: 'plus' },
+    { source: 'DeepSeek', sessions: 1, requests: 1, plan: null, install: { desktop: true, cli: false } },
   ])
-  assert.deepEqual(rows.map(row => row.source), [...toolSources().map(info => info.source), 'GeminiCli'])
-  const claude = rows[0]
-  assert.equal(claude.subtitle, '34 个会话')
+  assert.deepEqual(groups.map(group => group.tool), ['Claude', 'Codex', 'DeepSeek'])
+  const [claude, codex, deepseek] = groups
+  assert.deepEqual(claude.variants, [
+    { label: '命令行', found: true, detail: '34 个会话' },
+    { label: '桌面版', found: false, detail: '未检测到' },
+  ])
   assert.equal(claude.hint, '额度需开启记录器或官方查询')
   assert.deepEqual(claude.pill, { text: 'token 精确', tone: 'success' })
-  const desktop = rows.find(row => row.source === 'ClaudeDesktop')
-  assert.equal(desktop.subtitle, '未检测到本机日志')
-  assert.equal(desktop.hint, null)
-  assert.deepEqual(rows.find(row => row.source === 'CodexCli').pill, { text: 'token 与额度精确', tone: 'success' })
-  const unknown = rows.at(-1)
-  assert.equal(unknown.name, 'GeminiCli')
-  assert.equal(unknown.logo, 'generic')
-  assert.equal(unknown.subtitle, '2 个会话')
-  assert.deepEqual(unknown.pill, { text: 'token 精确', tone: 'success' })
+  assert.deepEqual(codex.pill, { text: 'token 与额度精确', tone: 'success' })
+  assert.deepEqual(deepseek.variants, [
+    { label: '命令行', found: false, detail: '未检测到' },
+    { label: '桌面版', found: true, detail: '1 个会话' },
+  ])
 })
 
-test('tool subtitle omits an unknown plan and marks a missing log', () => {
-  assert.equal(toolSubtitle('ClaudeCli', 34, null), '34 个会话')
-  assert.equal(toolSubtitle('ClaudeCli', 34, '  '), '34 个会话')
-  assert.equal(toolSubtitle('ClaudeCli', 2, 'pro'), 'Claude Pro · 2 个会话')
-  assert.equal(toolSubtitle('CodexCli', 4, 'plus'), 'ChatGPT Plus · 4 个会话')
-  assert.equal(toolSubtitle('CodexDesktop', 15, 'Plus'), 'ChatGPT Plus · 15 个会话')
-  assert.equal(toolSubtitle('ClaudeDesktop', 0, 'pro'), '未检测到本机日志')
-  assert.equal(toolSubtitle('CodexCli', 1, 'enterprise'), 'enterprise · 1 个会话')
-})
-
-test('precision pills', () => {
-  assert.deepEqual(precisionPill('ClaudeCli', 0), { text: '未检测到', tone: 'neutral' })
-  assert.deepEqual(precisionPill('ClaudeDesktop', 3), { text: 'token 精确', tone: 'success' })
-  assert.deepEqual(precisionPill('ClaudeCli', 34), { text: 'token 精确', tone: 'success' })
-  assert.deepEqual(precisionPill('CodexCli', 4), { text: 'token 与额度精确', tone: 'success' })
+test('DeepSeek dots follow what is installed, since one log serves both apps', () => {
+  const group = installs => toolGroups([{ source: 'DeepSeek', sessions: 3, requests: 9, plan: null, install: installs }])[2]
+  // Both installed: the sessions go with the desktop app, the CLI is just installed.
+  assert.deepEqual(group({ desktop: true, cli: true }).variants.map(item => item.detail), ['已安装', '3 个会话'])
+  // Only the CLI: its sessions are the CLI's.
+  assert.deepEqual(group({ desktop: false, cli: true }).variants.map(item => [item.found, item.detail]), [[true, '3 个会话'], [false, '未检测到']])
+  // Logs but nothing found installed (a moved app): still counted, under desktop.
+  assert.deepEqual(group({ desktop: false, cli: false }).variants.map(item => item.found), [false, true])
+  assert.deepEqual(toolGroups([])[2].pill, { text: '未检测到', tone: 'neutral' })
 })
 
 test('first run defaults; reopening keeps current switches', () => {
-  const enabled = { claude_official_query: true, codex_app_server: true }
-  const disabled = { claude_official_query: false, codex_app_server: false }
-  // First run: status line on, both official queries off, whatever the stored settings say.
-  assert.deepEqual(initialOnboardingChoices(false, disabled, false), {
-    statusline: true,
-    claudeOfficial: false,
-    codexOfficial: false,
-  })
-  assert.deepEqual(initialOnboardingChoices(false, enabled, false), {
-    statusline: true,
-    claudeOfficial: false,
-    codexOfficial: false,
-  })
+  const enabled = { claude_official_query: true, codex_app_server: true, deepseek_balance_query: true }
+  const disabled = { claude_official_query: false, codex_app_server: false, deepseek_balance_query: false }
+  const off = { statusline: true, claudeOfficial: false, codexOfficial: false, deepseekOfficial: false }
+  // First run: status line on, every official query off, whatever the stored settings say.
+  assert.deepEqual(initialOnboardingChoices(false, disabled, false), off)
+  assert.deepEqual(initialOnboardingChoices(false, enabled, false), off)
   assert.deepEqual(initialOnboardingChoices(true, enabled, false), {
     statusline: false,
     claudeOfficial: true,
     codexOfficial: true,
+    deepseekOfficial: true,
   })
 })
 
@@ -96,6 +81,9 @@ test('install and quota sentences, and when the dashboard notice should warn', (
   ), [{ text: 'Claude 官方额度：已更新', outcome: result.claude }])
   assert.equal(outcomeTone(quotaOutcome({ statusline: false, claudeOfficial: true, codexOfficial: true }, result)), 'success')
   assert.equal(outcomeTone(quotaOutcome({ statusline: false, claudeOfficial: true, codexOfficial: false }, { ...result, claude: { state: 'error', message: '无法连接 Anthropic' } })), 'warning')
+  const deepseek = { ...result, deepseek: { state: 'error', message: 'DeepSeek 账号登录已失效，请在 Harness 里重新登录' } }
+  assert.deepEqual(quotaOutcome({ statusline: false, claudeOfficial: false, codexOfficial: false, deepseekOfficial: true }, deepseek).map(line => line.text),
+    ['DeepSeek 余额：DeepSeek 账号登录已失效，请在 Harness 里重新登录'])
 })
 
 test('preview query forces the guide only in the browser preview', () => {
@@ -115,7 +103,7 @@ test('calibration link navigates only after onboarding completes', () => {
 
 test('preview fixtures cover both tools and a missing Claude desktop log', () => {
   const detected = mockDetectedTools(null)
-  assert.equal(detected.length, 4)
+  assert.equal(detected.length, 5)
   assert.ok(detected.filter(tool => tool.source.startsWith('Claude')).some(tool => tool.sessions > 0))
   assert.ok(detected.filter(tool => tool.source.startsWith('Codex')).every(tool => tool.sessions > 0 && tool.plan === 'plus'))
   assert.equal(detected.find(tool => tool.source.startsWith('Claude'))?.plan ?? null, null)
@@ -124,8 +112,7 @@ test('preview fixtures cover both tools and a missing Claude desktop log', () =>
   assert.equal(desktop.sessions, 0)
   assert.equal(desktop.requests, 0)
   assert.equal(desktop.last_used_at, null)
-  assert.equal(toolSubtitle(desktop.source, desktop.sessions, desktop.plan), '未检测到本机日志')
-  assert.equal(precisionPill(desktop.source, desktop.sessions).text, '未检测到')
+  assert.deepEqual(toolGroups(mockDetectedTools('nodesktop'))[0].variants[1], { label: '桌面版', found: false, detail: '未检测到' })
 })
 
 test('detection case: no logs, Claude desktop only, or normal', () => {
@@ -144,7 +131,7 @@ test('detection case: no logs, Claude desktop only, or normal', () => {
 
 test('preview fixtures for no logs and Claude desktop only', () => {
   const none = mockDetectedTools('nologs')
-  assert.deepEqual(none.map(tool => tool.source), ['ClaudeCli', 'ClaudeDesktop', 'CodexCli', 'CodexDesktop'])
+  assert.deepEqual(none.map(tool => tool.source), ['ClaudeCli', 'ClaudeDesktop', 'CodexCli', 'CodexDesktop', 'DeepSeek'])
   assert.ok(none.every(tool => tool.sessions === 0 && tool.requests === 0 && tool.last_used_at === null))
   const desktopOnly = mockDetectedTools('desktoponly')
   assert.deepEqual(desktopOnly.filter(tool => tool.sessions > 0).map(tool => tool.source), ['ClaudeDesktop'])

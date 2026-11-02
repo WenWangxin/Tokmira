@@ -22,7 +22,7 @@ fn logo(tool: Tool) -> &'static [u8] {
     match tool {
         Tool::Claude => include_bytes!("../icons/tray/claude-template.png"),
         Tool::Codex => include_bytes!("../icons/tray/codex-template.png"),
-        Tool::DeepSeek => BRAND_MARK,
+        Tool::DeepSeek => include_bytes!("../icons/tray/deepseek-template.png"),
     }
 }
 

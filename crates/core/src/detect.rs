@@ -69,6 +69,9 @@ pub struct DetectedTool {
     /// Claude: recognized Max tiers are normalized from the newest saved snapshot.
     /// Codex: `plan_type` on the newest log snapshot. Empty values are omitted.
     pub plan: Option<String>,
+    /// DeepSeek Harness only: which of its apps are installed. Its logs do not say
+    /// whether a session came from the desktop app or the `dsh` command line.
+    pub install: Option<DeepSeekInstall>,
 }
 
 const SOURCES: [Source; 4] = [
@@ -138,6 +141,7 @@ pub fn detect_tools(
             sessions: bucket.sessions.len(),
             requests: bucket.requests,
             last_used_at: bucket.last_used_at,
+            install: None,
         })
         .collect()
 }

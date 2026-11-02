@@ -1,4 +1,4 @@
-import type { Overview, SessionOverview, TokenCounts, Tool } from '../api'
+import type { DeepSeekOverview, Overview, SessionOverview, TokenCounts, Tool } from '../api'
 
 // M7B_DEV_PREVIEW_ONLY: handwritten, synthetic data for the browser preview.
 const now = new Date()
@@ -17,8 +17,32 @@ const session = (tool: Tool, id: string, title: string, source: SessionOverview[
   tool, session_id: id, title, source, project: '/sample/workspace', model, requests: 24,
   tokens: amount, cache_hit_rate: hit, five_hour_delta: weekly / 2, weekly_delta: weekly,
   total_tokens: amount.input + amount.cache_read + amount.output,
+  estimated_cost_cny: null,
   first_at: at(-260), last_at: at(-12),
 })
+
+/** The four balance card states in the design: `?balance=official|manual|none|low`. */
+export function mockDeepSeekOverview(state = new URLSearchParams(globalThis.location?.search ?? '').get('balance') ?? 'official'): DeepSeekOverview {
+  const low = state === 'low'
+  const total = low ? 5.6 : 86.4
+  const balance = state === 'none' ? null : {
+    total,
+    topped_up: state === 'manual' ? null : low ? 5.6 : 76.4,
+    granted: state === 'manual' ? null : low ? 0 : 10,
+    origin: state === 'manual' ? 'Manual' as const : 'Official' as const,
+    as_of: at(-4),
+    spent_since: state === 'manual' ? 3.6 : null,
+  }
+  return {
+    today_cost: 3.2,
+    today_requests: 41,
+    daily_average: 2.85,
+    days_left: balance ? total / 2.85 : null,
+    balance,
+    low_balance: low,
+    unpriced_requests: 0,
+  }
+}
 const series = (values: number[], start: number, step: number) => values.map((percent, index) => ({
   at: at(start + index * step), percent,
 }))
@@ -32,6 +56,7 @@ export function mockOverview(variant: 'default' | 'empty' | 'nodata' | 'hit' | '
     session('Codex', 'sample-codex-03', '写 README', 'CodexCli', 'gpt-6-sol', tokens(90000, 710000, 130000), .82, 6.4),
     session('Claude', 'sample-claude-04', '写对账单元测试', 'ClaudeDesktop', 'claude-opus-5-5', tokens(180000, 350000, 230000), .48, 5.8),
     session('Codex', 'sample-codex-05', '检查命令行参数', 'CodexCli', 'gpt-6-sol', tokens(43000, 121000, 42000), .58, 2.1),
+    { ...session('DeepSeek', 'session-sample-ds-06', 'hello', 'DeepSeek', 'deepseek-flash', tokens(9007, 0, 98), 0, 0), estimated_cost_cny: 0.0094 },
   ]
   const quota = (used: number, reset: number, forecast: Overview['tools'][number]['five_hour']['forecast'], origin: Overview['tools'][number]['five_hour']['origin'], estimated: number | null = null) => ({
     used_percent: noQuota || empty ? null : used,
@@ -88,10 +113,11 @@ export function mockOverview(variant: 'default' | 'empty' | 'nodata' | 'hit' | '
       at: at(-30 - index * 60), tool: item.tool, source: item.source, session_id: item.session_id,
       title: item.title, project: item.project, model: item.model, tokens: item.tokens,
       total_tokens: item.total_tokens,
-      cache_hit_rate: item.cache_hit_rate, five_hour_delta: item.five_hour_delta,
+      cache_hit_rate: item.cache_hit_rate, estimated_cost_cny: item.estimated_cost_cny, five_hour_delta: item.five_hour_delta,
       weekly_delta: item.weekly_delta,
     })),
     summary: { sessions: empty ? 0 : 7, requests: empty ? 0 : 1284, high_prompts: empty ? 0 : 5 },
     quota_hit_threshold_pct: 95,
+    deepseek: empty ? null : mockDeepSeekOverview(),
   }
 }

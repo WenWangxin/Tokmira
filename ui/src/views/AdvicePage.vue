@@ -7,11 +7,11 @@ import { openAndReport } from '../sessionOpen'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeftRight, Brain, SquareArrowOutUpRight, CircleAlert, Clock, Coins, Copy, Cpu, ExternalLink, FileStack, Gauge, GitFork, Layers, Lightbulb, List, Network, Search, Sparkles, TrendingUp, WandSparkles, Zap } from 'lucide-vue-next'
-import ClaudeLogo from '../assets/logos/claude.svg'
-import CodexLogo from '../components/CodexLogo.vue'
+import ToolLogo from '../components/ToolLogo.vue'
+import DeepSeekAdvice from '../components/DeepSeekAdvice.vue'
 import AnimatedNumber from '../components/AnimatedNumber.vue'
 import { vSelectionSlide } from '../components/selectionSlide'
-import { dismissAdvice, getAdvice, type AdviceItem, type AdviceReport, type Tool } from '../api'
+import { dismissAdvice, getAdvice, getDeepSeekAdvice, type AdviceItem, type AdviceReport, type Tool } from '../api'
 import PageSkeleton from '../components/PageSkeleton.vue'
 import { getPageCache, invalidatePageCache, pageCacheKey, pageSelection, setPageCache } from '../pageCache'
 import { usePageRequest } from '../usePageRequest'
@@ -56,7 +56,18 @@ const icons: Record<string, unknown> = {
   plan_fit: WandSparkles,
 }
 
+/** DeepSeek Harness has its own tips; its tab opens once it has sessions in the last 30 days. */
+const deepseekKey = pageCacheKey('advice', 'deepseek-available')
+const deepseekAvailable = ref(getPageCache<boolean>(deepseekKey) ?? false)
+function checkDeepSeek() {
+  getDeepSeekAdvice(30).then(advice => {
+    deepseekAvailable.value = advice.sessions > 0 || advice.tips.length > 0
+    setPageCache(deepseekKey, deepseekAvailable.value)
+  }).catch(() => {})
+}
+
 async function load(keep = false) {
+  checkDeepSeek()
   const selectedPeriod = period.value
   const result = await request.load(pageCacheKey('advice', selectedPeriod), () => getAdvice(selectedPeriod), { keep })
   if (result && !pageSelection.advice.tool) {
@@ -99,7 +110,7 @@ async function dismiss(item: AdviceItem) {
 onMounted(() => { void load() })
 watch(usageRevision, () => { void load(true) })
 const current = computed(() => report.value?.tools.find(item => item.tool === tool.value) ?? null)
-const available = (item: Tool) => Boolean(report.value?.tools.some(entry => entry.tool === item))
+const available = (item: Tool) => item === 'DeepSeek' ? deepseekAvailable.value : Boolean(report.value?.tools.some(entry => entry.tool === item))
 watch([() => route.query, report, page], async ([query, data]) => {
   if (route.path !== '/advice') return
   const link = readAdviceDeepLink(query)
@@ -140,13 +151,13 @@ function impact(item: AdviceItem) {
 </script>
 
 <template>
-  <div ref="page" class="dashboard-page advice-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': tool === 'Claude' ? 'var(--tool-claude)' : 'var(--tool-codex)' }">
+  <div ref="page" class="dashboard-page advice-page" :class="{ 'no-entry-reveal': !reveal }" :style="{ '--usage-tool': `var(--tool-${tool.toLowerCase()})` }">
     <header class="dashboard-header">
       <div><h1>{{ t.pages.advice.title }}</h1><p>{{ t.advice.subtitle(period) }}</p></div>
       <div class="advice-head-controls">
         <div v-selection-slide class="usage-tool-switch" :aria-label="t.advice.selectTool">
-          <button v-for="item in (['Claude', 'Codex'] as const)" :key="item" :class="{ active: tool === item }" :disabled="!available(item)" :aria-pressed="tool === item" @click="tool = item">
-            <img v-if="item === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else />{{ item }}
+          <button v-for="item in (['Claude', 'Codex', 'DeepSeek'] as const)" :key="item" :class="{ active: tool === item }" :disabled="!available(item)" :aria-pressed="tool === item" @click="tool = item">
+            <ToolLogo :tool="item" />{{ item }}
           </button>
         </div>
         <div v-selection-slide class="segmented advice-period" :aria-label="t.advice.period">
@@ -156,7 +167,8 @@ function impact(item: AdviceItem) {
       </div>
     </header>
 
-    <PageSkeleton v-if="pending && loading" kind="advice" />
+    <DeepSeekAdvice v-if="tool === 'DeepSeek'" :period="period" :reveal="reveal" />
+    <PageSkeleton v-else-if="pending && loading" kind="advice" />
     <div v-else-if="pending" class="page-await" />
     <div v-else-if="error && !report" class="center-state"><CircleAlert :size="28" /><strong>{{ t.advice.loadFailed }}</strong><p>{{ error }}</p><button @click="load()">{{ t.common.retry }}</button></div>
     <div v-else-if="!current" class="center-state"><Lightbulb :size="28" /><strong>{{ t.advice.noUsage(period, tool) }}</strong></div>

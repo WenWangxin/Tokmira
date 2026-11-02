@@ -210,3 +210,11 @@
   .onboarding-dialog { transition: none; }
   .onboarding-steps span { transition-duration: 80ms; }
 }
+
+/* Step 2: each tool's command line and desktop apps, a green dot when found. */
+.onboarding-variants { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 3px; color: var(--on-surface-muted); font-size: 11px; line-height: 1.5; }
+.onboarding-variant { display: inline-flex; align-items: center; gap: 6px; }
+.onboarding-variant i { width: 6px; height: 6px; border-radius: 50%; background: var(--on-surface-muted); opacity: .55; }
+.onboarding-variant.found i { background: var(--success); opacity: 1; }
+.onboarding-variant b { color: var(--on-surface-variant); font-size: 12px; font-weight: 500; }
+.onboarding-variant.found b { color: var(--on-surface); }

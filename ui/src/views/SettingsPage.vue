@@ -3,12 +3,12 @@ import { showToast } from '../toast'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listen } from '@tauri-apps/api/event'
-import { BellRing, CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Info, Languages, LogIn, MonitorOff, Palette, Power, RefreshCw, Scale, SlidersHorizontal, Tag, Terminal, Trash2 } from 'lucide-vue-next'
+import { BellRing, CircleAlert, Coins, Compass, Database, ExternalLink, EyeOff, Folder, Gauge, History, Info, Languages, LogIn, MonitorOff, Palette, Power, RefreshCw, Scale, SlidersHorizontal, Tag, Terminal, Trash2, Wallet } from 'lucide-vue-next'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import HelpTip from '../components/HelpTip.vue'
 import Toggle from '../components/Toggle.vue'
-import CodexLogo from '../components/CodexLogo.vue'
-import ClaudeLogo from '../assets/logos/claude.svg'
+import ToolLogo from '../components/ToolLogo.vue'
+import { yuan } from '../deepseekLogic'
 import { vSelectionSlide } from '../components/selectionSlide'
 import {
   checkUpdate,
@@ -25,6 +25,7 @@ import {
   recorderPlanUninstall,
   recorderStatus,
   recorderUninstall,
+  refreshDeepSeekBalance,
   refreshQuotas,
   restartApp,
   restoreAdvice,
@@ -33,6 +34,7 @@ import {
   type AppSettings,
   type AutostartState,
   type CredentialPreference,
+  type DeepSeekCredential,
   type EnvironmentInfo,
   type Language,
   type QuotaOutcome,
@@ -46,7 +48,7 @@ import {
   type UpdateStatus,
 } from '../api'
 import { adviceLabel, applyTheme, formatCalibration, formatPercent, parsePercent, quotaMessageTone, quotaMessage } from '../settingsLogic'
-import { applyLanguage, m, messages } from '../i18n/index.ts'
+import { applyLanguage, clock, m, messages, monthDay } from '../i18n/index.ts'
 import { notificationLine, trayPlace } from '../onboardingLogic'
 import { lastCheckedLine, progressLine, updateActionLabel, type UpdateStage } from '../updateLogic'
 import { openOnboarding } from '../onboardingState'
@@ -72,6 +74,8 @@ const dialog = ref<SettingsDialog | null>(null)
 const dialogError = ref('')
 const confirming = ref(false)
 const claudeResult = ref<QuotaOutcome | null>(null)
+const deepseekResult = ref<QuotaOutcome | null>(null)
+const balanceText = ref('')
 const t = messages
 const calibrationTool = ref<Tool>('Claude')
 const percentText = ref('')
@@ -91,7 +95,9 @@ const credentials = computed((): { value: CredentialPreference; label: string }[
   { value: 'ClaudeDesktop', label: m().settings.credentialDesktop },
   { value: 'ClaudeCode', label: 'Claude Code' },
 ])
-const menuBarTools: Tool[] = ['Claude', 'Codex']
+const deepseekCredentials = computed((): { value: DeepSeekCredential; label: string }[] =>
+  (['Auto', 'Account', 'ApiKey'] as const).map(value => ({ value, label: m().deepseek.credential[value] })))
+const menuBarTools: Tool[] = ['Claude', 'Codex', 'DeepSeek']
 /** The menu bar has room for two quotas, stacked. */
 const MENU_BAR_TOOLS_MAX = 2
 const router = useRouter()
@@ -283,7 +289,7 @@ async function load() {
 }
 
 // Deep links such as /settings?section=calibration scroll to one row and briefly outline it.
-const SECTIONS = ['calibration', 'sources', 'recorder', 'about'] as const
+const SECTIONS = ['calibration', 'sources', 'recorder', 'deepseek', 'about'] as const
 type Section = typeof SECTIONS[number]
 const page = ref<HTMLElement | null>(null)
 const target = ref<Section | null>(null)
@@ -318,7 +324,7 @@ async function save(next: AppSettings) {
   const saved = await updateSettings(next)
   settings.value = saved
   saveSnapshot()
-  if (previous && (saved.claude_official_query !== previous.claude_official_query || saved.codex_app_server !== previous.codex_app_server || JSON.stringify(saved.calibration) !== JSON.stringify(previous.calibration) || saved.claude_credential !== previous.claude_credential)) {
+  if (previous && (saved.claude_official_query !== previous.claude_official_query || saved.codex_app_server !== previous.codex_app_server || JSON.stringify(saved.calibration) !== JSON.stringify(previous.calibration) || saved.claude_credential !== previous.claude_credential || saved.deepseek_balance_query !== previous.deepseek_balance_query || JSON.stringify(saved.deepseek_manual_balance) !== JSON.stringify(previous.deepseek_manual_balance))) {
     invalidatePageCache('overview', 'advice', 'usageWindows', 'usageDetail', 'sessions', 'sessionDetail')
   }
   applyTheme(saved.theme)
@@ -446,6 +452,66 @@ async function confirmRecorder() {
   } finally {
     confirming.value = false
   }
+}
+
+async function onDeepSeekToggle() {
+  if (!settings.value || locked.value) return
+  const enabling = !settings.value.deepseek_balance_query
+  try {
+    await save({ ...settings.value, deepseek_balance_query: enabling })
+    deepseekResult.value = null
+    // Turning it on is the user asking for a balance now, so query right away.
+    if (enabling) deepseekResult.value = await refreshDeepSeekBalance()
+  } catch (cause) {
+    showNotice(errorText(cause), true)
+  }
+}
+
+async function onDeepSeekCredentialChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  if (!settings.value || (value !== 'Auto' && value !== 'Account' && value !== 'ApiKey') || value === settings.value.deepseek_credential) return
+  try {
+    await save({ ...settings.value, deepseek_credential: value })
+  } catch (cause) {
+    showNotice(errorText(cause), true)
+  }
+}
+
+/** A plain number of yuan, 0 or more, with at most two decimals. */
+const parsedBalance = computed(() => {
+  const text = balanceText.value.trim().replace(/^¥/, '')
+  if (!/^\d+(\.\d{0,2})?$/.test(text)) return null
+  const value = Number(text)
+  return Number.isFinite(value) ? value : null
+})
+
+async function saveManualBalance() {
+  if (!settings.value || locked.value) return
+  if (parsedBalance.value === null) { showNotice(m().deepseek.manualInvalid, true); return }
+  try {
+    await save({ ...settings.value, deepseek_manual_balance: { amount: parsedBalance.value, recorded_at: new Date().toISOString() } })
+    balanceText.value = ''
+    showNotice(m().deepseek.manualSaved)
+  } catch (cause) {
+    showNotice(errorText(cause), true)
+  }
+}
+
+async function clearManualBalance() {
+  if (!settings.value || locked.value) return
+  try {
+    await save({ ...settings.value, deepseek_manual_balance: null })
+    showNotice(m().deepseek.manualCleared)
+  } catch (cause) {
+    showNotice(errorText(cause), true)
+  }
+}
+
+/** The entered amount and when; the spend taken off since shows on the dashboard card. */
+function manualBalanceLine() {
+  const manual = settings.value?.deepseek_manual_balance
+  if (!manual) return ''
+  return m().deepseek.manualLast(yuan(manual.amount), `${monthDay(manual.recorded_at)} ${clock(manual.recorded_at)}`)
 }
 
 async function calibrate() {
@@ -595,6 +661,23 @@ onUnmounted(() => {
           </div>
         </div>
 
+        <div class="settings-row settings-row-complex" data-section="deepseek" :class="{ 'settings-target': target === 'deepseek' }">
+          <span class="settings-icon"><Wallet :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">{{ t.deepseek.queryTitle }}<span class="origin-pill settings-pill" :class="networkPill(settings.deepseek_balance_query).tone"><i />{{ networkPill(settings.deepseek_balance_query).text }}</span></div>
+            <p class="settings-desc">{{ t.deepseek.queryBody }}</p>
+            <p v-if="deepseekResult" class="settings-result" :class="quotaMessageTone(deepseekResult)" role="status">{{ quotaMessage(deepseekResult) }}</p>
+          </div>
+          <div class="settings-controls">
+            <label class="settings-select-wrap">
+              <select class="settings-select" :value="settings.deepseek_credential" :disabled="locked" :aria-label="t.settings.credentialSource" @change="onDeepSeekCredentialChange">
+                <option v-for="item in deepseekCredentials" :key="item.value" :value="item.value">{{ item.label }}</option>
+              </select>
+            </label>
+            <Toggle :checked="settings.deepseek_balance_query" :disabled="locked" :label="t.deepseek.queryTitle" @toggle="onDeepSeekToggle" />
+          </div>
+        </div>
+
         <div class="settings-row settings-row-complex" data-section="calibration" :class="{ 'settings-target': target === 'calibration' }">
           <span class="settings-icon"><Scale :size="18" aria-hidden="true" /></span>
           <div class="settings-main">
@@ -614,6 +697,23 @@ onUnmounted(() => {
               <span>%</span>
             </label>
             <button type="button" class="settings-tonal" :disabled="locked || parsedPercent === null" @click="calibrate">{{ t.settings.calibrate }}</button>
+          </div>
+        </div>
+
+        <div class="settings-row settings-row-complex">
+          <span class="settings-icon"><Coins :size="18" aria-hidden="true" /></span>
+          <div class="settings-main">
+            <div class="settings-title">{{ t.deepseek.manualTitle }}</div>
+            <p class="settings-desc">{{ t.deepseek.manualBody }}</p>
+            <p v-if="settings.deepseek_balance_query && settings.deepseek_manual_balance" class="settings-note">{{ t.deepseek.manualQueryOn }}</p>
+            <p v-if="settings.deepseek_manual_balance" class="settings-calibration">{{ manualBalanceLine() }}<button type="button" class="settings-text" :disabled="locked" @click="clearManualBalance">{{ t.common.clear }}</button></p>
+          </div>
+          <div class="settings-controls">
+            <label class="settings-percent settings-yuan">
+              <span>¥</span>
+              <input v-model="balanceText" inputmode="decimal" :placeholder="settings.deepseek_manual_balance ? settings.deepseek_manual_balance.amount.toFixed(2) : '0.00'" :aria-label="t.deepseek.manualTitle" :disabled="locked" @keydown.enter="saveManualBalance" />
+            </label>
+            <button type="button" class="settings-tonal" :disabled="locked || parsedBalance === null" @click="saveManualBalance">{{ t.deepseek.save }}</button>
           </div>
         </div>
       </article>
@@ -668,7 +768,7 @@ onUnmounted(() => {
           <div class="settings-controls">
             <div class="segmented settings-menubar-tools" role="group" :aria-label="t.settings.menuBarTitle">
               <button v-for="item in menuBarTools" :key="item" type="button" :class="{ active: menuBarShown(item) }" :aria-pressed="menuBarShown(item)" :disabled="locked || menuBarFull(item)" :title="menuBarFull(item) ? t.settings.menuBarFull(MENU_BAR_TOOLS_MAX) : undefined" @click="toggleMenuBarTool(item)">
-                <img v-if="item === 'Claude'" :src="ClaudeLogo" alt="" /><CodexLogo v-else />{{ item }}
+                <ToolLogo :tool="item" />{{ item }}
               </button>
             </div>
           </div>
@@ -720,6 +820,7 @@ onUnmounted(() => {
             <ul class="settings-paths">
               <li><span>{{ t.settings.claudeLogs }}</span><code>{{ environment.claude_logs.path }}</code><em :class="{ missing: !environment.claude_logs.exists }">{{ environment.claude_logs.exists ? t.settings.exists : t.settings.missing }}</em></li>
               <li><span>{{ t.settings.codexLogs }}</span><code>{{ environment.codex_logs.path }}</code><em :class="{ missing: !environment.codex_logs.exists }">{{ environment.codex_logs.exists ? t.settings.exists : t.settings.missing }}</em></li>
+              <li v-if="environment.deepseek_logs"><span>DeepSeek</span><code>{{ environment.deepseek_logs.path }}</code><em :class="{ missing: !environment.deepseek_logs.exists }">{{ environment.deepseek_logs.exists ? t.settings.exists : t.settings.missing }}</em></li>
               <li><span>{{ t.settings.appData }}</span><code>{{ environment.data_dir }}</code></li>
             </ul>
           </div>

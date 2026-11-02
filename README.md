@@ -56,13 +56,13 @@ v1.3.0 起正式更名为 Tokmira，安装包使用 `tokmira-` 前缀；v1.2.0 �
 - **macOS**：首次打开时，在 Finder 里右键应用选择「打开」；如果仍被拦截，到「系统设置 → 隐私与安全性」里允许。
 - **Windows**：出现 SmartScreen 时，选择「更多信息 → 仍要运行」。
 
-**支持的工具**：命令行版和桌面版里的 Claude Code，命令行版和桌面版的 Codex。Claude 桌面端和网页的普通聊天、ChatGPT 聊天不在本机留下用量记录，所以不统计；官方额度里对不上的那部分会单独显示为「未归属」。
+**支持的工具**：命令行版和桌面版里的 Claude Code，命令行版和桌面版的 Codex，以及 DeepSeek Harness（按官方价目表估算人民币花费，可查询账户余额）。Claude 桌面端和网页的普通聊天、ChatGPT 聊天不在本机留下用量记录，所以不统计；官方额度里对不上的那部分会单独显示为「未归属」。
 
 ## 隐私
 
 Tokmira 靠信任才有用，所以有三条不会改的原则：
 
-1. **默认数据不出本机。** 用量分析只取本机日志里的用量与事件元数据，不上传对话内容。主动开启 Claude 官方额度查询时，登录令牌才会在内存中短暂使用，并且只发送给 Anthropic。
+1. **默认数据不出本机。** 用量分析只取本机日志里的用量与事件元数据，不上传对话内容。主动开启 Claude 官方额度查询或 DeepSeek 余额查询时，登录令牌才会在内存中短暂使用，并且只发送给 Anthropic 或 DeepSeek。
 2. **核心逻辑开源。** 统计、归属和诊断的算法都在这个仓库里，可以自己复现结论。
 3. **结论不受付费影响。** 任何人付费都不能改变诊断结果。
 
@@ -70,6 +70,7 @@ Tokmira 靠信任才有用，所以有三条不会改的原则：
 
 - **Claude 官方额度查询**：读取本机 Claude 的登录令牌，只发往 Anthropic，令牌只在内存里使用，不保存、不刷新。
 - **Codex 官方额度查询**：由本机 Codex 接口使用已登录账号向 OpenAI 查询；Tokmira 不读取登录令牌，本机日志分析可独立使用。
+- **DeepSeek 余额查询**：读取 DeepSeek Harness 的登录令牌或 API Key，只发往 DeepSeek，只在内存里使用，不保存、不刷新，也不改动 Harness 的登录。
 - **检查更新**：只从这个仓库的 GitHub Releases 下载更新清单和安装包，不附带版本号、设备信息或任何使用数据。
 
 可选的 Claude Code 记录器（状态栏和 hooks）只记录额度百分比和提示时间，不记录提示内容。安装前会列出要改动的配置，并完整备份原文件；卸载时恢复原样。
@@ -83,7 +84,7 @@ Tokmira 靠信任才有用，所以有三条不会改的原则：
 **命令行版**随安装包一起分发：macOS 在 `Tokmira.app/Contents/MacOS/token-audit`，Windows 在安装目录下的 `token-audit.exe`。常用命令：
 
 ```bash
-token-audit scan --since 2026-10-01   # 汇总本机 Claude Code 与 Codex 的用量
+token-audit scan --since 2026-10-01   # 汇总本机 Claude Code、Codex 与 DeepSeek Harness 的用量
 token-audit advice --days 7           # 近 7 天的省额度建议
 token-audit sessions --days 7         # 会话列表
 token-audit quota codex               # 通过 Codex 本地接口读取官方额度

@@ -7,7 +7,7 @@ export const STRINGS = {
     ogLocale: 'zh_CN',
     title: 'Tokmira：看清 Claude Code 和 Codex 的额度用在哪里',
     description:
-      '免费开源的桌面工具。读取本机 Claude Code 与 Codex 日志，显示 5 小时和每周额度、额度去向和省额度建议，数据只留在本机。支持 macOS 和 Windows。',
+      '免费开源的桌面工具。读取本机 Claude Code 与 Codex 日志，显示 5 小时和每周额度、额度去向和省额度建议；也支持 DeepSeek Harness 的人民币花费和余额。数据只留在本机。支持 macOS 和 Windows。',
     skip: '跳到下载',
     navDownload: '下载',
     navGuides: '用量指南',
@@ -72,7 +72,7 @@ export const STRINGS = {
     privacyTitle: '隐私',
     privacyLede: '这个工具靠信任才有用，所以有三条不会改的原则。',
     principles: [
-      ['默认数据不出本机', '用量分析只取日志里的用量与事件元数据，不上传对话内容。主动开启 Claude 官方查询时，登录令牌才会在内存中短暂使用。'],
+      ['默认数据不出本机', '用量分析只取日志里的用量与事件元数据，不上传对话内容。主动开启 Claude 官方查询或 DeepSeek 余额查询时，登录令牌才会在内存中短暂使用。'],
       ['核心逻辑开源', '统计、归属和诊断的算法都在 GitHub 上，结论可以自己复现。'],
       ['结论不受付费影响', '任何人付费都不能改变诊断结果。'],
     ],
@@ -80,6 +80,7 @@ export const STRINGS = {
     network: [
       ['Claude 官方额度查询', '只发往 Anthropic。登录令牌只在内存里使用，不保存、不刷新。'],
       ['Codex 官方额度查询', '开启后由本机 Codex 接口使用已登录账号向 OpenAI 查询；Tokmira 不读取登录令牌。日志分析可独立使用。'],
+      ['DeepSeek 余额查询', '只发往 DeepSeek。读取 DeepSeek Harness 的登录令牌或 API Key，只在内存里使用，不保存、不刷新，也不改动 Harness 的登录。'],
       ['检查更新', '只从 GitHub Releases 下载更新清单和安装包，不附带版本号、设备信息或使用数据。'],
     ],
     siteNote: '这个网站本身也不使用统计脚本、cookie 或外部字体。',
@@ -105,7 +106,7 @@ export const STRINGS = {
     ogLocale: 'en_US',
     title: 'Tokmira: see where your Claude Code and Codex quota goes',
     description:
-      'A free, open-source desktop app. It reads your local Claude Code and Codex logs to show your 5-hour and weekly quota, where it went and how to save it. Your data stays on your machine. For macOS and Windows.',
+      'A free, open-source desktop app. It reads your local Claude Code and Codex logs to show your 5-hour and weekly quota, where it went and how to save it, and tracks DeepSeek Harness spend and balance in yuan. Your data stays on your machine. For macOS and Windows.',
     skip: 'Skip to downloads',
     navDownload: 'Download',
     navGuides: 'Usage guides',
@@ -172,7 +173,7 @@ export const STRINGS = {
     privacyTitle: 'Privacy',
     privacyLede: 'A tool like this is only useful if you can trust it, so three principles do not change.',
     principles: [
-      ['Your data stays on your machine', 'Usage analysis selects usage and event metadata from local logs, without uploading conversation content. A login token is used briefly in memory only if you enable the Claude official query.'],
+      ['Your data stays on your machine', 'Usage analysis selects usage and event metadata from local logs, without uploading conversation content. A login token is used briefly in memory only if you enable the Claude official query or the DeepSeek balance query.'],
       ['The core is open source', 'The counting, attribution and diagnosis code is on GitHub, so you can reproduce every result.'],
       ['Results cannot be bought', 'Nobody can pay to change a diagnosis.'],
     ],
@@ -180,6 +181,7 @@ export const STRINGS = {
     network: [
       ['Claude official quota query', 'Sent only to Anthropic. Your login token is kept in memory only, never saved or refreshed.'],
       ['Codex official quota query', 'When enabled, the local Codex interface queries OpenAI using your signed-in account. Tokmira does not read the login token. Local log analysis works independently.'],
+      ['DeepSeek balance query', 'Sent only to DeepSeek. Reads DeepSeek Harness’s login token or API key, kept in memory only, never saved or refreshed, and leaves Harness’s login untouched.'],
       ['Checking for updates', 'Downloads the manifest and packages only from GitHub Releases, without your version, device details or usage data.'],
     ],
     siteNote: 'This website uses no analytics, cookies or external fonts either.',

@@ -5,7 +5,7 @@ use token_audit_core::pricing::Pricing;
 #[test]
 fn bundled_table_parses_and_charges_all_fields_except_reasoning() {
     let pricing = Pricing::bundled().expect("bundled prices");
-    assert_eq!(pricing.version, "2026-10-24");
+    assert_eq!(pricing.version, "2026-11-02");
     assert_eq!(pricing.currency, "USD");
     assert_eq!(pricing.unit, "per_million_tokens");
     assert_eq!(pricing.sources.len(), 2);

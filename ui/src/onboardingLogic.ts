@@ -7,11 +7,13 @@ export interface OnboardingSelection {
   statusline: boolean
   claudeOfficial: boolean
   codexOfficial: boolean
+  deepseekOfficial: boolean
 }
 
 export interface OnboardingSettingsFlags {
   claude_official_query: boolean
   codex_app_server: boolean
+  deepseek_balance_query?: boolean
 }
 
 /**
@@ -23,57 +25,13 @@ export function initialOnboardingChoices(
   settings: OnboardingSettingsFlags,
   statuslineOn: boolean,
 ): OnboardingSelection {
-  if (!onboardingCompleted) return { statusline: true, claudeOfficial: false, codexOfficial: false }
+  if (!onboardingCompleted) return { statusline: true, claudeOfficial: false, codexOfficial: false, deepseekOfficial: false }
   return {
     statusline: statuslineOn,
     claudeOfficial: settings.claude_official_query,
     codexOfficial: settings.codex_app_server,
+    deepseekOfficial: Boolean(settings.deepseek_balance_query),
   }
-}
-
-const CLAUDE_PLANS: Record<string, string> = {
-  pro: 'Claude Pro',
-  max: 'Claude Max',
-  max_5x: 'Claude Max 5x',
-  max_20x: 'Claude Max 20x',
-}
-
-const CODEX_PLANS: Record<string, string> = {
-  plus: 'ChatGPT Plus',
-  pro: 'ChatGPT Pro',
-}
-
-/** Display name for a stored plan. Blank plans are omitted. */
-export function planLabel(source: string, plan: string | null): string | null {
-  if (!plan) return null
-  const trimmed = plan.trim()
-  if (!trimmed) return null
-  const key = trimmed.toLowerCase().replace(/[\s-]+/g, '_')
-  const known: Record<string, string> = source.startsWith('Claude') ? CLAUDE_PLANS : source.startsWith('Codex') ? CODEX_PLANS : {}
-  return known[key] ?? trimmed
-}
-
-export type ToolLogo = 'claude' | 'codex' | 'generic'
-
-/** One local log source shown in step 2. Add a row here to support a new tool. */
-export interface ToolSourceInfo {
-  source: string
-  name: string
-  logo: ToolLogo
-  /** Whether the logs alone give exact quota percentages. */
-  quotaFromLogs: boolean
-  /** Extra line when the source has logs but needs a quota source from step 3. */
-  quotaHint?: string
-}
-
-export function toolSources(): readonly ToolSourceInfo[] {
-  const t = m().onboarding
-  return [
-    { source: 'ClaudeCli', name: t.claudeCli, logo: 'claude', quotaFromLogs: false, quotaHint: t.claudeCliHint },
-    { source: 'ClaudeDesktop', name: t.claudeDesktop, logo: 'claude', quotaFromLogs: false },
-    { source: 'CodexCli', name: t.codexCli, logo: 'codex', quotaFromLogs: true },
-    { source: 'CodexDesktop', name: t.codexDesktop, logo: 'codex', quotaFromLogs: true },
-  ]
 }
 
 export interface DetectedSource {
@@ -81,6 +39,8 @@ export interface DetectedSource {
   sessions: number
   requests: number
   plan: string | null
+  /** DeepSeek Harness only: its logs do not say which of its apps made a session. */
+  install?: { desktop: boolean; cli: boolean } | null
 }
 
 /**
@@ -96,52 +56,76 @@ export function detectionCase(detected: readonly DetectedSource[]): DetectionCas
   return 'normal'
 }
 
-export interface ToolRow {
-  source: string
+/** One app of a tool in step 2: a green dot when found, grey when not. */
+export interface ToolVariant {
+  label: string
+  found: boolean
+  detail: string
+}
+
+/** One tool in step 2, its command line and desktop apps side by side. */
+export interface ToolGroup {
+  tool: 'Claude' | 'Codex' | 'DeepSeek'
   name: string
-  logo: ToolLogo
-  subtitle: string
+  logo: 'claude' | 'codex' | 'deepseek'
+  variants: [ToolVariant, ToolVariant]
   hint: string | null
   pill: PrecisionPill
 }
 
-function sourceInfo(source: string, registry: readonly ToolSourceInfo[]): ToolSourceInfo {
-  return registry.find(item => item.source === source) ?? { source, name: source, logo: 'generic', quotaFromLogs: false }
+function variant(label: string, found: boolean, sessions: number): ToolVariant {
+  const t = m().onboarding
+  return { label, found, detail: !found ? t.notDetected : sessions > 0 ? t.sessions(sessions) : t.installed }
 }
 
-/** Registry rows in order, then any detected source the registry does not know yet. */
-export function detectedToolRows(detected: readonly DetectedSource[], registry: readonly ToolSourceInfo[] = toolSources()): ToolRow[] {
-  const extra = detected.filter(item => item.source !== 'Unknown' && !registry.some(info => info.source === item.source))
-  return [...registry, ...extra.map(item => sourceInfo(item.source, registry))].map(info => {
-    const found = detected.find(item => item.source === info.source)
-    const sessions = found?.sessions ?? 0
-    return {
-      source: info.source,
-      name: info.name,
-      logo: info.logo,
-      subtitle: toolSubtitle(info.source, sessions, found?.plan ?? null),
-      hint: sessions > 0 ? info.quotaHint ?? null : null,
-      pill: precisionPill(info.source, sessions, registry),
-    }
-  })
-}
-
-/** Subtitle under a detected tool. No sessions means this source has no local log. */
-export function toolSubtitle(source: string, sessions: number, plan: string | null): string {
-  if (sessions <= 0) return m().onboarding.noLogs
-  const count = m().onboarding.sessions(sessions)
-  const name = planLabel(source, plan)
-  return name ? `${name} · ${count}` : count
+/**
+ * Claude and Codex count each app by its own logs. DeepSeek Harness writes one log for
+ * both, so its dots come from what is installed and its sessions go with the desktop app
+ * when that is installed, otherwise with the command line.
+ */
+export function toolGroups(detected: readonly DetectedSource[]): ToolGroup[] {
+  const t = m().onboarding
+  const sessions = (source: string) => detected.find(item => item.source === source)?.sessions ?? 0
+  const pill = (total: number, quota: boolean): PrecisionPill => total <= 0
+    ? { text: t.notDetected, tone: 'neutral' }
+    : { text: quota ? t.tokenAndQuota : t.tokenExact, tone: 'success' }
+  const pair = (cli: number, desktop: number): [ToolVariant, ToolVariant] =>
+    [variant(t.variantCli, cli > 0, cli), variant(t.variantDesktop, desktop > 0, desktop)]
+  const deepseek = detected.find(item => item.source === 'DeepSeek')
+  const deepseekSessions = deepseek?.sessions ?? 0
+  const install = deepseek?.install ?? { desktop: false, cli: false }
+  const desktopFound = install.desktop || (deepseekSessions > 0 && !install.cli)
+  const deepseekGroup: ToolGroup = {
+    tool: 'DeepSeek',
+    name: 'DeepSeek Harness',
+    logo: 'deepseek',
+    variants: [
+      variant(t.variantCli, install.cli, desktopFound ? 0 : deepseekSessions),
+      variant(t.variantDesktop, desktopFound, desktopFound ? deepseekSessions : 0),
+    ],
+    hint: null,
+    pill: pill(deepseekSessions, false),
+  }
+  return [
+    {
+      tool: 'Claude', name: 'Claude', logo: 'claude',
+      variants: pair(sessions('ClaudeCli'), sessions('ClaudeDesktop')),
+      hint: sessions('ClaudeCli') > 0 ? t.claudeCliHint : null,
+      pill: pill(sessions('ClaudeCli') + sessions('ClaudeDesktop'), false),
+    },
+    {
+      tool: 'Codex', name: 'Codex', logo: 'codex',
+      variants: pair(sessions('CodexCli'), sessions('CodexDesktop')),
+      hint: null,
+      pill: pill(sessions('CodexCli') + sessions('CodexDesktop'), true),
+    },
+    deepseekGroup,
+  ]
 }
 
 export interface PrecisionPill {
   text: string
   tone: 'success' | 'neutral'
-}
-
-export function precisionPill(source: string, sessions: number, registry: readonly ToolSourceInfo[] = toolSources()): PrecisionPill {
-  if (sessions <= 0) return { text: m().onboarding.notDetected, tone: 'neutral' }
-  return sourceInfo(source, registry).quotaFromLogs ? { text: m().onboarding.tokenAndQuota, tone: 'success' } : { text: m().onboarding.tokenExact, tone: 'success' }
 }
 
 /** One quota source in step 3. Add a row here (plus its setting) to offer a new one. */
@@ -164,6 +148,7 @@ export function quotaSources(kind: DetectionCase = 'normal'): readonly QuotaSour
     { key: 'statusline', title: t.statuslineTitle, description: t.statuslineDesc, notes: statuslineNotes, help: t.statuslineHelp },
     { key: 'claudeOfficial', title: t.claudeTitle, description: t.claudeDesc, hint: t.claudeHint, notes: [], help: t.claudeHelp },
     { key: 'codexOfficial', title: t.codexTitle, description: t.codexDesc, notes: [], help: t.codexHelp },
+    { key: 'deepseekOfficial', title: m().deepseek.onboardingTitle, description: m().deepseek.onboardingBody, notes: [], help: t.deepseekHelp },
   ]
 }
 
@@ -181,6 +166,7 @@ export function quotaOutcome(
   const lines: QuotaLine[] = []
   if (selection.claudeOfficial) lines.push({ text: m().onboarding.claudeOutcome(quotaMessage(result.claude)), outcome: result.claude })
   if (selection.codexOfficial) lines.push({ text: m().onboarding.codexOutcome(quotaMessage(result.codex)), outcome: result.codex })
+  if (selection.deepseekOfficial && result.deepseek) lines.push({ text: m().onboarding.deepseekOutcome(quotaMessage(result.deepseek)), outcome: result.deepseek })
   return lines
 }
 

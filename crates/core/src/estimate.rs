@@ -19,10 +19,7 @@ pub const MIN_LEARN_COST_USD: f64 = 1.0;
 pub const MIN_LEARN_REQUESTS: usize = 5;
 
 fn cost(pricing: &Pricing, event: &UsageEvent) -> f64 {
-    pricing
-        .cost_usd(&event.model, &event.tokens)
-        .unwrap_or(0.0)
-        .max(0.0)
+    pricing.event_cost_usd(event).unwrap_or(0.0).max(0.0)
 }
 
 /// Percent per USD within the current window: the latest reading over the local spend

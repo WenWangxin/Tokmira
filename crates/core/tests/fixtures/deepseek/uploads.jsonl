@@ -1,0 +1,8 @@
+{"type":"session","version":4,"id":"upload-session","createdAt":"2026-11-02T01:00:00.000Z","cwd":"/sample/upload","isSeeded":false,"delegationDepth":0}
+{"type":"request/header","seq":1,"time":1793581200000,"data":{"header":{"config":{"model":"deepseek-flash","provider":"deepseek-account"}}}}
+{"type":"assistant/message","seq":2,"time":1793581201000,"data":{"turn":1,"step":1,"message":{"id":"official-1"},"usage":{"inputTokens":100,"outputTokens":10}}}
+{"type":"session/title-llm-request","seq":3,"time":1793581202000,"data":{"route":{"provider":"deepseek-account","model":"deepseek-flash"},"system":"not retained","messages":[{"content":"not retained"}],"maxTokens":64}}
+{"type":"session-log-deepseek/delivery-accepted","seq":4,"time":1793581203000,"data":{"sessionId":"upload-session","sessionFormatVersion":4,"throughSeq":3}}
+{"type":"request/header","seq":5,"time":1793581204000,"data":{"header":{"config":{"model":"deepseek-flash","provider":"my-gateway"}}}}
+{"type":"assistant/message","seq":6,"time":1793581205000,"data":{"turn":2,"step":1,"message":{"id":"custom-1"},"usage":{"inputTokens":50,"outputTokens":5}}}
+{"type":"session-log-deepseek/delivery-accepted","seq":7,"time":1793581206000,"data":{"sessionId":"upload-session","sessionFormatVersion":4,"throughSeq":6}}

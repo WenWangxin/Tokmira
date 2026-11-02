@@ -2,6 +2,7 @@
 
 #[cfg(target_os = "macos")]
 mod bundle_rename;
+mod deepseek;
 mod identity;
 mod login_item;
 mod notifications;
@@ -39,6 +40,8 @@ use token_audit_core::codex_app_server::{
     codex_candidates, read_codex_quota, resolve_launch, AppServerOptions, CodexQuotaError,
 };
 use token_audit_core::dashboard::{build_overview, Overview, OverviewInput};
+use token_audit_core::deepseek::{DeepSeekScan, DeepSeekScanner};
+use token_audit_core::deepseek_view::DeepSeekCosting;
 use token_audit_core::detect::{self, DetectedTool};
 use token_audit_core::environment::scan_environment;
 use token_audit_core::i18n::Lang;
@@ -58,6 +61,7 @@ use token_audit_core::usage::{list_usage_windows, usage_detail_lang, UsageDetail
 struct Scans {
     claude: ClaudeScan,
     codex: CodexScan,
+    deepseek: DeepSeekScan,
 }
 #[derive(Default)]
 struct RefreshClock {
@@ -69,6 +73,7 @@ struct RefreshClock {
     /// so a dismissed password dialog does not come back every minute.
     claude_awaits_user: bool,
     claude_needs_authorization: bool,
+    last_deepseek: Option<DateTime<Utc>>,
 }
 
 fn current_lang(data_dir: &std::path::Path) -> Lang {
@@ -190,15 +195,27 @@ struct AppState {
 }
 /// The latest scan plus the incremental scanners that produced it; a rescan only
 /// reparses log files that changed since the previous one.
-#[derive(Default)]
 struct ScanCache {
     claude: ClaudeScanner,
     codex: CodexScanner,
+    deepseek: DeepSeekScanner,
+    /// `$DSH_HOME` or `~/.dsh`, fixed at launch like the home folder.
+    deepseek_root: PathBuf,
     latest: Option<Scans>,
 }
 impl ScanCache {
+    fn new(deepseek_root: PathBuf) -> Self {
+        Self {
+            claude: ClaudeScanner::default(),
+            codex: CodexScanner::default(),
+            deepseek: DeepSeekScanner::default(),
+            deepseek_root,
+            latest: None,
+        }
+    }
+
     /// Rescans changed files and reports which tools' scans changed.
-    fn refresh(&mut self, home: &std::path::Path) -> Result<(bool, bool), String> {
+    fn refresh(&mut self, home: &std::path::Path) -> Result<realtime::Rescanned, String> {
         let claude = self
             .claude
             .scan(home)
@@ -207,12 +224,23 @@ impl ScanCache {
             .codex
             .scan(home)
             .map_err(|_| display_text("扫描 Codex 日志失败", "Could not scan Codex logs"))?;
+        let deepseek = self.deepseek.scan(&self.deepseek_root).map_err(|_| {
+            display_text(
+                "扫描 DeepSeek Harness 日志失败",
+                "Could not scan DeepSeek Harness logs",
+            )
+        })?;
         let first = self.latest.is_none();
-        self.latest = Some(Scans { claude, codex });
-        Ok((
-            first || self.claude.changed(),
-            first || self.codex.changed(),
-        ))
+        self.latest = Some(Scans {
+            claude,
+            codex,
+            deepseek,
+        });
+        Ok(realtime::Rescanned {
+            claude: first || self.claude.changed(),
+            codex: first || self.codex.changed(),
+            deepseek: first || self.deepseek.changed(),
+        })
     }
     fn current(&mut self, home: &std::path::Path) -> Result<&Scans, String> {
         if self.latest.is_none() {
@@ -306,9 +334,13 @@ async fn rescan(state: State<'_, AppState>) -> Result<ScanSummary, String> {
         guard.refresh(&home)?;
         let fresh = guard.current(&home)?;
         Ok(ScanSummary {
-            events: fresh.claude.events.len() + fresh.codex.events.len(),
+            events: fresh.claude.events.len()
+                + fresh.codex.events.len()
+                + fresh.deepseek.events.len(),
             prompts: fresh.claude.prompts.len() + fresh.codex.prompts.len(),
-            malformed_lines: fresh.claude.stats.malformed_lines + fresh.codex.stats.malformed_lines,
+            malformed_lines: fresh.claude.stats.malformed_lines
+                + fresh.codex.stats.malformed_lines
+                + fresh.deepseek.stats.malformed_lines,
         })
     })
     .await
@@ -325,6 +357,7 @@ struct ScanSummary {
 struct RefreshResult {
     claude: QuotaOutcome,
     codex: QuotaOutcome,
+    deepseek: QuotaOutcome,
 }
 fn proxy() -> Option<String> {
     ["HTTPS_PROXY", "https_proxy", "ALL_PROXY"]
@@ -352,6 +385,7 @@ fn refresh_sync(
     let mut result = RefreshResult {
         claude: QuotaOutcome::status(QuotaState::Off),
         codex: QuotaOutcome::status(QuotaState::Off),
+        deepseek: QuotaOutcome::status(QuotaState::Off),
     };
     if settings.claude_official_query {
         if let Some(reason) = claude_skip_reason(&clock, now, automatic) {
@@ -491,6 +525,10 @@ fn refresh_sync(
             };
         }
     }
+    if include_codex {
+        result.deepseek =
+            deepseek::refresh(state, &settings, &mut clock.last_deepseek, automatic, lang);
+    }
     Ok(result)
 }
 
@@ -512,7 +550,16 @@ async fn refresh_quotas(
 
 fn overview_sync(state: &AppState) -> Result<Overview, String> {
     with_usage(&state.home, &state.data_dir, &state.scans, |context| {
-        Ok(build_overview(context.input, context.now, chrono::Local))
+        let mut overview = build_overview(context.input, context.now, chrono::Local);
+        deepseek::fill_overview(
+            &mut overview,
+            &context.costing(),
+            context.deepseek,
+            &state.data_dir,
+            context.settings,
+            context.now,
+        );
+        Ok(overview)
     })
 }
 
@@ -552,10 +599,12 @@ async fn get_attribution(state: State<'_, AppState>) -> Result<Attribution, Stri
         let pricing = Pricing::bundled().map_err(config_error)?;
         let mut events = scans.claude.events;
         events.extend(scans.codex.events);
+        events.extend(scans.deepseek.events);
         let mut prompts = scans.claude.prompts;
         prompts.extend(scans.codex.prompts);
         let mut titles: BTreeMap<_, _> = scans.claude.titles;
         titles.extend(scans.codex.titles);
+        titles.extend(scans.deepseek.titles);
         Ok(attribute(
             &events,
             &prompts,
@@ -576,7 +625,14 @@ struct UsageContext<'a> {
     prompts: &'a [PromptEvent],
     compactions: &'a [CompactEvent],
     settings: &'a AppSettings,
+    /// Its requests are also in `input.events`; this keeps what yuan pricing needs.
+    deepseek: &'a DeepSeekScan,
     now: DateTime<Utc>,
+}
+impl UsageContext<'_> {
+    fn costing(&self) -> DeepSeekCosting<'_> {
+        DeepSeekCosting::new(self.deepseek, &self.input.pricing.deepseek)
+    }
 }
 
 #[tauri::command]
@@ -659,11 +715,13 @@ async fn detect_tools(state: State<'_, AppState>) -> Result<Vec<DetectedTool>, S
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
         with_usage(&home, &data_dir, &cached, |context| {
-            Ok(detect::detect_tools(
+            let mut tools = detect::detect_tools(
                 context.input.events,
                 context.input.codex_log,
                 context.input.claude_snapshots,
-            ))
+            );
+            tools.push(deepseek::detected(context.deepseek, context.home));
+            Ok(tools)
         })
     })
     .await
@@ -700,11 +758,19 @@ fn with_usage<R>(
     compactions.extend(scans.codex.compactions);
     let mut events = scans.claude.events;
     events.extend(scans.codex.events);
+    events.extend(scans.deepseek.events.iter().cloned());
     let now = Utc::now();
     let mut prompts = scans.claude.prompts;
     prompts.extend(scans.codex.prompts);
     let mut titles: BTreeMap<_, _> = scans.claude.titles;
     titles.extend(scans.codex.titles);
+    titles.extend(
+        scans
+            .deepseek
+            .titles
+            .iter()
+            .map(|(id, title)| (id.clone(), title.clone())),
+    );
     let attribution = attribute(
         &events,
         &prompts,
@@ -730,6 +796,7 @@ fn with_usage<R>(
         prompts: &prompts,
         compactions: &compactions,
         settings: &settings,
+        deepseek: &scans.deepseek,
         now,
     })
 }
@@ -813,6 +880,7 @@ struct DirectoryStatus {
 struct AppEnvironment {
     claude_logs: DirectoryStatus,
     codex_logs: DirectoryStatus,
+    deepseek_logs: DirectoryStatus,
     data_dir: PathBuf,
     pricing_version: String,
     pricing_note: String,
@@ -825,7 +893,12 @@ fn get_environment(state: State<'_, AppState>) -> Result<AppEnvironment, String>
     let advice = AdviceConfig::bundled().map_err(config_error)?;
     let claude_logs = state.home.join(".claude").join("projects");
     let codex_logs = state.home.join(".codex").join("sessions");
+    let deepseek_logs = deepseek::root(&state.home).join("sessions");
     Ok(AppEnvironment {
+        deepseek_logs: DirectoryStatus {
+            exists: deepseek_logs.exists(),
+            path: deepseek_logs,
+        },
         claude_logs: DirectoryStatus {
             exists: claude_logs.exists(),
             path: claude_logs,
@@ -944,7 +1017,9 @@ async fn get_sessions(state: State<'_, AppState>, days: u32) -> Result<Vec<Sessi
     let cached = Arc::clone(&state.scans);
     tauri::async_runtime::spawn_blocking(move || {
         with_usage(&home, &data_dir, &cached, |context| {
-            Ok(list_sessions(&session_input(context), days, context.now))
+            let mut rows = list_sessions(&session_input(context), days, context.now);
+            deepseek::fill_rows(&mut rows, &context.costing());
+            Ok(rows)
         })
     })
     .await
@@ -979,14 +1054,16 @@ async fn get_session_detail(
                 context.settings.language.resolve(sys_locale::get_locale),
             )
             .event_tags;
-            session_detail(
+            let mut detail = session_detail(
                 &session_input(context),
                 context.prompts,
                 &tags,
                 tool,
                 &session_id,
             )
-            .ok_or_else(|| display_text("未找到该会话", "Session not found"))
+            .ok_or_else(|| display_text("未找到该会话", "Session not found"))?;
+            deepseek::fill_detail(&mut detail, &context.costing());
+            Ok(detail)
         })
     })
     .await
@@ -1026,12 +1103,12 @@ struct LiveUpdates {
 }
 
 impl realtime::Sink for LiveUpdates {
-    fn rescan(&self) -> (bool, bool) {
+    fn rescan(&self) -> realtime::Rescanned {
         self.scans
             .lock()
             .ok()
             .and_then(|mut cache| cache.refresh(&self.home).ok())
-            .unwrap_or((false, false))
+            .unwrap_or_default()
     }
 
     fn notify(&self, change: realtime::UsageChanged) {
@@ -1309,7 +1386,8 @@ fn main() -> tauri::Result<()> {
             if handle_bundle_rename(app, &home, &data_dir) {
                 return Ok(());
             }
-            let scans = Arc::new(Mutex::new(ScanCache::default()));
+            let deepseek_root = deepseek::root(&home);
+            let scans = Arc::new(Mutex::new(ScanCache::new(deepseek_root.clone())));
             let alerts = spawn_alerts(
                 app.handle().clone(),
                 home.clone(),
@@ -1318,6 +1396,7 @@ fn main() -> tauri::Result<()> {
             );
             realtime::spawn(
                 home.clone(),
+                deepseek_root,
                 data_dir.clone(),
                 LiveUpdates {
                     app: app.handle().clone(),
@@ -1374,6 +1453,10 @@ fn main() -> tauri::Result<()> {
             get_attribution,
             get_usage_windows,
             get_usage_detail,
+            deepseek::get_deepseek_usage,
+            deepseek::get_deepseek_advice,
+            deepseek::refresh_deepseek_balance,
+            deepseek::open_deepseek_top_up,
             get_advice,
             get_sessions,
             get_session_detail,

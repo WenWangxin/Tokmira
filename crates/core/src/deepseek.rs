@@ -28,12 +28,43 @@ pub struct DeepSeekScanStats {
     pub custom_route_events: u64,
 }
 
+/// A billed request Harness makes to name a session. The log records no usage
+/// for it, so only its size is kept, never its content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DeepSeekTitleCall {
+    pub session_id: String,
+    pub timestamp: DateTime<Utc>,
+    pub model: String,
+    pub provider: Option<String>,
+    pub bytes: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct DeepSeekScan {
     pub events: Vec<UsageEvent>,
     pub titles: BTreeMap<String, String>,
     pub session_providers: BTreeMap<String, BTreeSet<String>>,
+    pub title_calls: Vec<DeepSeekTitleCall>,
+    /// Sessions whose log Harness uploaded to DeepSeek, with the accepted uploads.
+    pub uploads: BTreeMap<String, u64>,
+    /// Requests sent through a route other than DeepSeek's own, by session and time;
+    /// their tokens are exact but official prices do not apply.
+    pub custom_route: BTreeSet<(String, DateTime<Utc>)>,
     pub stats: DeepSeekScanStats,
+}
+
+/// Whether a provider id is one of DeepSeek's own billed routes.
+#[must_use]
+pub fn is_official_route(provider: Option<&str>) -> bool {
+    matches!(provider, Some("deepseek-account" | "deepseek-official"))
+}
+
+impl DeepSeekScan {
+    #[must_use]
+    pub fn is_custom_route(&self, event: &UsageEvent) -> bool {
+        self.custom_route
+            .contains(&(event.session_id.clone(), event.timestamp))
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -113,6 +144,14 @@ struct Data {
     message: Option<Message>,
     header: Option<RequestHeader>,
     title: Option<String>,
+    route: Option<Route>,
+}
+
+/// Only the route of a title request; its system prompt and messages are skipped.
+#[derive(Clone, Deserialize)]
+struct Route {
+    provider: Option<String>,
+    model: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -219,6 +258,8 @@ struct FileScan {
     active: BTreeMap<(i64, i64), usize>,
     providers: BTreeSet<String>,
     title: Option<String>,
+    title_calls: Vec<(DateTime<Utc>, Route, u64)>,
+    uploads: u64,
     current_model: Option<String>,
     current_effort: Option<String>,
     current_provider: Option<String>,
@@ -277,6 +318,24 @@ impl FileScan {
         if kind == "session/title-llm-request" {
             // Every title request is billed, including re-titles later in the session.
             self.stats.title_requests += 1;
+            self.stats.non_usage_lines += 1;
+            if let Ok(raw) = serde_json::from_slice::<Line>(line) {
+                let route = raw.data.and_then(|data| data.route);
+                if let Some(at) = raw.time.and_then(DateTime::<Utc>::from_timestamp_millis) {
+                    self.title_calls.push((
+                        at,
+                        route.unwrap_or(Route {
+                            provider: None,
+                            model: None,
+                        }),
+                        line.len() as u64,
+                    ));
+                }
+            }
+            return;
+        }
+        if kind == "session-log-deepseek/delivery-accepted" {
+            self.uploads += 1;
             self.stats.non_usage_lines += 1;
             return;
         }
@@ -543,17 +602,29 @@ impl DeepSeekScanner {
                     .or_default()
                     .extend(file.providers.iter().cloned());
                 for slot in &file.slots {
-                    if !matches!(
-                        slot.provider.as_deref(),
-                        Some("deepseek-account" | "deepseek-official")
-                    ) {
+                    if !is_official_route(slot.provider.as_deref()) {
                         scan.stats.custom_route_events += 1;
+                        scan.custom_route
+                            .insert((slot.event.session_id.clone(), slot.event.timestamp));
                     }
                     scan.events.push(slot.event.clone());
+                }
+                for (at, route, bytes) in &file.title_calls {
+                    scan.title_calls.push(DeepSeekTitleCall {
+                        session_id: header.id.clone(),
+                        timestamp: *at,
+                        model: route.model.clone().unwrap_or_default(),
+                        provider: route.provider.clone(),
+                        bytes: *bytes,
+                    });
+                }
+                if file.uploads > 0 {
+                    *scan.uploads.entry(header.id.clone()).or_default() += file.uploads;
                 }
             }
         }
         scan.events.sort_by_key(|event| event.timestamp);
+        scan.title_calls.sort_by_key(|call| call.timestamp);
         Ok(scan)
     }
 }

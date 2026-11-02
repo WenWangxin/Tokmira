@@ -135,7 +135,13 @@ pub(crate) fn directory_name(value: &str) -> String {
 /// Untitled sessions (e.g. `codex exec`) often share a project, so the fallback
 /// keeps the short session ID next to the project name to tell them apart.
 pub(crate) fn session_display_name(id: &str, title: Option<&str>, project: Option<&str>) -> String {
-    let short_id: String = id.chars().take(8).collect();
+    // DeepSeek Harness ids all start with "session-"; keep the part that differs.
+    let short_id: String = id
+        .strip_prefix("session-")
+        .unwrap_or(id)
+        .chars()
+        .take(8)
+        .collect();
     title
         .filter(|title| !title.trim().is_empty())
         .map(str::to_owned)

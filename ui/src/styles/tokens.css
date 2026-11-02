@@ -26,6 +26,7 @@
   --on-error-container: #ffd2cd;
   --tool-claude: #e08a62;
   --tool-codex: #3cc3a6;
+  --tool-deepseek: #9d8cff;
   --data-unattributed: #5a5a63;
 }
 
@@ -96,6 +97,7 @@
     --on-error-container: #7a1611;
     --tool-claude: #c96a42;
     --tool-codex: #13937a;
+    --tool-deepseek: #6d4fd8;
     --data-unattributed: #c4c7cf;
   }
 }
@@ -127,5 +129,6 @@
   --on-error-container: #7a1611;
   --tool-claude: #c96a42;
   --tool-codex: #13937a;
+  --tool-deepseek: #6d4fd8;
   --data-unattributed: #c4c7cf;
 }

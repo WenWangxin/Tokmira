@@ -94,6 +94,8 @@ pub struct SessionOverview {
     pub tokens: TokenCounts,
     pub total_tokens: u64,
     pub cache_hit_rate: Option<f64>,
+    /// DeepSeek Harness only, filled in by the caller from its yuan prices.
+    pub estimated_cost_cny: Option<f64>,
     /// Percentage points attributed to this session in the current five-hour window only.
     pub five_hour_delta: f64,
     /// Sum of percentage points across weekly windows; each share is relative to its own week.
@@ -179,6 +181,8 @@ pub struct Overview {
     /// `[quota_hit] threshold_pct` from `config/advice.toml`: the dashboard pins a card
     /// once the latest real reading (without the estimate) reaches it.
     pub quota_hit_threshold_pct: Option<f64>,
+    /// The DeepSeek Harness balance card; filled in by the caller, which holds its scan.
+    pub deepseek: Option<crate::deepseek_view::DeepSeekOverview>,
 }
 fn cache_hit(tokens: &TokenCounts) -> Option<f64> {
     let denominator = tokens.input as u128
@@ -432,12 +436,10 @@ pub fn build_overview<Tz: TimeZone>(
             yesterday_tokens.add_saturating(&event.tokens);
         }
         if date.year() == today.year() && date.month() == today.month() {
-            let cost = input
-                .pricing
-                .cost_usd(&event.model, &event.tokens)
-                .unwrap_or(0.0);
+            let cost = input.pricing.event_cost_usd(event).unwrap_or(0.0);
             *daily_cost.entry(date).or_default() += cost;
-            if !event.tokens.is_zero() {
+            // Dollars per subscription; DeepSeek Harness spends yuan from a wallet.
+            if !event.tokens.is_zero() && event.tool != Tool::DeepSeek {
                 *month_cost_by_tool.entry(event.tool).or_default() += cost;
             }
         }
@@ -445,10 +447,8 @@ pub fn build_overview<Tz: TimeZone>(
             continue;
         }
         let key = (event.tool, event.session_id.clone());
-        *session_costs.entry(key.clone()).or_default() += input
-            .pricing
-            .cost_usd(&event.model, &event.tokens)
-            .unwrap_or(0.0);
+        *session_costs.entry(key.clone()).or_default() +=
+            input.pricing.event_cost_usd(event).unwrap_or(0.0);
         let group = sessions.entry(key).or_insert_with(|| SessionOverview {
             tool: event.tool,
             session_id: event.session_id.clone(),
@@ -460,6 +460,7 @@ pub fn build_overview<Tz: TimeZone>(
             tokens: TokenCounts::default(),
             total_tokens: 0,
             cache_hit_rate: None,
+            estimated_cost_cny: None,
             five_hour_delta: 0.0,
             weekly_delta: 0.0,
             first_at: event.timestamp,
@@ -781,5 +782,6 @@ pub fn build_overview<Tz: TimeZone>(
         quota_hit_threshold_pct: AdviceConfig::bundled()
             .ok()
             .map(|config| config.quota_hit.threshold_pct),
+        deepseek: None,
     }
 }

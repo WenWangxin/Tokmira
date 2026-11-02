@@ -29,6 +29,10 @@ export function adviceLabel(key: string): string {
   const separator = key.indexOf(':')
   const tool = separator === -1 ? key : key.slice(0, separator)
   const id = separator === -1 ? '' : key.slice(separator + 1)
+  if (tool === 'deepseek') {
+    const tips = m().deepseek.tips as Record<string, { title: string } | undefined>
+    return `DeepSeek · ${tips[id]?.title ?? (id || key)}`
+  }
   const toolName = tool === 'claude' ? 'Claude' : tool === 'codex' ? 'Codex' : tool
   const title = m().advice.titles[id] ?? (id || key)
   return `${toolName} · ${title}`

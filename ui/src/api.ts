@@ -10,12 +10,15 @@ const isPreview = () => import.meta.env.DEV && !('__TAURI_INTERNALS__' in window
 let previewSettings: AppSettings = clonePreview(mockSettings)
 let previewRecorder: RecorderStatus = clonePreview(mockRecorderStatus)
 
-export type Tool = 'Claude' | 'Codex'
-export type Source = 'ClaudeCli' | 'ClaudeDesktop' | 'CodexCli' | 'CodexDesktop' | 'Unknown'
+export type Tool = 'Claude' | 'Codex' | 'DeepSeek'
+/** Tools with 5-hour and weekly quota windows; DeepSeek Harness spends a prepaid wallet instead. */
+export type QuotaTool = 'Claude' | 'Codex'
+export type Source = 'ClaudeCli' | 'ClaudeDesktop' | 'CodexCli' | 'CodexDesktop' | 'DeepSeek' | 'Unknown'
 export type Origin = 'Official' | 'Statusline' | 'Log' | 'Manual' | 'Estimated'
 export type Theme = 'system' | 'light' | 'dark'
 export type Language = 'system' | 'zh' | 'en'
 export type CredentialPreference = 'Auto' | 'ClaudeDesktop' | 'ClaudeCode'
+export type DeepSeekCredential = 'Auto' | 'Account' | 'ApiKey'
 export type Forecast = { WillHit: { at: string } } | 'Ample' | 'Unknown'
 
 export interface TokenCounts {
@@ -52,7 +55,66 @@ export interface AppSettings {
   /** Written by the backend only. */
   update_last_checked_at: string | null
   update_notified_version: string | null
+  /** Off by default: one of the three allowed network requests. */
+  deepseek_balance_query: boolean
+  deepseek_credential: DeepSeekCredential
+  /** Typed in by hand while the query is off; estimated spend since is taken off. */
+  deepseek_manual_balance: ManualBalance | null
 }
+
+export interface ManualBalance { amount: number; recorded_at: string }
+export interface DeepSeekBalance {
+  total: number
+  /** Null for a manual reading, which only knows the total. */
+  topped_up: number | null
+  granted: number | null
+  origin: 'Official' | 'Manual'
+  as_of: string
+  spent_since: number | null
+}
+/** Yuan; DeepSeek Harness has no quota windows. */
+export interface DeepSeekOverview {
+  today_cost: number
+  today_requests: number
+  daily_average: number
+  days_left: number | null
+  balance: DeepSeekBalance | null
+  low_balance: boolean
+  unpriced_requests: number
+}
+export type DeepSeekPeriod = 'today' | 'week' | 'month'
+export interface CostRank { key: string; name: string; project_name: string; tokens: number; requests: number; cost: number }
+export interface CostRequest { at: string; session_id: string; title: string; model: string; tokens: number; cost: number }
+export interface DeepSeekUsage {
+  period: DeepSeekPeriod
+  start: string
+  end: string
+  cost: number
+  requests: number
+  tokens: TokenCounts
+  cache_hit_rate: number | null
+  title_cost: number
+  title_requests: number
+  unpriced_requests: number
+  sessions: CostRank[]
+  projects: CostRank[]
+  models: CostRank[]
+  subagents: CostRank[]
+  high_requests: CostRequest[]
+  overview: DeepSeekOverview
+}
+export type DeepSeekTipKind = 'log_upload' | 'title_requests' | 'cold_start'
+export interface DeepSeekTip {
+  key: string
+  kind: DeepSeekTipKind
+  sessions: number
+  requests: number
+  tokens: number
+  cost_per_day: number
+  saving_per_day: number
+  model: string | null
+}
+export interface DeepSeekAdvice { period_days: number; saving_per_day: number; sessions: number; tips: DeepSeekTip[] }
 
 /** A background reminder from the advice rules, sent while the window has focus. */
 export interface AdviceAlert {
@@ -105,6 +167,8 @@ export interface SessionOverview {
   tokens: TokenCounts
   total_tokens: number
   cache_hit_rate: number | null
+  /** DeepSeek Harness only. */
+  estimated_cost_cny: number | null
   five_hour_delta: number
   weekly_delta: number
   first_at: string
@@ -152,6 +216,8 @@ export interface Overview {
   summary: { sessions: number; requests: number; high_prompts: number }
   /** `[quota_hit] threshold_pct` from `config/advice.toml`; older caches lack it. */
   quota_hit_threshold_pct?: number | null
+  /** The DeepSeek Harness balance card; absent when it has no data and no balance source. */
+  deepseek?: DeepSeekOverview | null
 }
 
 export type WindowKind = 'FiveHour' | 'Weekly'
@@ -273,7 +339,7 @@ export interface ScanSummary { events: number; prompts: number; malformed_lines:
 /** What happened to one official quota query; `error` carries the backend's message. */
 export type QuotaState = 'off' | 'updated' | 'needs_authorization' | 'backoff' | 'recent' | 'error' | 'preview'
 export interface QuotaOutcome { state: QuotaState; message: string }
-export interface RefreshResult { claude: QuotaOutcome; codex: QuotaOutcome }
+export interface RefreshResult { claude: QuotaOutcome; codex: QuotaOutcome; deepseek?: QuotaOutcome }
 export interface DirectoryStatus { path: string; exists: boolean }
 export interface DetectedTool {
   source: Source
@@ -281,11 +347,14 @@ export interface DetectedTool {
   requests: number
   last_used_at: string | null
   plan: string | null
+  /** DeepSeek Harness only: which of its apps are installed. */
+  install?: { desktop: boolean; cli: boolean } | null
 }
 
 export interface EnvironmentInfo {
   claude_logs: DirectoryStatus
   codex_logs: DirectoryStatus
+  deepseek_logs?: DirectoryStatus
   data_dir: string
   pricing_version: string
   pricing_note: string
@@ -325,6 +394,7 @@ export async function refreshQuotas(automatic = false): Promise<RefreshResult> {
     ? {
         claude: { state: previewSettings.claude_official_query ? 'preview' as const : 'off' as const, message: '' },
         codex: { state: previewSettings.codex_app_server ? 'preview' as const : 'off' as const, message: '' },
+        deepseek: { state: previewSettings.deepseek_balance_query ? 'preview' as const : 'off' as const, message: '' },
       }
     : await invoke<RefreshResult>('refresh_quotas', { automatic })
   noteQuotaResult(result)
@@ -344,6 +414,28 @@ export const getOverview = () =>
     ? developmentOverview()
     : invoke<Overview>('get_overview')
 export const getAttribution = () => invoke<Attribution>('get_attribution')
+const DEEPSEEK_TOP_UP_URL = 'https://platform.deepseek.com/top_up'
+/** The webview does not open new windows itself, so the desktop app opens the browser. */
+export const openDeepSeekTopUp = () =>
+  isPreview()
+    ? Promise.resolve(void window.open(DEEPSEEK_TOP_UP_URL, '_blank', 'noopener'))
+    : invoke<void>('open_deepseek_top_up')
+/** Only the DeepSeek balance, for its settings switch; Claude and Codex are left alone. */
+export const refreshDeepSeekBalance = (): Promise<QuotaOutcome> =>
+  isPreview()
+    ? Promise.resolve({ state: previewSettings.deepseek_balance_query ? 'preview' : 'off', message: '' })
+    : invoke<QuotaOutcome>('refresh_deepseek_balance')
+export const getDeepSeekUsage = async (period: DeepSeekPeriod) => {
+  if (!isPreview()) return invoke<DeepSeekUsage>('get_deepseek_usage', { period })
+  const { mockDeepSeekUsage } = await import('./mocks/deepseek')
+  return mockDeepSeekUsage(period, new URLSearchParams(window.location.search).get('mock'))
+}
+export const getDeepSeekAdvice = async (periodDays: 7 | 30) => {
+  if (!isPreview()) return invoke<DeepSeekAdvice>('get_deepseek_advice', { periodDays })
+  const { mockDeepSeekAdvice } = await import('./mocks/deepseek')
+  const advice = mockDeepSeekAdvice(periodDays, new URLSearchParams(window.location.search).get('mock'))
+  return { ...advice, tips: advice.tips.filter(tip => !previewSettings.dismissed_advice.includes(tip.key)) }
+}
 const usageFiles = import.meta.glob<{ default: UsageResponse }>('../.local/usage-*.json')
 async function developmentUsage(tool: Tool): Promise<UsageResponse> {
   const { mockUsage } = await import('./mocks/usage')
@@ -577,6 +669,8 @@ export interface SessionRow {
   total_tokens: number
   cache_hit_rate: number | null
   estimated_cost_usd: number
+  /** DeepSeek Harness only, in yuan. */
+  estimated_cost_cny: number | null
   weekly_delta: number
   first_at: string
   last_at: string
@@ -608,6 +702,8 @@ export interface SessionDetail {
   total_tokens: number
   cache_hit_rate: number | null
   estimated_cost_usd: number
+  /** DeepSeek Harness only, in yuan. */
+  estimated_cost_cny: number | null
   weekly_delta: number
   has_quota_data: boolean
   first_at: string

@@ -6,6 +6,8 @@ pub mod codex;
 pub mod codex_app_server;
 pub mod dashboard;
 pub mod deepseek;
+pub mod deepseek_balance;
+pub mod deepseek_view;
 pub mod detect;
 pub mod environment;
 pub mod estimate;

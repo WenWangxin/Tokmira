@@ -30,6 +30,6 @@ export function invalidatePageCache(...groups: PageCacheGroup[]): void {
 
 export const pageSelection = {
   advice: { tool: null as Tool | null, period: 7 as 7 | 30 },
-  usage: { tool: null as Tool | null, windowIds: {} as Partial<Record<Tool, string>>, dimension: 'sessions' as 'sessions' | 'projects' | 'models' | 'subagents' },
+  usage: { tool: null as Tool | null, windowIds: {} as Partial<Record<Tool, string>>, dimension: 'sessions' as 'sessions' | 'projects' | 'models' | 'subagents', deepseekPeriod: 'today' as 'today' | 'week' | 'month' },
   sessions: { query: '', toolFilter: 'all' as 'all' | Tool, visibleCount: 50 },
 }

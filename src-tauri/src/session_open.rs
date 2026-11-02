@@ -267,12 +267,12 @@ fn osascript(script: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn open_url(url: &str) -> bool {
+pub(crate) fn open_url(url: &str) -> bool {
     run("open", &[url]).is_some()
 }
 
 #[cfg(windows)]
-fn open_url(url: &str) -> bool {
+pub(crate) fn open_url(url: &str) -> bool {
     // Explorer hands the link to its registered app; links are built from checked ids.
     Command::new("explorer.exe").arg(url).spawn().is_ok()
 }

@@ -215,12 +215,7 @@ pub fn attribute(
                             .collect();
                         let priced: Vec<f64> = eligible
                             .iter()
-                            .map(|&i| {
-                                pricing
-                                    .cost_usd(&events[i].model, &events[i].tokens)
-                                    .unwrap_or(0.0)
-                                    .max(0.0)
-                            })
+                            .map(|&i| pricing.event_cost_usd(&events[i]).unwrap_or(0.0).max(0.0))
                             .collect();
                         let priced_sum: f64 = priced.iter().copied().sum();
                         let weights: Vec<f64> = if priced_sum > 0.0 {

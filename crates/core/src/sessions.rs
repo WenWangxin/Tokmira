@@ -34,6 +34,8 @@ pub struct SessionRow {
     pub total_tokens: u64,
     pub cache_hit_rate: Option<f64>,
     pub estimated_cost_usd: f64,
+    /// DeepSeek Harness only, filled in by the caller from its yuan prices.
+    pub estimated_cost_cny: Option<f64>,
     pub weekly_delta: f64,
     pub first_at: DateTime<Utc>,
     pub last_at: DateTime<Utc>,
@@ -80,6 +82,8 @@ pub struct SessionDetail {
     pub total_tokens: u64,
     pub cache_hit_rate: Option<f64>,
     pub estimated_cost_usd: f64,
+    /// DeepSeek Harness only, filled in by the caller from its yuan prices.
+    pub estimated_cost_cny: Option<f64>,
     pub weekly_delta: f64,
     /// True when this tool has any positive weekly attribution in `input.events`.
     pub has_quota_data: bool,
@@ -154,10 +158,7 @@ fn facts(
     let mut last_at = first_at;
     for event in events {
         tokens.add_saturating(&event.event.tokens);
-        estimated_cost_usd += input
-            .pricing
-            .cost_usd(&event.event.model, &event.event.tokens)
-            .unwrap_or(0.0);
+        estimated_cost_usd += input.pricing.event_cost_usd(&event.event).unwrap_or(0.0);
         weekly_delta += event.weekly_delta;
         first_at = first_at.min(event.event.timestamp);
         last_at = last_at.max(event.event.timestamp);
@@ -252,6 +253,7 @@ pub fn list_sessions(input: &SessionInput<'_>, days: u32, now: DateTime<Utc>) ->
             total_tokens: facts.total_tokens,
             cache_hit_rate: facts.cache_hit_rate,
             estimated_cost_usd: facts.estimated_cost_usd,
+            estimated_cost_cny: None,
             weekly_delta: facts.weekly_delta,
             first_at: facts.first_at,
             last_at: facts.last_at,
@@ -388,6 +390,7 @@ pub fn session_detail(
         total_tokens: facts.total_tokens,
         cache_hit_rate: facts.cache_hit_rate,
         estimated_cost_usd: facts.estimated_cost_usd,
+        estimated_cost_cny: None,
         weekly_delta: facts.weekly_delta,
         has_quota_data,
         first_at: facts.first_at,

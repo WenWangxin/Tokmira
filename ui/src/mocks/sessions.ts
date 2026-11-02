@@ -26,8 +26,9 @@ function row(
   const display = title?.trim() ? title : projectName ? `${projectName} · ${sessionId.slice(0, 8)}` : sessionId.slice(0, 8)
   return {
     tool, session_id: sessionId, title, display_name: display, project, project_name: projectName, source, model,
-    requests, total_tokens: total, cache_hit_rate: hit, estimated_cost_usd: cost, weekly_delta: weekly,
-    first_at: day(-2), last_at: day(0), has_quota_data: true,
+    requests, total_tokens: total, cache_hit_rate: hit, estimated_cost_usd: tool === 'DeepSeek' ? 0 : cost,
+    estimated_cost_cny: tool === 'DeepSeek' ? cost : null, weekly_delta: weekly,
+    first_at: day(-2), last_at: day(0), has_quota_data: tool !== 'DeepSeek',
   }
 }
 
@@ -41,6 +42,7 @@ export function mockSessions(): SessionRow[] {
     row('Codex', 'sample-codex-06', '排查前端白屏', 'CodexDesktop', '/sample/gaobao-front', 'gpt-6-sol', 9, 490_000, 0.59, 3.4, 3.1),
     row('Claude', 'sample-claude-07', '修 CI 报错', 'ClaudeDesktop', '/sample/gaobao-api', 'claude-sonnet-5-5', 8, 220_000, 0.66, 1.7, 1.2),
     row('Codex', 'abcd1234-exec', null, 'CodexCli', '/sample/gaobao-api', 'gpt-6-sol', 3, 80_000, 0.22, 0.4, 0.6),
+    row('DeepSeek', 'session-sample-ds-09', 'hello', 'DeepSeek', '/sample/default-workspace', 'deepseek-flash', 1, 9_105, 0, 0, 0.0094),
   ]
 }
 

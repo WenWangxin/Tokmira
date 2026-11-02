@@ -147,3 +147,26 @@
 .source-action-primary { background: var(--primary); color: var(--on-primary); }
 .source-action-primary:hover { background: color-mix(in srgb, var(--primary) 88%, var(--on-primary)); }
 .source-action:disabled { opacity: .55; cursor: default; }
+
+/* DeepSeek Harness balance card: a prepaid wallet in yuan, so no quota ring. */
+.balance-card { grid-column: 1 / -1; min-height: 0; }
+.balance-card .quota-top { flex-wrap: wrap; }
+.balance-top-up { gap: 5px; margin: 0 0 0 auto; font-size: 13px; font-weight: 500; }
+.balance-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: end; gap: 20px; }
+.balance-main { display: flex; flex-direction: column; min-width: 0; }
+.balance-number { display: flex; align-items: baseline; }
+.balance-number .balance-currency { margin: 0 6px 0 0; color: var(--on-surface-variant); font-size: 18px; font-weight: 600; }
+.balance-number.balance-empty { color: var(--on-surface-variant); }
+.balance-bar { display: flex; gap: 2px; overflow: hidden; width: min(100%, 380px); height: 6px; margin-top: 12px; border-radius: 3px; background: var(--surface-container-high); }
+.balance-bar span { height: 100%; border-radius: 3px; transition: width var(--motion-medium) var(--motion-emphasized, ease); }
+.balance-topped { background: var(--tool-deepseek); }
+.balance-granted { background: color-mix(in srgb, var(--tool-deepseek) 55%, transparent); }
+.balance-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; color: var(--on-surface-variant); font-size: 11px; }
+.balance-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.balance-legend i { width: 7px; height: 7px; border-radius: 50%; }
+.balance-note { margin: 8px 0 0; color: var(--on-surface-muted); font-size: 11px; }
+.balance-facts { margin-top: 0; }
+.balance-facts .balance-enable { margin-top: 2px; font-size: 11px; }
+@media (max-width: 1150px) {
+  .balance-body { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+}

@@ -1,4 +1,4 @@
-import type { Tool, UsageWindowRef } from './api.ts'
+import type { QuotaTool, Tool, UsageWindowRef } from './api.ts'
 
 export type UsageLink = { tool?: unknown; window?: unknown }
 
@@ -18,10 +18,11 @@ export function resolveUsageSelection(
   link: UsageLink | null,
   currentTool: Tool,
   savedWindowIds: Partial<Record<Tool, string>>,
-  windows: Record<Tool, UsageWindowRef[]>,
-): { tool: Tool; window: UsageWindowRef | null } {
+  windows: Record<QuotaTool, UsageWindowRef[]>,
+): { tool: QuotaTool; window: UsageWindowRef | null } {
   const requestedTool = link?.tool === 'Claude' || link?.tool === 'Codex' ? link.tool : null
-  const preferredTool = requestedTool ?? currentTool
+  // DeepSeek Harness has no quota windows; its page view is chosen outside this logic.
+  const preferredTool: QuotaTool = requestedTool ?? (currentTool === 'Codex' ? 'Codex' : 'Claude')
   const otherTool = preferredTool === 'Claude' ? 'Codex' : 'Claude'
   const tool = windows[preferredTool].length ? preferredTool : windows[otherTool].length ? otherTool : preferredTool
   const available = windows[tool]

@@ -21,13 +21,17 @@ export const mockSettings: AppSettings = {
   auto_check_updates: false,
   update_last_checked_at: null,
   update_notified_version: null,
+  deepseek_balance_query: false,
+  deepseek_credential: 'Auto',
+  deepseek_manual_balance: { amount: 90, recorded_at: '2026-10-30T13:05:00.000Z' },
 }
 
 export const mockEnvironment: EnvironmentInfo = {
   claude_logs: { path: '/Users/preview/.claude/projects', exists: true },
   codex_logs: { path: '/Users/preview/.codex/sessions', exists: false },
+  deepseek_logs: { path: '/Users/preview/.dsh/sessions', exists: true },
   data_dir: '/Users/preview/Library/Application Support/token-audit',
-  pricing_version: '2026-10-24',
+  pricing_version: '2026-11-02',
   pricing_note: '仅供估算，非实际账单；claude-haiku-5-5 仅按 10 万 token 以内价格计算，不计长上下文加价。',
   advice_version: '2026-10-24',
   backup_dir: '/Users/preview/Library/Application Support/token-audit/recorder/backups',

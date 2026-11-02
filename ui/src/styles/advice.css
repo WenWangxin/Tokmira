@@ -51,3 +51,7 @@
 @media (max-width: 1100px) { .advice-head-controls { flex-wrap: wrap; } .advice-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } .advice-stat { gap: 8px; padding: 14px; } }
 @media (max-width: 1100px) { .advice-page { width: calc(100% + 8px); margin: -14px -4px 0; } }
 .advice-items { position: relative; display: grid; gap: 16px; }
+
+/* DeepSeek Harness privacy notice: information, not waste. */
+.advice-info { background: var(--primary-container); color: var(--on-primary-container); }
+.pill-info { background: var(--primary-container); color: var(--on-primary-container); }

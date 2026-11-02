@@ -23,12 +23,21 @@ pub enum Change {
     CodexLogs,
     ClaudeRecords,
     CodexRecords,
+    DeepSeekLogs,
+    DeepSeekRecords,
 }
 
 /// Which tool's data a changed path belongs to; `None` for anything else.
-pub fn classify(path: &Path, home: &Path, data_dir: &Path) -> Option<Change> {
+pub fn classify(path: &Path, home: &Path, deepseek: &Path, data_dir: &Path) -> Option<Change> {
     if path.starts_with(home.join(".claude/projects")) {
         return Some(Change::ClaudeLogs);
+    }
+    if path.starts_with(deepseek.join("sessions")) {
+        return path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".jsonl.zstd"))
+            .then_some(Change::DeepSeekLogs);
     }
     let codex = home.join(".codex");
     if path.starts_with(codex.join("sessions"))
@@ -47,6 +56,7 @@ pub fn classify(path: &Path, home: &Path, data_dir: &Path) -> Option<Change> {
         return match name {
             "claude.jsonl" => Some(Change::ClaudeRecords),
             "codex.jsonl" | "codex-daily.json" => Some(Change::CodexRecords),
+            "deepseek.json" => Some(Change::DeepSeekRecords),
             _ => None,
         };
     }
@@ -107,10 +117,18 @@ pub struct UsageChanged {
     pub claude_logs: bool,
 }
 
+/// Which tools' scans a rescan changed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Rescanned {
+    pub claude: bool,
+    pub codex: bool,
+    pub deepseek: bool,
+}
+
 /// What the watcher needs from the app: rescan the logs (returning which tools'
 /// scans changed) and deliver the event to the window.
 pub trait Sink: Send + 'static {
-    fn rescan(&self) -> (bool, bool);
+    fn rescan(&self) -> Rescanned;
     fn notify(&self, change: UsageChanged);
 }
 
@@ -126,8 +144,9 @@ fn resolved(path: &Path) -> PathBuf {
     }
 }
 
-fn watch_targets(home: &Path, data_dir: &Path) -> Vec<(PathBuf, RecursiveMode)> {
+fn watch_targets(home: &Path, deepseek: &Path, data_dir: &Path) -> Vec<(PathBuf, RecursiveMode)> {
     vec![
+        (deepseek.join("sessions"), RecursiveMode::Recursive),
         (home.join(".claude/projects"), RecursiveMode::Recursive),
         (home.join(".codex/sessions"), RecursiveMode::Recursive),
         (
@@ -169,7 +188,7 @@ fn poll_watcher(sender: mpsc::Sender<notify::Result<notify::Event>>) -> Option<B
 
 /// Starts the watcher thread. Failing to create a watcher only disables live
 /// updates; the refresh button keeps working.
-pub fn spawn(home: PathBuf, data_dir: PathBuf, sink: impl Sink) {
+pub fn spawn(home: PathBuf, deepseek: PathBuf, data_dir: PathBuf, sink: impl Sink) {
     std::thread::spawn(move || {
         let (sender, receiver) = mpsc::channel();
         let (mut watcher, mut polling): (Box<dyn Watcher>, bool) =
@@ -183,8 +202,9 @@ pub fn spawn(home: PathBuf, data_dir: PathBuf, sink: impl Sink) {
         // File events carry resolved paths (on macOS `/var` is really `/private/var`,
         // and `~/.claude` may be a symlink), so match against both spellings.
         let real_home = resolved(&home);
+        let real_deepseek = resolved(&deepseek);
         let real_data_dir = resolved(&data_dir);
-        let targets = watch_targets(&home, &data_dir);
+        let targets = watch_targets(&home, &deepseek, &data_dir);
         let mut watched = BTreeSet::new();
         if !watch_available(&mut *watcher, &targets, &mut watched) {
             let Some(replacement) = poll_watcher(sender.clone()) else {
@@ -209,8 +229,9 @@ pub fn spawn(home: PathBuf, data_dir: PathBuf, sink: impl Sink) {
                         .paths
                         .iter()
                         .filter_map(|path| {
-                            classify(path, &home, &data_dir)
-                                .or_else(|| classify(path, &real_home, &real_data_dir))
+                            classify(path, &home, &deepseek, &data_dir).or_else(|| {
+                                classify(path, &real_home, &real_deepseek, &real_data_dir)
+                            })
                         })
                         .collect();
                     if !changes.is_empty() {
@@ -236,19 +257,28 @@ pub fn spawn(home: PathBuf, data_dir: PathBuf, sink: impl Sink) {
                 continue;
             }
             let batch = std::mem::take(&mut pending);
-            let logs = batch.contains(&Change::ClaudeLogs) || batch.contains(&Change::CodexLogs);
-            let (claude_scan, codex_scan) = if logs { sink.rescan() } else { (false, false) };
+            let logs = batch.contains(&Change::ClaudeLogs)
+                || batch.contains(&Change::CodexLogs)
+                || batch.contains(&Change::DeepSeekLogs);
+            let scanned = if logs {
+                sink.rescan()
+            } else {
+                Rescanned::default()
+            };
             let mut tools = Vec::new();
-            if claude_scan || batch.contains(&Change::ClaudeRecords) {
+            if scanned.claude || batch.contains(&Change::ClaudeRecords) {
                 tools.push("Claude");
             }
-            if codex_scan || batch.contains(&Change::CodexRecords) {
+            if scanned.codex || batch.contains(&Change::CodexRecords) {
                 tools.push("Codex");
+            }
+            if scanned.deepseek || batch.contains(&Change::DeepSeekRecords) {
+                tools.push("DeepSeek");
             }
             if !tools.is_empty() {
                 sink.notify(UsageChanged {
                     tools,
-                    claude_logs: claude_scan,
+                    claude_logs: scanned.claude,
                 });
             }
         }
@@ -291,8 +321,11 @@ mod tests {
 
         struct Recorder(Arc<Mutex<Vec<Vec<&'static str>>>>);
         impl Sink for Recorder {
-            fn rescan(&self) -> (bool, bool) {
-                (true, false)
+            fn rescan(&self) -> Rescanned {
+                Rescanned {
+                    claude: true,
+                    ..Rescanned::default()
+                }
             }
             fn notify(&self, change: UsageChanged) {
                 self.0.lock().expect("record").push(change.tools);
@@ -305,7 +338,12 @@ mod tests {
         let project = home.join(".claude/projects/demo");
         std::fs::create_dir_all(&project).expect("create projects");
         let seen = Arc::new(Mutex::new(Vec::new()));
-        spawn(home.clone(), data, Recorder(Arc::clone(&seen)));
+        spawn(
+            home.clone(),
+            home.join(".dsh"),
+            data,
+            Recorder(Arc::clone(&seen)),
+        );
         // Keep appending until the watcher reports: right after a rebuild the watcher can take
         // longer than a fixed pause to register, and a single early write would be missed.
         let log = project.join("session.jsonl");
@@ -373,9 +411,24 @@ mod tests {
                 Some(Change::CodexRecords),
             ),
             ("/data/token-audit/settings.json", None),
+            (
+                "/dsh/sessions/w/session-a/session.v4.jsonl.zstd",
+                Some(Change::DeepSeekLogs),
+            ),
+            ("/dsh/sessions/w/session-a/session.lock", None),
+            ("/home/me/.dsh/sessions/w/session-a/x.jsonl.zstd", None),
+            (
+                "/data/token-audit/quota/deepseek.json",
+                Some(Change::DeepSeekRecords),
+            ),
         ];
+        let deepseek = Path::new("/dsh");
         for (path, expected) in cases {
-            assert_eq!(classify(Path::new(path), home, data), expected, "{path}");
+            assert_eq!(
+                classify(Path::new(path), home, deepseek, data),
+                expected,
+                "{path}"
+            );
         }
     }
 }

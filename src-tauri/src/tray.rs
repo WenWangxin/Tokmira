@@ -16,9 +16,9 @@ use token_audit_core::settings;
 
 use crate::{login_item, tray_menu, AppState};
 
-const TOOLS: [Tool; 2] = [Tool::Claude, Tool::Codex];
+const TOOLS: [Tool; 3] = [Tool::Claude, Tool::Codex, Tool::DeepSeek];
 /// Enough rows for every tool's 5-hour, weekly and forecast lines.
-const ROWS: usize = 6;
+const ROWS: usize = 8;
 
 fn fixed_label(id: &str, lang: Lang) -> &'static str {
     let (zh, en) = match id {
@@ -114,7 +114,7 @@ fn menu_event(app: &AppHandle, id: &str) {
                 let _ = app.emit(
                     "usage-changed",
                     crate::realtime::UsageChanged {
-                        tools: vec!["Claude", "Codex"],
+                        tools: vec!["Claude", "Codex", "DeepSeek"],
                         claude_logs: false,
                     },
                 );
@@ -138,6 +138,9 @@ fn menu_event(app: &AppHandle, id: &str) {
         "menubar-Codex" => edit_settings(app, |s| {
             settings::toggle_menu_bar_tool(&mut s.menu_bar_tools, Tool::Codex);
         }),
+        "menubar-DeepSeek Harness" => edit_settings(app, |s| {
+            settings::toggle_menu_bar_tool(&mut s.menu_bar_tools, Tool::DeepSeek);
+        }),
         "quit" => app.exit(0),
         // Tool headings and quota rows open the dashboard, like "打开仪表盘".
         id if id == "dashboard"
@@ -155,7 +158,7 @@ fn menu_logo(tool: Tool) -> tauri::Result<Image<'static>> {
     Image::from_bytes(match tool {
         Tool::Claude => include_bytes!("../icons/tray/claude-menu.png"),
         Tool::Codex => include_bytes!("../icons/tray/codex-menu.png"),
-        Tool::DeepSeek => include_bytes!("../icons/tray-template.png"),
+        Tool::DeepSeek => include_bytes!("../icons/tray/deepseek-menu.png"),
     })
 }
 
@@ -365,7 +368,8 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     // A menu exists from the start; the first update fills in the numbers.
     let state = app.state::<TrayState>();
     let first = Layout {
-        rows: vec![1; TOOLS.len()],
+        // DeepSeek's section joins once an update finds data for it.
+        rows: vec![1; TOOLS.len() - 1],
         authorization: false,
         update: false,
     };
@@ -469,7 +473,7 @@ fn update(app: &AppHandle) {
     .into_iter()
     .flatten()
     .max();
-    let text = tray_menu::format_menu(
+    let mut text = tray_menu::format_menu(
         lang,
         claude,
         codex,
@@ -480,6 +484,16 @@ fn update(app: &AppHandle) {
         Utc::now(),
         &settings.menu_bar_tools,
     );
+    // DeepSeek has its own section only once there is something to show for it.
+    if let Some(deepseek) = &overview.deepseek {
+        text.sections
+            .push(tray_menu::deepseek_section(lang, deepseek));
+        if settings.menu_bar_tools.contains(&Tool::DeepSeek) {
+            if let Some(badge) = tray_menu::deepseek_badge(deepseek) {
+                text.badges.push((Tool::DeepSeek, badge));
+            }
+        }
+    }
     let mut rows = menu.rows.iter();
     let mut counts = Vec::new();
     for (header, section) in menu.headers.iter().zip(&text.sections) {
